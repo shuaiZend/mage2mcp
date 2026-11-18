@@ -17,11 +17,11 @@ jobs:
       packages: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.27.x"
           cache: true
@@ -71,14 +71,14 @@ jobs:
           done
       - name: Set up QEMU
         if: hashFiles('Dockerfile') != ''
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Buildx
         if: hashFiles('Dockerfile') != ''
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Container metadata
         id: meta
         if: hashFiles('Dockerfile') != ''
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/shuaizend/mage2mcp
           tags: |
@@ -88,7 +88,7 @@ jobs:
       - name: Build and push container image
         id: build
         if: hashFiles('Dockerfile') != ''
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -100,7 +100,7 @@ jobs:
         if: hashFiles('Dockerfile') != ''
         run: cosign sign --yes "ghcr.io/shuaizend/mage2mcp@${{ steps.build.outputs.digest }}"
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
