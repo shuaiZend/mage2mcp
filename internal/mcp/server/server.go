@@ -32,7 +32,7 @@ type Options struct {
 	MaxBodyBytes   int64
 	// Authorize is consulted for every tools/call. A nil Authorize allows all
 	// calls and is only acceptable in local development without authentication.
-	Authorize func(ctx context.Context, tool string) error
+	Authorize func(ctx context.Context, tool, instance string) error
 	// Audit records intent and outcome for every tools/call.
 	Audit func(ctx context.Context, tool, instance, phase, state, errorCode string)
 	// Confirm enforces the two-step approval protocol for tools that require it.
@@ -90,7 +90,7 @@ func installPolicy(srv *mcp.Server, opts Options) {
 				opts.Audit(ctx, tool, instance, "intent", "pending", "")
 			}
 			if opts.Authorize != nil {
-				if err := opts.Authorize(ctx, tool); err != nil {
+				if err := opts.Authorize(ctx, tool, instance); err != nil {
 					if opts.Audit != nil {
 						opts.Audit(ctx, tool, instance, "outcome", "denied", string(errs.CodeOf(err)))
 					}
