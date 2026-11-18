@@ -50,6 +50,8 @@ Allowed imports:
 |---|---|
 | `internal/core` | standard library, `gopkg.in/yaml.v3`, validation helpers |
 | `internal/security` | `core` |
+| `internal/admin` | `core`, `security` (approval surface writes confirmation decisions) |
+| `internal/logs` | `core` (request-log queries and ingestion) |
 | `internal/mcp` | `core`, `security`, module public packages (for registration) |
 | `internal/magento` | `core` |
 | `internal/cloudflare` | `core` |
@@ -93,7 +95,11 @@ type Capability struct {
 type DataSource interface {
     Name() string
     HealthCheck(ctx context.Context) error
-    Capabilities() []Capability
+    // Capabilities is instance-scoped: a Magento Open Source instance lacks
+    // import, a Pro Cloudflare zone lacks bot fields, a GA4 property may lack
+    // ecommerce. The registry registers a tool when at least one enabled
+    // instance supports it and returns unsupported_capability otherwise.
+    Capabilities(ctx context.Context, instanceID string) ([]Capability, error)
 }
 ```
 
@@ -132,6 +138,10 @@ const (
     CodeMappingIncomplete        Code = "mapping_incomplete"
     CodeCurrencyMismatch         Code = "currency_mismatch"
     CodeIncompleteWindow         Code = "incomplete_window"
+    CodeUnsupportedFormat        Code = "unsupported_format"
+    CodeCredentialScopeExceeded  Code = "credential_scope_exceeded"
+    CodeCredentialScopeInsufficient Code = "credential_scope_insufficient"
+    CodeProbeSKUConflict         Code = "probe_sku_conflict"
 )
 
 type Error struct {
@@ -163,8 +173,29 @@ package jobs
 // Enqueuer is the only async dependency a tool handler may take. The concrete
 // implementation lives in internal/jobs and is injected in cmd/server, so no
 // module imports the jobs package and the dependency table stays acyclic.
+type Scope struct {
+    InstanceID string // exactly one of InstanceID or BindingID is set
+    BindingID  string
+}
+
+type Task struct {
+    Kind           string          // registered handler name
+    Scope          Scope
+    Payload        json.RawMessage // typed request, never a secret
+    IdempotencyKey string
+    MaxAttempts    int             // 1 for writes and imports
+}
+
+type JobState struct {
+    ID           string
+    Kind         string
+    State        string // queued, running, canceling, succeeded, failed, canceled
+    AttemptCount int
+    ErrorCode    string
+}
+
 type Enqueuer interface {
-    Enqueue(ctx context.Context, task Task) (JobID string, err error)
+    Enqueue(ctx context.Context, task Task) (jobID string, err error)
     Status(ctx context.Context, jobID string) (*JobState, error)
     Cancel(ctx context.Context, jobID string) error
 }
@@ -188,12 +219,13 @@ type Page[T any] struct {
 type TimeRange struct {
     Start time.Time // UTC
     End   time.Time // UTC
-    Zone  *time.Location
+    Zone  string    // IANA zone name, e.g. "America/Los_Angeles"; resolved internally
 }
 
 type Money struct {
-    Amount   string // decimal string, never float
-    Currency string // ISO-4217
+    Amount   *string // decimal string; nil means unknown or mixed-currency
+    Currency string  // ISO-4217; empty when Mixed is true
+    Mixed    bool    // true when sources disagree on currency and no rate was supplied
 }
 ```
 
@@ -230,6 +262,7 @@ type ConfigurableService interface {
     Children(ctx context.Context, instanceID, parentSKU string) ([]models.Product, error)
     SetOptions(ctx context.Context, instanceID, parentSKU string, options []VariantOption) (*models.ConfigurableProduct, error)
     CreateVariations(ctx context.Context, instanceID string, in CreateVariationsInput) (*VariationResult, error)
+    VerifyStorefront(ctx context.Context, instanceID, sku string) (*StorefrontVerification, error)
 }
 
 type AttributeService interface {
@@ -246,6 +279,7 @@ type InventoryService interface {
     SourceItems(ctx context.Context, instanceID string, q SourceItemQuery) (models.Page[models.SourceItem], error)
     AssignSourceItems(ctx context.Context, instanceID string, items []SourceItemInput) (*BulkResult, error)
     UnassignSourceItems(ctx context.Context, instanceID string, items []SourceItemRef) (*BulkResult, error)
+    Transfer(ctx context.Context, instanceID string, in TransferInput) (*BulkResult, error)
 }
 
 type CategoryService interface {
@@ -274,6 +308,7 @@ type ImportService interface {
     Status(ctx context.Context, instanceID, batchID string) (*ImportBatch, error)
     Resume(ctx context.Context, instanceID, batchID string) (*ImportBatch, error)
     Cancel(ctx context.Context, instanceID, batchID string) error
+    Report(ctx context.Context, instanceID, batchID string, cursor string) (models.Page[ImportItemResult], error)
 }
 ```
 
@@ -293,6 +328,13 @@ type SecurityService interface {
 
 type ZoneService interface {
     List(ctx context.Context, instanceID string) ([]Zone, error)
+}
+
+type RequestLogService interface {
+    // Request-level logs come from the optional R2/ClickHouse pipeline, never
+    // from the GraphQL analytics datasets. Returns unsupported_capability when
+    // Logpush ingestion is not configured.
+    Query(ctx context.Context, instanceID string, q models.RequestLogQuery) (models.Page[models.RequestLogEntry], error)
 }
 
 type LogsService interface {

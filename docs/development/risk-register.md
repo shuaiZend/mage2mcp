@@ -36,6 +36,8 @@ Impact High and no acceptable mitigation blocks the phase that introduces it.
 | R24 | Credential rotation requires a restart | M | M | Document restart requirement initially; design hot reload for a later phase | Architect | Post-1.0 |
 | R29 | Magento OAuth 1.0a signing is implemented incorrectly (canonicalization, nonce, timestamp) and every request fails or is replayable | M | H | Signature-vector tests against Magento's own client; nonce/timestamp uniqueness; clock-skew handling; fallback documented | Magento owner | Phase 2 |
 | R30 | Import tools unavailable on Magento Open Source (F25), surprising operators | H | M | Capability detection returns `unsupported_capability`; documentation states the edition requirement; chunked REST fallback designed | Magento owner | Phase 2 |
+| R31 | Magento 2.4.9 has no read-only ACL for catalog, source-item, or sales-document reads, so a strictly read-only deployment loses those read tools | H | M | Document the trade-off; offer a "read-mostly" profile with an explicitly accepted residual write capability; startup probe reports the profile in use | Magento owner + Security | Phase 2 |
+| R32 | The bounded XLSX converter is a security-sensitive parser with a large input surface | M | H | Fuzz the converter; cap decompressed size, entries, and shared strings; reject macros and external links; keep XLSX opt-in per instance | Magento owner | Phase 2 |
 
 ## 2. Product and ecosystem risks
 

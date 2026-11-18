@@ -22,7 +22,7 @@ this plan and the Phase 0 report.
 |---|---|---|---|
 | 0 | Design baseline | Architecture, boundaries, API mappings, threat model, ADRs, governance, CI | Maintainer approval of the Phase 0 report; docs CI green |
 | 1 | Foundation | Go module, config, logging, storage, Redis, MCP server skeleton, Cloudflare Access JWT, RBAC, audit, Docker, health, metrics | An authenticated agent can list tools; a read-only stub tool works end to end; unit + integration tests; CI gates active |
-| 2 | Magento | REST/GraphQL clients, EAV discovery, product services, configurable lifecycle, MSI, media, categories, orders, async import | Configurable product created and verified through storefront GraphQL on a real 2.4.9 instance; import resumes after failure |
+| 2 | Magento | REST/GraphQL clients, EAV discovery, product services, configurable lifecycle, MSI, media, categories, orders, async import, artifact store | Configurable product created and verified through storefront GraphQL on a real 2.4.9 instance; an import resumes from row N after a forced failure **without re-uploading the payload**, with the artifact store configured |
 | 3 | Cloudflare | GraphQL analytics templates, security events, Logpush metadata, optional R2/ClickHouse ingestion | Traffic and security tools return correct, quality-annotated data on a real zone; read-only guarantee tested |
 | 4 | GA4 | Data API client, compatibility validator, capability probe, ecommerce, realtime | Reports work on a real property; incompatible combinations rejected with actionable errors; quota handling tested |
 | 5 | Unified analytics | Cross-source models, joins, SKU mapping, eight required scenarios | Each scenario returns a result with explicit sources, formulas, and quality flags; semantics tests pass |
@@ -65,6 +65,7 @@ be parallelized safely.
 | MCP | Server construction, Streamable HTTP handler, registry, request pipeline, health and metrics endpoints | MCP |
 | Observability | `slog` setup with redaction, Prometheus metrics, health checks | Architect |
 | Deployment | Dockerfile (multi-stage, distroless), Compose file, `.env.example`, graceful shutdown | Platform |
+| Import artifacts | Object-store adapter for payloads, 24 h retention, resume and expiry semantics (Q8 resolved) | Magento + Architect |
 | Testing | Test harness, fake data source, contract test skeleton, CI activation (go jobs) | QA |
 | Documentation | Module README template, configuration reference, quickstart draft | Docs |
 

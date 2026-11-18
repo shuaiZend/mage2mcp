@@ -40,9 +40,11 @@ Adopt option 3, with layered authorization:
   assignment. The identity class is recorded in the audit event.
 - **AuthZ:** roles (`viewer`, `analyst`, `operator`, `admin`) × tool permissions ×
   instance scope. Default deny, read-only by default.
-- **High-risk writes:** require a confirmation token bound to the canonical
-  parameter hash, a nonce, and a short TTL; single use; invalidated if any
-  parameter changes.
+- **High-risk writes:** require the two-step confirmation protocol defined in
+  [ADR-0014](0014-confirmation-approval-and-bindings.md): an opaque
+  `confirmation_id`, approval by a different human identity on a separate
+  surface, a canonical parameter hash, a 300 s default / 900 s cap TTL, and
+  single use. There is no nonce carried by the requester.
 - **Sessions:** MCP sessions are bound to the verified identity (see ADR-0002).
 
 ## Rationale

@@ -1,6 +1,6 @@
 # Cloudflare integration
 
-**Status:** Phase 0 design, read-only. **Baseline:** [research-baseline.md](../development/research-baseline.md) (2026-11-18). **Evidence:** [docs/evidence/cloudflare.md](../evidence/cloudflare.md). **Decision:** [ADR-0004](../adr/0004-cloudflare-log-storage.md).
+**Status:** Phase 0 design, no mutation code path. **Baseline:** [research-baseline.md](../development/research-baseline.md) (2026-11-18). **Evidence:** [docs/evidence/cloudflare.md](../evidence/cloudflare.md). **Decision:** [ADR-0004](../adr/0004-cloudflare-log-storage.md).
 **Module:** `internal/cloudflare`; tool names follow [mcp-tools §7.6](../mcp-tools.md).
 **Tags:** `[V-live]` observed live, `[V-docs]` confirmed in vendor documentation, `[U]` unverified with the verification step stated.
 
@@ -10,14 +10,17 @@ measurement.
 
 ## 1. Scope and non-goals
 
-The module exposes Cloudflare traffic and security analytics to MCP tools. It is
-**read-only by design**: the gateway observes a Cloudflare account, it never controls one.
+The module exposes Cloudflare traffic and security analytics to MCP tools. The gateway
+contains no Cloudflare mutation code path and the default credential is read-only; the
+optional log-inspection profile carries `Logs: Write` and is isolated by configuration and
+process (same process, separate client — §7). Read-only is therefore a property of the code
+and of the default deployment, not of every credential the gateway can be configured to hold.
 
 ### In scope
 
 | Capability | Upstream surface | Tag |
 |---|---|---|
-| Zone and account traffic aggregates | GraphQL Analytics (`httpRequests1mGroups`, `httpRequests1hGroups`, `httpRequestsAdaptiveGroups`) | `[V-docs]` |
+| Zone traffic aggregates | GraphQL Analytics (`httpRequests1mGroups`, `httpRequests1hGroups`, `httpRequestsAdaptiveGroups`) | `[V-docs]` |
 | Request-level aggregates for security analysis | GraphQL Analytics (`httpRequestsAdaptive`, `httpRequestsAdaptiveGroups`) | `[V-docs]` |
 | WAF / bot / challenge event inspection | GraphQL Analytics (`firewallEventsAdaptive`, `firewallEventsAdaptiveGroups`) | `[V-docs]` |
 | Plan, dataset and entitlement detection | `GET /zones`, `GET /zones/{zone_id}/subscription`, GraphQL `settings` node | `[V-docs]` |
@@ -26,11 +29,11 @@ The module exposes Cloudflare traffic and security analytics to MCP tools. It is
 
 | Never | Why |
 |---|---|
-| Send `POST`, `PUT`, `PATCH` or `DELETE` to a Cloudflare REST endpoint | The module has no write path at all (§7). |
+| Send `POST`, `PUT`, `PATCH` or `DELETE` to a Cloudflare REST endpoint | The module contains no mutation code path (§7). |
 | Create, update, disable or delete a Logpush job | Jobs are managed out of band (dashboard, Terraform, runbook). |
 | Create or modify DNS records, WAF rules, rate-limit rules, cache rules or rulesets | A separate, audited write module would be required. |
 | Purge cache, change zone settings, toggle Bot Fight Mode | Same as above. |
-| Store visitor IPs, cookies or request headers in the gateway database | Data minimisation; see the redaction rules in the [evidence file](../evidence/cloudflare.md). |
+| Store visitor IPs, cookies or request headers in PostgreSQL | Data minimisation; raw Logpush records live only in the restricted archive (§10), never in the gateway's transactional database. |
 | Act as a SIEM or a log search engine | Logpush ingestion is Phase 3+, opt-in and byte-budgeted (§10). |
 
 One deliberate exception to "no POST" is described in §7: GraphQL is queried with HTTP
@@ -87,8 +90,8 @@ lost [V-docs](https://developers.cloudflare.com/logs/logpush/).
 | Instant Logs | Business and Enterprise only | Live WebSocket tail; one session per zone, 60-minute maximum; session creation is a `POST` | [V-docs](https://developers.cloudflare.com/logs/instant-logs/) |
 
 Logpull is unavailable on the target plan (Pro) and deprecated in favour of Logpush. Instant
-Logs needs a `POST` to open a session, which conflicts with the read-only guarantee, and a
-live tail is not a reproducible primitive for an agent.
+Logs needs a `POST` to open a session, which conflicts with the no-mutation design (§7), and
+a live tail is not a reproducible primitive for an agent.
 
 In one line each: GraphQL is an **estimate**, Security Events are **sampled events**,
 Logpush is **complete but unrecoverable**, and Logpull/Instant Logs are **gated and
@@ -160,7 +163,8 @@ Consequences on Pro, stated plainly:
 
 The 300/5 min and 320/5 min figures come from two different Cloudflare pages and are not
 reconciled; the gateway budgets against the **lower** number and treats 320 as headroom, not
-capacity. See OQ-1.
+capacity. See OQ-1. The 10-zone ceiling is an upstream limit, not a gateway capability: an
+instance is one zone and every query names exactly one zone (§8).
 
 ### Error formats
 
@@ -226,25 +230,27 @@ At 10M requests/day an external destination costs roughly 6.5× an internal one,
 
 ### Recommendation
 
-1. **Default OFF.** `cloudflare.logpush.enabled` defaults to `false`; no Logpush tool is registered when it is false.
+1. **Default OFF.** `cloudflare.logpush.enabled` defaults to `false`; no ingestion tool is registered when it is false. Job inspection is a separate per-instance profile (`logpush-observe`, default `analytics`) because it needs the write-capable credential (§7).
 2. **Opt-in per zone** with a hard monthly byte budget (`logpush.budget_gb_month`), enforced by stopping ingestion — never by touching the job.
 3. **Minimal field set and volume control** via `output_options.field_names` (never headers or cookies) and `output_options.sample_rate`, with the configured rate recorded as a quality flag [V-docs](https://developers.cloudflare.com/logs/logpush/logpush-job/log-output-options/).
 4. **Estimate before enabling:** daily request count from `httpRequestsAdaptiveGroups` × 1.5–3 kB; on Enterprise a one-hour Logpull sample gives a measured record size [V-docs](https://developers.cloudflare.com/logs/logpush/#estimating-log-volume).
 5. **Budget alerts at 50/80/100%.** Exceeding the budget is an operator action; the gateway cannot and will not disable the job.
 
-## 7. Read-only guarantee
+## 7. Read-only design and its limits
 
-Structural, not aspirational — eight independently testable layers:
+The code-level controls are structural, not aspirational — eight independently testable
+layers. They constrain what the code can call; they do not constrain what the credential is
+permitted to do, which is why the credential profile is a separate control (below).
 
 | Layer | Enforcement | Test |
 |---|---|---|
-| L1 Transport allowlist | Fixed route table: `GET /zones`, `GET /zones/{id}/subscription`, `GET /user/tokens/verify`, `GET /accounts/{id}/r2/buckets`, `GET /{scope}/{id}/logpush/jobs`, `GET /{scope}/{id}/logpush/datasets/{dataset}/fields`, `POST /graphql` (query documents only). Anything else panics at init. | `TestClient_RouteTableIsClosed` |
+| L1 Transport allowlist | Two closed route tables. Analytics: `GET /zones`, `GET /zones/{id}/subscription`, `GET /user/tokens/verify`, `GET /accounts/{id}/r2/buckets`, `POST /graphql` (query documents only). Log inspection: `GET /zones/{id}/logpush/jobs`, `GET /zones/{id}/logpush/datasets/{dataset}/fields`. Anything else panics at init. | `TestClient_RouteTableIsClosed` |
 | L2 Method never caller-controlled | Handlers pass a route id, never a method, path or body string. | `TestTools_DoNotAcceptMethodOrPath` |
 | L3 Body from registry | The GraphQL body is rendered from an embedded template with typed variables; templates containing a mutation or subscription root field are rejected at build time. | `TestTemplates_ContainOnlyQueryRootFields` |
 | L4 No mutation symbol | The generated GraphQL client exposes only `Query`; there is no `Mutate` method to call. | `TestGeneratedClient_HasNoMutationMethod` |
-| L5 CI grep gate | CI fails on `http.MethodPost`/`Put`/`Patch`/`Delete` outside the single GraphQL transport file, and on `mutation` anywhere. | `make lint-readonly` |
-| L6 Token scoping | The documented token manifest contains read permissions only (§8). | `TestTokenManifest_NoWritePermissions` |
-| L7 Startup probes | Verify the token is `active`, detect the plan, confirm each declared dataset is `enabled`; failure degrades the tool set and never escalates. | `TestStartup_RefusesUnknownDataset` |
+| L5 CI grep gate | CI fails on `http.MethodPost`/`Put`/`Patch`/`Delete` outside the single GraphQL transport file, and on `mutation` anywhere. It proves the code contains no mutation call, not that the credential cannot mutate. | `make lint-readonly` |
+| L6 Token scoping | The default `analytics` profile's token manifest contains read permissions only (§8). The opt-in log-inspection profile is outside this test and is reported at startup. | `TestTokenManifest_DefaultProfileReadOnly` |
+| L7 Startup probes | Verify the token is `active`, detect the plan, confirm each declared dataset is `enabled`, and report the credential profile and enabled tools; failure degrades the tool set and never escalates. | `TestStartup_RefusesUnknownDataset` |
 | L8 Audit log | Every upstream call logs route id, scope, variable hash, row count and duration — never the token, never a full response body. | `TestAuditLog_RedactsAuthorization` |
 
 ### Residual risk: Logpush job inspection needs a write-capable permission
@@ -257,27 +263,62 @@ configurations contain sensitive destination credentials
 
 | Profile | Permissions | Capability |
 |---|---|---|
-| `analytics` (default) | `Analytics Read` / `Account Analytics Read`, `Zone Read` | GraphQL analytics and plan detection; no Logpush introspection |
-| `analytics+logpush-observe` (opt-in) | The above plus `Logs Write` | Adds read-only Logpush job and field listing; never used to mutate |
+| `analytics` (default) | `Analytics Read`, `Zone Read` | GraphQL analytics and plan detection; no Logpush introspection |
+| `logpush-observe` (opt-in) | `Logs: Write`, zone-scoped to the instance's zone; `Zone Read` only if OQ-8 requires it | Adds read-only Logpush job and field listing; never used to mutate |
 
 The second profile is an explicit residual risk: the credential technically permits writes
 although the code cannot issue them. It is off by default and needs a config flag plus an
 operator acknowledgement in the runbook; an operator who will not accept it must treat
 Logpush as externally managed and infer job health from R2 file arrival.
 
-### Startup check for write scopes
+### Isolation of the log-inspection profile
+
+The profile is isolated by configuration (off by default, separate secret reference) and by
+process (a separately constructed client with its own credential and transport), not by an
+OS process boundary.
+
+| Property | Rule |
+|---|---|
+| Credential | `CLOUDFLARE_LOG_INSPECTION_TOKEN`, a distinct zone-scoped secret with `Logs: Write` and no `Analytics Read`; never a superset of the analytics token. |
+| Default | Disabled. `credential_profile` defaults to `analytics`; without `logpush-observe` the secret is not read and `cloudflare.logs.jobs` is not registered. |
+| Tool surface | Usable only by `cloudflare.logs.jobs`; no analytics, security or zone tool can select it. |
+| Client | Its own `http.Client`, transport, base URL and route table, containing only `GET /zones/{id}/logpush/jobs` and `GET /zones/{id}/logpush/datasets/{dataset}/fields`. |
+| Analytics client | Never receives the credential and holds no reference to the log-inspection client. |
+
+**Same process, separate client.** The log-inspection client runs in the gateway process
+with a separate credential and a separate HTTP client; it shares no transport, cookie jar,
+retry policy or connection pool with the analytics client. A separate OS process was
+rejected because it would need its own MCP registry, authentication and audit path, which
+multiplies the surface it is meant to reduce. The isolation target is accidental reuse: a
+dependency or refactor that obtains the analytics client cannot obtain this credential, and
+no code path can issue a write because the client's closed route table contains only the two
+GETs. It does not defend against a compromised gateway binary, which can read any secret the
+process holds; only a process boundary or an external secret broker would.
+
+### Startup capability detection
 
 Token verification returns `id`, `status` and `not_before`, not the permission policy
 [V-docs](https://developers.cloudflare.com/fundamentals/api/troubleshooting/). Reading a
 token's policies requires `GET /user/tokens/{token_id}` plus a `User API Tokens Read`
 permission that the analytics profile does not hold `[U]`. Startup therefore does exactly
-two things, and the README says so:
+three things, and the README says so:
 
 1. Refuse a token whose status is not `active`, and refuse to start when the deployment config declares a permission outside the read-only manifest (config lint, not API introspection).
 2. Refuse to enable a tool whose dataset probe returns `enabled: false`.
+3. Report the credential profile in use and the enabled Cloudflare tools in the startup log and the operator capability report (`/health`), so the risk is visible before the first tool call.
 
-It cannot detect a write scope the operator silently added. That limitation is documented
-rather than papered over.
+The report is the operator's visibility into the residual risk:
+
+| Field | Example | Meaning |
+|---|---|---|
+| `credential_profile` | `analytics` / `logpush-observe` | Which credential is loaded; the second may write. |
+| `write_capable_credential` | `false` / `true` | True only for the log-inspection profile. |
+| `enabled_tools` | `[cloudflare.analytics.traffic, ...]` | The tools this instance actually registered. |
+| `shared_token_instances` | `[]` / `[storefront-eu, storefront-us]` | Instances that reference the same secret; declared, not verified. |
+
+It cannot detect a write scope the operator silently added to either token. That limitation
+is documented rather than papered over: the report shows which credential is in use, not
+what that credential can do upstream.
 
 ## 8. Token and permission model
 
@@ -289,32 +330,62 @@ rather than papered over.
 | List zones and plan labels | Zone | `Zone Read` | `GET /zones` | [V-docs](https://developers.cloudflare.com/fundamentals/api/reference/permissions/) |
 | Authoritative plan id | Zone | `Zone Read`; a billing permission may also be required `[U]` | `GET /zones/{zone_id}/subscription` | [V-docs](https://developers.cloudflare.com/api/resources/zones/subresources/subscriptions/methods/get/) |
 | Zone-scoped GraphQL analytics | Zone | `Analytics Read` | `POST /graphql` | [V-docs](https://developers.cloudflare.com/fundamentals/api/reference/permissions/) |
-| Account-scoped GraphQL analytics | Account | `Account Analytics Read` | `POST /graphql` | [V-docs](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/) |
-| Logpush job and dataset field listing | Zone or Account | `Logs Write` (documented; see §7) | `GET .../logpush/jobs`, `GET .../logpush/datasets/{id}/fields` | [V-docs](https://developers.cloudflare.com/logs/logpush/permissions/) |
+| Logpush job and dataset field listing | Zone | `Logs Write` (documented; separate opt-in credential, §7) | `GET /zones/{zone_id}/logpush/jobs`, `GET /zones/{zone_id}/logpush/datasets/{id}/fields` | [V-docs](https://developers.cloudflare.com/logs/logpush/permissions/) |
 | R2 bucket inventory | Account | `Workers R2 Storage Read` | `GET /accounts/{account_id}/r2/buckets` | [V-docs](https://developers.cloudflare.com/fundamentals/api/reference/permissions/) |
 | R2 object reads (Logpush destination) | R2 | R2 API token with read access (separate S3-compatible credential) | S3 `GetObject` / `ListObjectsV2` | [V-docs](https://developers.cloudflare.com/logs/logpush/logpush-job/enable-destinations/r2/) |
 
 Zone-scoped datasets require a zone-scoped token and account-scoped datasets an
 account-scoped one [V-docs](https://developers.cloudflare.com/logs/logpush/permissions/); a
-single token cannot straddle both, which drives the configuration shape below.
+single token cannot straddle both. The module requests no account-scoped GraphQL permission:
+every analytics and security tool is zone-scoped to its instance, and the account id is used
+only for R2 bucket inventory. Account-scoped Logpush jobs are out of scope and managed
+externally.
 
-### Multi-account and multi-zone configuration
+### Secret inventory
 
-Tokens are referenced by environment variable name, never inlined.
+| Secret | Purpose | Profile | Tag |
+|---|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | Analytics, zone and plan reads | `analytics` (default) | Project policy |
+| `CLOUDFLARE_LOG_INSPECTION_TOKEN` | Logpush job and field metadata; never the same secret as the analytics token | `logpush-observe` (opt-in) | Project policy |
+| `CLOUDFLARE_R2_ACCESS_KEY_ID` / `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | Loader reads the Logpush archive; read-only to the bucket prefix, no Cloudflare API permission | Logpush archive (Phase 3+) | [V-docs](https://developers.cloudflare.com/r2/api/tokens/) |
+
+Tokens are referenced by environment variable name, never inlined. The R2 pair is a separate
+S3-compatible credential, not a Cloudflare API token; it is not loaded by the analytics or
+log-inspection clients. ClickHouse loader and query credentials are separate roles, listed
+with the archive in §10.
+
+### Instance granularity: one zone per instance
+
+One Cloudflare instance is exactly one zone. The instance config carries the zone id and
+the account id; no tool accepts a zone selector, because a zone selector would be a second
+authorization dimension that the RBAC matrix and audit schema do not model.
+
+| Rule | Detail |
+|---|---|
+| Instance = zone | `zone_id` and `account_id` are required, from environment variables. The instance id is an opaque alias, never the raw zone id. |
+| No zone parameter | `cloudflare.analytics.*` and `cloudflare.security.*` resolve the zone from the instance; a zone or account id in tool arguments is rejected by the schema. |
+| Multiple zones | Two zones are two instances, even in one account. They may share a token only when it is a zone-scoped token limited to exactly those zones; the sharing is declared in config and reported at startup. The gateway cannot verify the scope `[U]` — probe: query a zone outside the declared set and expect 403. |
+| Bindings | A binding names exactly one Cloudflare instance, therefore exactly one zone. The `cloudflare` member is never an account and never a list. |
+| `cloudflare.zone.list` | Discovery only: it lists zones the token can see. It does not change which zone an instance queries, and a returned zone is not usable until configured as an instance. |
 
 ```yaml
 cloudflare:
   read_only: true
   logpush: { enabled: false, budget_gb_month: 0 }
-  accounts:
-    - id_env: CLOUDFLARE_ACCOUNT_ID
+  instances:
+    - id: storefront-primary
+      account_id_env: CLOUDFLARE_ACCOUNT_ID
+      zone_id_env: CLOUDFLARE_ZONE_ID
       token_env: CLOUDFLARE_API_TOKEN
-      zones: [{ id_env: CLOUDFLARE_ZONE_ID, label: storefront-primary,
-                datasets: [httpRequests1hGroups, httpRequestsAdaptiveGroups, firewallEventsAdaptiveGroups] }]
+      credential_profile: analytics
+      datasets: [httpRequests1hGroups, httpRequestsAdaptiveGroups, firewallEventsAdaptiveGroups]
 ```
 
-- Each account block may hold its own token; a token is never shared across accounts.
-- Zones are addressed by an opaque internal alias (never the raw zone id), and datasets are declared explicitly so a plan downgrade degrades one tool instead of failing the server.
+- Each instance names its own token reference; the same secret is shared only under the condition above, and never across accounts.
+- A second zone adds a second `instances` entry with its own `id` and `zone_id_env`; there is no `zones:` list inside an instance.
+- Datasets are declared per instance so a plan downgrade degrades one tool instead of failing the server.
+- `read_only: true` asserts that no mutation code path is deployed; it is not a statement about the credential. The log-inspection profile is reported separately by `write_capable_credential` (§7).
+- Selecting `credential_profile: logpush-observe` for an instance requires `CLOUDFLARE_LOG_INSPECTION_TOKEN`; startup rejects the profile without it.
 
 ### Storage, rotation, logging
 
@@ -330,7 +401,7 @@ cloudflare:
 
 ### Why raw GraphQL passthrough is forbidden
 
-1. **Quota and read-only proof.** A caller-supplied document can span 10 zones × many nodes and consume the entire 300-query budget in one call [V-docs](https://developers.cloudflare.com/analytics/graphql-api/limits/), and "no mutation" is only testable when the set of documents is finite and known at build time (§7, L3).
+1. **Quota and mutation containment.** A caller-supplied document can span 10 zones × many nodes and consume the entire 300-query budget in one call [V-docs](https://developers.cloudflare.com/analytics/graphql-api/limits/), and "no mutation" is only testable when the set of documents is finite and known at build time (§7, L3).
 2. **Injection.** An agent that copies text from a page or ticket into a query string is an injection surface, and there is no parser in the path to catch it.
 3. **Auditability and drift.** A free-form query cannot be diffed, reviewed or reproduced, and schema changes hit every caller; a template id plus typed variables confines both.
 
@@ -340,7 +411,7 @@ cloudflare:
 id: cf.http.hourly
 dataset: httpRequests1hGroups
 scope: zone
-params: { zone_tag: string, since: time, until: time }   # all required and typed
+params: { since: time, until: time }   # all required and typed; zone_tag is injected from the instance
 bounds: { min_window: 1h, max_window: 168h, max_limit: 168 }   # below the 30-day ceiling
 select:
   dimensions: [datetimeHour]
@@ -358,14 +429,17 @@ query HttpHourly($zoneTag: string, $since: Time, $until: Time, $limit: uint64) {
 }
 ```
 
+The `zoneTag` variable is injected from the instance (§8), never from the caller; it is the
+only scope variable in the document.
+
 | Rule | Implementation |
 |---|---|
-| Typed parameters only | Variables validated against the template's JSON Schema; unknown parameters are rejected, not ignored. |
+| Typed parameters only | Variables validated against the template's JSON Schema; unknown parameters are rejected, not ignored. `zone_tag` is not a caller-visible parameter. |
 | Bounded time range | RFC 3339 UTC only; `until - since` within `min_window`/`max_window`; `since` within the node's `notOlderThan`. |
 | Enforced limit | Clamped to `min(template.max_limit, node.maxPageSize)`; a caller cannot raise it. |
 | Deterministic field set | Dimensions and metrics come from the template; a new field set needs a new template and a review. |
 | Cost estimate before execution | `buckets(window, grain) × cardinality_estimate(dimensions)`; above 10,000 rows the query is rejected with a narrowing suggestion. |
-| One scope per query, effective query returned | Multi-zone fan-out is explicit and budgeted, never silent; every response carries the rendered document and its variables. |
+| One zone per query, effective query returned | An instance is one zone, so there is no multi-zone fan-out; every response carries the rendered document and its variables. |
 
 ### Response envelope
 
@@ -388,7 +462,7 @@ Logpush is opt-in. When enabled, the path is Cloudflare → R2 → loader → op
 
 ```mermaid
 flowchart LR
-  CF["Cloudflare edge<br/>Logpush job: http_requests"] -->|"gzip NDJSON, ~1/min"| R2[("R2 bucket<br/>http_requests/zone/date/")]
+  CF["Cloudflare edge<br/>Logpush job: http_requests"] -->|"gzip NDJSON, ~1/min"| R2[("R2 bucket<br/>http_requests/zone_alias/date/")]
   R2 -->|"list + get"| L["Loader<br/>dedupe, validate, count"]
   L --> MAN[("PostgreSQL<br/>ingest manifest only")]
   L --> PQ[("Parquet rollups<br/>optional")]
@@ -406,6 +480,32 @@ flowchart LR
 | Query shape | Time-range scans over low-cardinality dimensions are columnar; a B-tree heap does poorly and TOAST-compressed JSONB is slower still. |
 | Separation of concerns | Postgres holds configuration, audit events and ingest bookkeeping — small, transactional, backed up. |
 
+### Data handling for the Logpush archive
+
+The R2 bucket and the optional ClickHouse table hold the most restricted data in the
+system: a raw request record contains the client IP, path, user agent, host, status, RayID
+and timings. Classification, retention and deletion are part of the design, not an operator
+afterthought.
+
+| Concern | Rule | Tag |
+|---|---|---|
+| Stored data | Raw `http_requests` records: client IP, request path and query, user agent, host, status, RayID, timings. Headers and cookies are excluded by the field set (§6). | [V-docs](https://developers.cloudflare.com/logs/logpush/logpush-job/datasets/zone/http_requests/) |
+| Location | R2 bucket, prefix `http_requests/<zone_alias>/<date>/`; optional ClickHouse table `raw_logs_http`. PostgreSQL never holds a raw record. | Project policy |
+| Classification | **Restricted**, because the record contains a client IP that can be tied to a person. Listed in the threat model as asset A12 and boundary TB-8 (§5.16). | Project policy |
+| Retention | 90 days by default, maximum 12 months, matching threat model §3; the value is recorded in the ingest manifest. | Project policy |
+| Access control | Separate credentials: loader R2 read-only S3 credential, loader ClickHouse insert credential, query-service ClickHouse read credential. No tool takes a bucket, key, table or SQL string; the only agent-reachable read path is the Phase 3 query service. | Project policy |
+| Encryption at rest | R2 encrypts all objects and metadata with AES-256 using Cloudflare-managed keys, automatically. ClickHouse encryption is a deployment property: the design requires storage-layer encryption with provider-managed keys and records the setting in the runbook `[U]` — probe the volume encryption flag in the deployment manifest. | [V-docs](https://developers.cloudflare.com/r2/reference/data-security/) |
+| Deletion | R2 lifecycle rule expires the prefix after the retention period; objects are typically removed within 24 hours of expiry. ClickHouse `TTL` expires rows after the same period, and with day partitioning the expired partitions are removed by the TTL merge. Deletion is verified by listing the prefix and counting partitions, not by trusting the job. | [V-docs](https://developers.cloudflare.com/r2/buckets/object-lifecycles/), [V-docs](https://clickhouse.com/docs/reference/engines/table-engines/mergetree-family/mergetree) |
+| Backups | A backup or replica of either store inherits the same classification and retention; enabling one is an operator decision recorded with the archive configuration. | Project policy |
+
+**Client IP handling.** No tool returns a raw request record containing a client IP unless
+the caller holds the `pii:read` grant. Without it, `cloudflare.logs.query` replaces
+`client_ip` with a keyed, truncated hash (`ip_hash`, first 16 hex characters); in aggregate
+results an IP dimension is returned as `ip_hash` or omitted, never as the raw address. With
+the grant, unmasking still requires the explicit `pii_unmask: true` argument defined in the
+threat model, is row-capped and is audited. Hashes are keyed with the deployment pepper so
+the same address cannot be correlated across deployments. (Project policy.)
+
 ### Failure modes
 
 | Failure | Detection | Handling |
@@ -418,7 +518,7 @@ flowchart LR
 | Budget exceeded | Monthly uncompressed bytes ≥ budget | Stop ingesting, keep files in R2, surface a tool error; disabling the job is an operator action. |
 
 Partitioning: one ClickHouse partition per UTC day, `ORDER BY (zone_alias, event_date, ray_id)`;
-30 days hot by default, with R2 as the long-term store and replay source.
+30 days hot by default, matching the archive retention above, with R2 as the replay source.
 
 ## 11. Security analytics semantics
 
@@ -519,6 +619,7 @@ An agent that receives `sampled: true` must phrase its answer as an estimate; to
 | Security Events backed by `firewallEventsAdaptive`, 31-day retention | developers.cloudflare.com | 2026-11-18 | Confirmed; matches baseline F17 |
 | Instant Logs (Business+) and Logpull (Enterprise) availability | developers.cloudflare.com | 2026-11-18 | Confirmed |
 | Logpush API requires `Logs: Write` for all operations; token verification returns id/status only | developers.cloudflare.com | 2026-11-18 | Confirmed; new constraint, §7 |
+| R2 AES-256 encryption at rest with Cloudflare-managed keys; lifecycle deletion within 24 h of expiry; ClickHouse table `TTL` | developers.cloudflare.com, clickhouse.com | 2026-11-19 | Confirmed; §10 data handling |
 | Live API behaviour, dataset availability, plan name | Cloudflare account | not run | `[U]` — no credentials this session; see the [evidence file](../evidence/cloudflare.md) |
 
 ### Open questions
@@ -531,7 +632,8 @@ An agent that receives `sampled: true` must phrase its answer as an estimate; to
 | OQ-4 | Does `firewallEventsAdaptive` expose a request identifier usable for deduplication (for example `rayName`)? | Introspect the node's field list. |
 | OQ-5 | Is `GET /zones/{zone_id}/subscription` readable with `Zone Read` alone, and can a token read its own policies (`GET /user/tokens/{id}`) without an extra permission? | Probe both with the read-only token; record 200 vs 403. |
 | OQ-6 | What is the real GraphQL freshness at minute and hour grain? | Compare bucket totals at T+1, T+5 and T+15 minutes. |
-| OQ-7 | Is an account-scoped Logpush job for `http_requests` available on Pro? | Probe `GET /accounts/{id}/logpush/jobs`; job creation is an operator action, never the gateway's. |
+| OQ-7 | Is a zone-scoped Logpush job for `http_requests` available on Pro? | Probe `GET /zones/{id}/logpush/jobs`; job creation is an operator action, never the gateway's. |
+| OQ-8 | Does `Logs: Write` alone authorize the zone-scoped Logpush GETs, or is `Zone Read` also required? | Probe `GET /zones/{id}/logpush/jobs` with the log-inspection token; a 403 means add `Zone Read` to the profile. |
 
 ### Decision record
 
@@ -540,11 +642,12 @@ analytics boundary.
 
 | ID | Decision | Rationale |
 |---|---|---|
-| D1 | The module is read-only, with no mutation path in the client. | Safety and auditability; the gateway is an observer. |
-| D2 | GraphQL Analytics is the primary plane; Logpush is Phase 3+ and opt-in. | Zero marginal cost, 31-day retention on all plans, no write-scoped credential needed. |
+| D1 | The gateway contains no Cloudflare mutation code path; the default credential is read-only, and the opt-in log-inspection profile is a separate credential and client (§7). | Safety and auditability; the gateway is an observer, but the credential is a separate capability from the code. |
+| D2 | GraphQL Analytics is the primary plane; Logpush is Phase 3+ and opt-in. | Zero marginal cost, 31-day retention on all plans, no write-scoped credential in the default profile. |
 | D3 | Raw logs never enter PostgreSQL; ClickHouse is optional for Phase 3+. | Volume and query shape; Postgres stays transactional. |
 | D4 | Raw GraphQL passthrough is forbidden; only reviewed templates execute. | Quota safety, injection resistance, reproducibility. |
-| D5 | Logpush job inspection is a separate, opt-in credential profile. | Cloudflare requires `Logs: Write` even for reads; the residual risk must be explicit. |
+| D5 | Logpush job inspection uses a separate, opt-in credential and client, never loaded into the analytics client. | Cloudflare requires `Logs: Write` even for reads; the residual risk must be explicit and contained. |
 | D6 | Bot score is `null`, never `0`, when unavailable. | A zero reads as "definitely human", which is wrong. |
 | D7 | Logpush defaults to OFF with a hard monthly byte budget. | Cost is the only unbounded risk in this module. |
 | D8 | Every response carries the effective query and quality flags. | An agent must be able to say how sure it is and how the number was produced. |
+| D9 | One Cloudflare instance is exactly one zone; tools take no zone selector. | A zone selector would be a second authorization dimension the RBAC matrix and audit schema do not model; multiple zones are multiple instances. |

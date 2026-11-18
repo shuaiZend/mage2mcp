@@ -75,10 +75,14 @@ Low: standard library plus Prometheus client.
 ## Follow-up
 
 - Phase 1: implement logging, metrics, health, and audit writer.
-- Audit failure policy: **fail closed for write and destructive tools**, fail open with a
-  warning for read tools. An audit write that cannot be persisted must prevent the write
-  from being reported as successful; the operation returns `internal` with a correlation
-  id and is recorded in the local fallback log.
+- Audit failure policy, two phases:
+  - **Intent row (gate):** for write and destructive tools, no durable intent row means no
+    execution; the call returns `internal` with a correlation id. For reads, a failed intent
+    row logs a warning and proceeds with `audit_state=degraded`.
+  - **Terminal row (record):** if the upstream operation succeeded but the terminal row
+    cannot be written, the result is returned with `audit_state=pending`. It is **not**
+    reported as an error, because an error would trigger the duplicate retry that ADR-0010
+    exists to prevent. A recovery job resolves pending rows by reading the entity back.
 - Post-1.0: OpenTelemetry tracing.
 
 ## References

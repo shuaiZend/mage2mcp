@@ -8,27 +8,46 @@ permissions:
   contents: read
 
 jobs:
-  release:
-    name: release
+  # Everything that compiles or executes third-party code runs here, with a
+  # read-only token. Nothing in this job can publish, sign, or mint an OIDC token.
+  verify:
+    name: verify
     runs-on: ubuntu-latest
-    environment: release
     permissions:
-      contents: write
-      packages: write
-      id-token: write
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.27.x"
           cache: true
+      - name: Verify the tag is on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Verify the commit passed CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          conclusion=$(gh api "repos/${{ github.repository }}/commits/${GITHUB_SHA}/check-runs" \
+            --jq '[.check_runs[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
+          if [ "$conclusion" != "0" ]; then
+            echo "::error::The tagged commit has failing or pending checks."
+            exit 1
+          fi
       - name: Verify module integrity
         run: go mod verify
-      - name: Run tests before release
-        run: go test ./...
+      - name: Test
+        run: go test -race ./...
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+          govulncheck ./...
       - name: Build release binaries
         shell: bash
         run: |
@@ -45,7 +64,7 @@ jobs:
               -o "$out" ./cmd/server
           done
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           path: .
           format: spdx-json
@@ -55,30 +74,54 @@ jobs:
           go run github.com/google/go-licenses@v1.6.0 save ./... --save_path=dist/licenses --force
           tar -czf dist/THIRD_PARTY_NOTICES.tar.gz -C dist licenses
           rm -rf dist/licenses
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-dist
+          path: dist
+          if-no-files-found: error
+
+  # This job never compiles or executes repository code. It receives the
+  # verified artifacts and only signs, attests, and publishes them.
+  publish:
+    name: publish
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-dist
+          path: dist
       - name: Generate checksums
         shell: bash
         run: cd dist && sha256sum ./* > checksums.txt
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Sign artifacts (keyless)
         shell: bash
         run: |
           set -euo pipefail
           for f in dist/*; do
-            case "$f" in
-              dist/checksums.txt) continue ;;
-            esac
             cosign sign-blob --yes --bundle "${f}.bundle" "$f"
           done
       - name: Set up QEMU
         if: hashFiles('Dockerfile') != ''
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - name: Set up Buildx
         if: hashFiles('Dockerfile') != ''
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Container metadata
         id: meta
         if: hashFiles('Dockerfile') != ''
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/shuaizend/mage2mcp
           tags: |
@@ -88,7 +131,7 @@ jobs:
       - name: Build and push container image
         id: build
         if: hashFiles('Dockerfile') != ''
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: true
@@ -99,8 +142,12 @@ jobs:
       - name: Sign container image (keyless)
         if: hashFiles('Dockerfile') != ''
         run: cosign sign --yes "ghcr.io/shuaizend/mage2mcp@${{ steps.build.outputs.digest }}"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: "dist/*"
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/*
           generate_release_notes: true

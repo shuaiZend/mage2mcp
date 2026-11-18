@@ -6,7 +6,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "lint:md": "markdownlint-cli2 \"**/*.md\" \"#node_modules\"",
-    "lint:links": "find . -name '*.md' -not -path './node_modules/*' -not -path './.git/*' -print0 | xargs -0 -n1 markdown-link-check -q -c .markdown-link-check.json"
+    "lint:links": "find . -name '*.md' -not -path './node_modules/*' -not -path './.git/*' -print0 | xargs -0 -n1 markdown-link-check -q -c .markdown-link-check.json",
+    "test:contracts": "node scripts/check-contracts.mjs"
   },
   "devDependencies": {
     "markdown-link-check": "3.15.0",

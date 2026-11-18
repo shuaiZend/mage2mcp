@@ -59,7 +59,7 @@ Rules:
 | `inputSchema` | yes | JSON Schema 2020-12, object root, `additionalProperties: false` |
 | `outputSchema` | yes for structured results | Same dialect |
 | `capability` | yes | Capability ID from the owning module |
-| `permission` | yes | `read`, `write`, or `destructive` scope string |
+| `permission` | yes | `read`, `write`, `destructive`, or `admin` scope string |
 | `timeout` | yes | Default 30 s; max 120 s synchronous |
 | `annotations` | yes | `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` |
 | `audit` | implicit | Identity, instance, param hash, outcome recorded for every call |
@@ -132,11 +132,11 @@ Errors are returned as tool errors (`isError: true`) with:
 | `read` | Reads upstream data; no side effects | `magento.product.get`, `ga4.analytics.report` |
 | `write` | Creates or updates. **Confirmation is required by default**; an operator may disable it per tool only for additive writes that accept no free-form text | `magento.product.create`, `magento.inventory.assign` |
 | `destructive` | Deletes or overwrites. Confirmation is always required | `magento.product.delete`, `magento.configurable.remove_child`, `magento.import.start` |
-| `admin` | Inspects gateway or credential metadata; never returned as data | `cloudflare.logs.jobs` |
+| `admin` | Inspects gateway or credential metadata only (job metadata, never upstream content or destination credentials) | `cloudflare.logs.jobs` |
 
 Roles map to scopes: `viewer` → read; `analyst` → read; `operator` → read + write;
 `admin` → read + write + destructive. A deployment may narrow this per instance.
-Cloudflare and GA4 tools are always `read`.
+Cloudflare and GA4 tools are read-only except `cloudflare.logs.jobs`, which is `admin` and returns metadata only.
 
 ## 7. Catalog
 
@@ -200,7 +200,7 @@ Cloudflare and GA4 tools are always `read`.
 | `magento.order.get` | read | Fetch one order with items and totals |
 | `magento.order.search` | read | Search orders by date, status, store, customer email hash |
 | `magento.order.summary` | read | Aggregated sales for a time range: revenue, orders, AOV, top SKUs |
-| `magento.import.validate` | read | Validate a CSV/JSON import (XLSX is converted to CSV before validation) and return a preview |
+| `magento.import.validate` | read | Validate a CSV/JSON/XLSX import through the bounded converter and return a preview |
 | `magento.import.start` | destructive | Start an async import (requires confirmation) |
 | `magento.import.status` | read | Batch status by `batch_id`, counts, and per-item errors |
 | `magento.import.resume` | destructive | Resume a paused or failed batch from its last checkpoint; confirmation is bound to the batch id, not the payload |
@@ -238,6 +238,7 @@ entitlement for a dataset is checked per query and reported as
 | `cloudflare.security.events` | read | Sampled security events with action and rule metadata |
 | `cloudflare.security.summary` | read | Counts by action, service, and rule for a window |
 | `cloudflare.security.bots` | read | Bot-related events where the plan exposes them |
+| `cloudflare.logs.query` | read | Request-level queries over the Logpush archive (R2/ClickHouse). Requires Logpush ingestion to be enabled and a `pii:read` grant to return client IPs; otherwise IPs are truncated. Bounded time range and row cap |
 | `cloudflare.logs.jobs` | admin | List Logpush job metadata (id, name, enabled, dataset, last error). The destination configuration is never returned, because it contains storage credentials. Cloudflare requires `Logs: Write` even for this GET; registered only when the optional log-inspection profile is enabled |
 
 ### 7.7 GA4
@@ -257,6 +258,10 @@ entitlement for a dataset is checked per query and reported as
 | `ga4.property.capabilities` | read | Capability profile: ecommerce present, currency, time zone |
 
 ### 7.8 Unified analytics
+
+`instance` is always present in the schema. When exactly one instance of a module
+exists, the server fills it from configuration and the caller may omit it; the
+schema does not change between deployments.
 
 Unified tools take `binding` instead of `instance`: a named `(magento, cloudflare, ga4)`
 triple declared in configuration. The caller must be authorized for every member
@@ -304,9 +309,9 @@ is the default and may be omitted.
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["instance", "parent", "variant_attributes", "children"],
+  "required": ["instance", "idempotency_key", "parent", "variant_attributes", "children"],
   "properties": {
-    "instance": { "type": "string" },
+    "instance": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
     "parent": {
       "type": "object",
       "additionalProperties": false,
@@ -338,8 +343,8 @@ is the default and may be omitted.
         "required": ["sku", "attributes"],
         "properties": {
           "sku": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
-          "attributes": { "type": "object", "additionalProperties": { "type": "string" } },
-          "price": { "type": "string" },
+          "attributes": { "type": "object", "additionalProperties": false, "propertyNames": { "pattern": "^[a-z0-9_]{1,64}$" }, "patternProperties": { "^[a-z0-9_]{1,64}$": { "type": "string", "maxLength": 255 } } },
+          "price": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]{1,4})?$" },
           "quantity": { "type": "integer", "minimum": 0 }
         }
       }
