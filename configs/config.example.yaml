@@ -21,6 +21,11 @@ log:
   level: "info"
   format: "json"
 
+# Optional tool surfaces. Write tools stay disabled until the confirmation
+# middleware ships; enable only in a controlled environment.
+tools:
+  writes: false
+
 # Optional PostgreSQL state store. Without it, audit is in memory and lost on
 # restart (development only).
 database:

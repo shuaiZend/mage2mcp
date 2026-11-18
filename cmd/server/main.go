@@ -166,6 +166,19 @@ func buildAuth(cfg config.Config, logger *slog.Logger) (func(http.Handler) http.
 	return auth.Middleware(verifier, logger), nil
 }
 
+// ga4TokenSource accepts either an inline service-account JSON document or a
+// static bearer token. Service-account JSON is the production form.
+func ga4TokenSource(credential string) (ga4.TokenSource, error) {
+	trimmed := strings.TrimSpace(credential)
+	if strings.HasPrefix(trimmed, "{") {
+		return ga4.NewServiceAccountTokenSource([]byte(trimmed), nil)
+	}
+	if trimmed == "" {
+		return nil, fmt.Errorf("ga4 credential is empty")
+	}
+	return ga4.StaticToken(trimmed), nil
+}
+
 // authorizeFunc returns nil when authentication is disabled (loopback-only
 // development), so the dev quickstart can call tools without an identity.
 func authorizeFunc(cfg config.Config, policy *rbac.Policy) func(context.Context, string) error {
@@ -207,6 +220,11 @@ func registerModules(cfg config.Config, reg *registry.Registry) error {
 		if err := magento.Register(reg, svc); err != nil {
 			return err
 		}
+		if cfg.Tools.Writes {
+			if err := magento.RegisterWrites(reg, svc); err != nil {
+				return err
+			}
+		}
 	}
 	if cfg.Modules.Cloudflare.Enabled {
 		if len(cfg.Modules.Cloudflare.Instances) != 1 {
@@ -229,13 +247,20 @@ func registerModules(cfg config.Config, reg *registry.Registry) error {
 			return fmt.Errorf("ga4: exactly one instance is supported in this release")
 		}
 		inst := cfg.Modules.GA4.Instances[0]
+		tokenSource, err := ga4TokenSource(inst.Credential)
+		if err != nil {
+			return fmt.Errorf("ga4 %s: %w", inst.ID, err)
+		}
 		svc, err := ga4.NewService(ga4.Config{
-			PropertyID: inst.PropertyID, TokenSource: ga4.StaticToken(inst.Credential),
+			PropertyID: inst.PropertyID, TokenSource: tokenSource,
 		})
 		if err != nil {
 			return fmt.Errorf("ga4 %s: %w", inst.ID, err)
 		}
 		if err := ga4.Register(reg, svc); err != nil {
+			return err
+		}
+		if err := ga4.RegisterExtra(reg, svc); err != nil {
 			return err
 		}
 	}

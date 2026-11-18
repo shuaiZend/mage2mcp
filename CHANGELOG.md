@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `ga4.property.metadata` (with the compatibility validator).
 - Authorization and audit middleware around every `tools/call`, with a default-deny
   RBAC policy and an append-only in-memory recorder.
+- Magento writes behind `tools.writes`: product create/update, configurable
+  create (children → parent → links with staged, non-atomic error reporting),
+  add-child, and MSI source-item assignment; five write tools marked as requiring
+  confirmation (the confirmation middleware is the next slice, so the flag stays
+  off by default).
+- GA4 completion: service-account OAuth token source (RS256 JWT-bearer, cached,
+  single-flight), ecommerce capability probe with evidence, realtime reports, and
+  the `ga4.property.capabilities` / `ga4.analytics.realtime` tools.
 - Storage and jobs: embedded PostgreSQL migrations, connection pool, durable
   audit recorder, and a Redis/Asynq worker with a liveness task and graceful
   shutdown. The server uses durable audit when `database.url` is configured.
