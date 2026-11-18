@@ -6,7 +6,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha1" //nolint:gosec // G505: OAuth 1.0a mandates HMAC-SHA1; this is a protocol requirement, not password hashing
+	"crypto/sha1" // #nosec G505 -- OAuth 1.0a mandates HMAC-SHA1; protocol requirement, not password hashing
 	"encoding/base64"
 	"encoding/hex"
 	"io"
