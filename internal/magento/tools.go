@@ -76,13 +76,18 @@ type productSearchOutput struct {
 
 // Register adds the read-only Magento product tools to reg.
 func Register(reg *registry.Registry, svc *Service) error {
-	if reg == nil {
-		return errs.New(errs.CodeInternal, "tool registry is required")
-	}
 	if svc == nil {
 		return errs.New(errs.CodeInternal, "Magento service is required")
 	}
-	for _, tool := range []registry.Tool{newGetTool(svc), newSearchTool(svc), newImportValidateTool(svc)} {
+	return registerReadTools(reg, singleLookup(svc))
+}
+
+// registerReadTools builds the read tools against an instance lookup (ADR-0018).
+func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
+	if reg == nil {
+		return errs.New(errs.CodeInternal, "tool registry is required")
+	}
+	for _, tool := range []registry.Tool{newGetTool(lookup), newSearchTool(lookup), newImportValidateTool(lookup)} {
 		if err := reg.Register(tool); err != nil {
 			return err
 		}
@@ -103,11 +108,15 @@ func mcpTool(name, title, description, schema string) *mcp.Tool {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 	}
 }
-func newGetTool(svc *Service) registry.Tool {
+func newGetTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(getToolName, getToolTitle, getToolDescription)
 	t.Register = func(srv *mcp.Server) error {
 		mcp.AddTool(srv, mcpTool(getToolName, getToolTitle, getToolDescription, productGetSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productGetInput) (*mcp.CallToolResult, productGetOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productGetOutput{}, err
+				}
 				product, err := svc.Get(ctx, in.SKU)
 				if err != nil {
 					return nil, productGetOutput{}, err
@@ -118,7 +127,7 @@ func newGetTool(svc *Service) registry.Tool {
 	}
 	return t
 }
-func newSearchTool(svc *Service) registry.Tool {
+func newSearchTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(searchToolName, searchToolTitle, searchToolDescription)
 	t.Register = func(srv *mcp.Server) error {
 		mcp.AddTool(srv, mcpTool(searchToolName, searchToolTitle, searchToolDescription, productSearchSchema),
@@ -130,6 +139,10 @@ func newSearchTool(svc *Service) registry.Tool {
 						return nil, productSearchOutput{}, invalidf("cursor must be a non-negative decimal row offset")
 					}
 					offset = parsed
+				}
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productSearchOutput{}, err
 				}
 				products, total, err := svc.Search(ctx, ProductQuery{
 					SKU: in.SKU, NameContains: in.Query, TypeID: in.TypeID,
@@ -176,7 +189,7 @@ const importValidateSchema = `{
   }
 }`
 
-func newImportValidateTool(svc *Service) registry.Tool {
+func newImportValidateTool(lookup serviceLookup) registry.Tool {
 	return registry.Tool{
 		Name: importValidateToolName, Title: importValidateToolTitle,
 		Description: importValidateToolDescription, Capability: importValidateCapability,
@@ -190,6 +203,10 @@ func newImportValidateTool(svc *Service) registry.Tool {
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 			}, func(ctx context.Context, _ *mcp.CallToolRequest, in importValidateInput) (*mcp.CallToolResult, importValidateOutput, error) {
 				data, err := DecodeImportPayload(in.Data)
+				if err != nil {
+					return nil, importValidateOutput{}, err
+				}
+				svc, err := lookup(in.Instance)
 				if err != nil {
 					return nil, importValidateOutput{}, err
 				}
