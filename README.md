@@ -6,9 +6,10 @@ typed, audited, read-only-by-default tools.
 
 > **Status: Phase 1 — foundation.**
 > A runnable MCP server exists: Streamable HTTP, Cloudflare Access JWT
-> authentication, RBAC, audit, Prometheus metrics, and the `platform.info` tool.
-> Magento, Cloudflare, and GA4 tool implementations are in progress. There is no
-> release yet, and interfaces may change with an ADR before 1.0.
+> authentication, RBAC, audit, Prometheus metrics, and read-only tools for Magento
+> products, Cloudflare analytics/security, and GA4 traffic/metadata. Write tools,
+> unified analytics, and durable storage are in progress. There is no release yet,
+> and interfaces may change with an ADR before 1.0.
 
 ## What exists today
 
@@ -164,7 +165,7 @@ today. No capability is design-complete or implemented yet.
 | Platform | Audit log, Prometheus metrics, health endpoints | Planned |
 | Platform | YAML + environment configuration with validation | Planned |
 | Platform | Container image and Compose stack | Planned |
-| Magento 2 | Product read for simple, configurable, virtual, downloadable, and bundle products | Design in progress |
+| Magento 2 | Product read for simple, configurable, virtual, downloadable, and bundle products | Implemented (read-only) |
 | Magento 2 | Product writes via REST, including configurable options and child products | Planned |
 | Magento 2 | EAV attribute and attribute-set discovery | Planned |
 | Magento 2 | MSI inventory read and bulk source operations | Planned |
@@ -175,13 +176,13 @@ today. No capability is design-complete or implemented yet.
 | Magento 2 | Bulk and asynchronous operation status polling | Planned |
 | Magento 2 | GraphQL read-only storefront verification | Planned |
 | Cloudflare | Zone, plan, and dataset inventory (read-only) | Planned |
-| Cloudflare | GraphQL Analytics queries | Design in progress |
-| Cloudflare | Security Events queries | Planned |
+| Cloudflare | GraphQL Analytics queries | Implemented (traffic) |
+| Cloudflare | Security Events queries | Implemented (summary) |
 | Cloudflare | Logpush job inventory and field discovery (opt-in, read-only) | Planned |
 | Cloudflare | Logpush log analysis from a customer-configured destination | Planned |
 | Cloudflare | WAF and bot event inspection (read-only) | Planned |
 | GA4 | Property metadata and dimension/metric compatibility discovery | Design in progress |
-| GA4 | Traffic, acquisition, and engagement reports | Planned |
+| GA4 | Traffic, acquisition, and engagement reports | Implemented (traffic) |
 | GA4 | Ecommerce reports with an explicit data-presence probe | Planned |
 | GA4 | Realtime reports | Planned |
 | GA4 | Quota-aware execution and backoff | Planned |

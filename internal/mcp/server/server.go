@@ -14,6 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
 )
 
@@ -26,6 +27,11 @@ type Options struct {
 	Metrics        http.Handler
 	SessionTimeout time.Duration
 	MaxBodyBytes   int64
+	// Authorize is consulted for every tools/call. A nil Authorize allows all
+	// calls and is only acceptable in local development without authentication.
+	Authorize func(ctx context.Context, tool string) error
+	// Audit records intent and outcome for every tools/call.
+	Audit func(ctx context.Context, tool, phase, state, errorCode string)
 }
 
 // InfoInput is empty: platform.info takes no parameters.
@@ -48,7 +54,56 @@ func NewMCP(opts Options) (*mcp.Server, error) {
 			return nil, err
 		}
 	}
+	installPolicy(srv, opts)
 	return srv, nil
+}
+
+// installPolicy wraps tools/call with authorization and audit. The MCP session
+// context carries the verified identity from the HTTP auth middleware.
+func installPolicy(srv *mcp.Server, opts Options) {
+	if opts.Authorize == nil && opts.Audit == nil {
+		return
+	}
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != "tools/call" {
+				return next(ctx, method, req)
+			}
+			call, ok := req.(*mcp.CallToolRequest)
+			if !ok {
+				return next(ctx, method, req)
+			}
+			tool := call.Params.Name
+			if opts.Audit != nil {
+				opts.Audit(ctx, tool, "intent", "pending", "")
+			}
+			if opts.Authorize != nil {
+				if err := opts.Authorize(ctx, tool); err != nil {
+					if opts.Audit != nil {
+						opts.Audit(ctx, tool, "outcome", "denied", string(errs.CodeOf(err)))
+					}
+					return deniedResult(err), nil
+				}
+			}
+			result, err := next(ctx, method, req)
+			if opts.Audit != nil {
+				state, code := "succeeded", ""
+				if err != nil {
+					state, code = "failed", string(errs.CodeOf(err))
+				}
+				opts.Audit(ctx, tool, "outcome", state, code)
+			}
+			return result, err
+		}
+	})
+}
+
+func deniedResult(err error) *mcp.CallToolResult {
+	code := errs.CodeOf(err)
+	return &mcp.CallToolResult{
+		IsError: true,
+		Content: []mcp.Content{&mcp.TextContent{Text: string(code) + ": " + err.Error()}},
+	}
 }
 
 func registerPlatformInfo(srv *mcp.Server, opts Options) {
