@@ -57,7 +57,7 @@ Rules:
 | `title` | yes | ≤ 60 characters, human-readable |
 | `description` | yes | What it does, what it does not do, data source, read/write |
 | `inputSchema` | yes | JSON Schema 2020-12, object root, `additionalProperties: false` |
-| `outputSchema` | yes for structured results | Same dialect |
+| `outputSchema` | yes for structured results | Same dialect; every tool that returns data declares one before registration |
 | `capability` | yes | Capability ID from the owning module |
 | `permission` | yes | `read`, `write`, `destructive`, or `admin` scope string |
 | `timeout` | yes | Default 30 s; max 120 s synchronous |
@@ -110,6 +110,15 @@ Every tool returns structured content with a stable shape:
 
 Analytics results add `time_zone` and `currency`. A result missing `meta.source`
 or `meta.retrieved_at` is a contract violation.
+
+Structured results are returned in `structuredContent` and, for backward
+compatibility, the same JSON is also returned in a `TextContent` block. A result
+larger than the 8 KiB inline cap is stored as an object and returned as a
+`resource_link`; it is never truncated.
+
+Invalid arguments are rejected by the SDK as protocol errors before the handler
+runs. Failures during execution are tool errors (`isError: true`) with a typed
+`errs.Code`.
 
 Errors are returned as tool errors (`isError: true`) with:
 
@@ -396,6 +405,10 @@ contain upstream data. Rules:
 | Report (GA4, Cloudflare) | 60 s | Return `upstream_timeout` with a narrower-window hint |
 | Import start | 30 s | Returns job handle; execution is async |
 | Import status | 15 s | Reads local job state, not upstream |
+
+Long-running tools honor `progressToken` with `notifications/progress` and stop
+upstream work when `notifications/cancelled` arrives. The cancellation path is
+tested by asserting that no upstream request is issued after cancellation.
 | Storefront verification | 60 s | May wait for cache warm-up; documented |
 
 ## 12. Open questions

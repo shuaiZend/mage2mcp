@@ -287,6 +287,7 @@ Data API 只返回聚合数据。维度与指标的兼容性按字段对逐对�
 | [`docs/module-boundaries.md`](docs/module-boundaries.md) | 数据源契约、能力声明、依赖规则 |
 | [`docs/database-design.md`](docs/database-design.md) | 用于配置、审计和任务状态的 PostgreSQL Schema |
 | [`docs/mcp-tools.md`](docs/mcp-tools.md) | 工具命名、输入输出 Schema、风险等级、确认模型 |
+| [`docs/mcp-conformance.md`](docs/mcp-conformance.md) | MCP 一致性矩阵：工具、传输、授权，以及对应的测试 |
 | [`docs/unified-analytics.md`](docs/unified-analytics.md) | 指标语义、连接键、跨源报告定义 |
 | [`docs/development-plan.md`](docs/development-plan.md) | 阶段计划、交付物、退出标准 |
 | [`docs/security/threat-model.md`](docs/security/threat-model.md) | 资产、信任边界、威胁、缓解措施 |

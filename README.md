@@ -332,6 +332,7 @@ being created in parallel and will exist before this README is merged.
 | [`docs/module-boundaries.md`](docs/module-boundaries.md) | Data source contract, capability declaration, dependency rules |
 | [`docs/database-design.md`](docs/database-design.md) | PostgreSQL schema for configuration, audit, and job state |
 | [`docs/mcp-tools.md`](docs/mcp-tools.md) | Tool naming, input and output schemas, risk classes, confirmation model |
+| [`docs/mcp-conformance.md`](docs/mcp-conformance.md) | MCP conformance matrix: tools, transport, authorization, and the tests that prove them |
 | [`docs/unified-analytics.md`](docs/unified-analytics.md) | Metric semantics, join keys, cross-source report definitions |
 | [`docs/development-plan.md`](docs/development-plan.md) | Phase plan, deliverables, exit criteria |
 | [`docs/security/threat-model.md`](docs/security/threat-model.md) | Assets, trust boundaries, threats, mitigations |

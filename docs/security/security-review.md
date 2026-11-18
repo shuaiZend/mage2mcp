@@ -76,6 +76,10 @@ Status legend: **Designed** (this phase), **Planned** (implementation scheduled)
 | E5 | Startup credential-scope probe: read-only mode requires a 403 on a write endpoint | `internal/magento` | Integration | Designed |
 | L4 | Audit intent row written before execution, terminal outcome appended after | `internal/security/audit` | Integration | Designed |
 | D1 | R2 and ClickHouse classified as Restricted, with retention and access control | `internal/logs` | Review + test | Designed |
+| A9 | No token passthrough: the caller JWT is never forwarded upstream | `internal/core/httpsec` | Integration | Designed |
+| A10 | Audience binding: token `aud` equals the configured application | `internal/security/jwt` | Adversarial | Designed |
+| A11 | Origin validation and DNS-rebinding protection stay enabled | `internal/mcp/transport` | Adversarial | Designed |
+| A12 | Session IDs are random and bound to the verified identity | `internal/mcp` | Integration | Designed |
 
 ## 3. Authentication
 
