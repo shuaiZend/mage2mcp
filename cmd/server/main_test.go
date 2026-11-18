@@ -63,14 +63,17 @@ func TestRegisterModulesBuildsTools(t *testing.T) {
 	}
 }
 
-func TestRegisterModulesRejectsMultipleInstances(t *testing.T) {
+func TestRegisterModulesRejectsMultiInstanceWithoutReadSupport(t *testing.T) {
+	// Cloudflare and GA4 support multiple instances; this test guards the
+	// Magento write path, which still requires one store.
 	cfg := config.Default()
+	cfg.Tools.Writes = true
 	cfg.Modules.Magento = config.Module{Enabled: true, Instances: []config.Instance{
 		{ID: "a", Endpoint: "https://a.example.com", StoreCode: "default", Credential: "bearer:x"},
 		{ID: "b", Endpoint: "https://b.example.com", StoreCode: "default", Credential: "bearer:y"},
 	}}
 	if err := registerModules(cfg, registry.New()); err == nil {
-		t.Fatal("expected multi-instance to be rejected")
+		t.Fatal("expected multi-store writes to be rejected")
 	}
 }
 
@@ -167,5 +170,36 @@ func TestRegisterModulesSupportsMultipleGA4Properties(t *testing.T) {
 		if _, ok := reg.Lookup(name); !ok {
 			t.Fatalf("%s not registered", name)
 		}
+	}
+}
+
+func TestRegisterModulesSupportsMultipleMagentoStoresForReads(t *testing.T) {
+	cfg := config.Default()
+	cfg.Auth.Enabled = false
+	cfg.Modules.Magento = config.Module{Enabled: true, Instances: []config.Instance{
+		{ID: "store-us", Endpoint: "https://us.example.com", StoreCode: "default", Credential: "bearer:t"},
+		{ID: "store-eu", Endpoint: "https://eu.example.com", StoreCode: "default", Credential: "bearer:t"},
+	}}
+	reg := registry.New()
+	if err := registerModules(cfg, reg); err != nil {
+		t.Fatalf("registerModules: %v", err)
+	}
+	for _, name := range []string{"magento.product.get", "magento.product.search", "magento.import.validate"} {
+		if _, ok := reg.Lookup(name); !ok {
+			t.Fatalf("%s not registered", name)
+		}
+	}
+}
+
+func TestRegisterModulesRejectsMultiStoreWrites(t *testing.T) {
+	cfg := config.Default()
+	cfg.Auth.Enabled = false
+	cfg.Tools.Writes = true
+	cfg.Modules.Magento = config.Module{Enabled: true, Instances: []config.Instance{
+		{ID: "store-us", Endpoint: "https://us.example.com", StoreCode: "default", Credential: "bearer:t"},
+		{ID: "store-eu", Endpoint: "https://eu.example.com", StoreCode: "default", Credential: "bearer:t"},
+	}}
+	if err := registerModules(cfg, registry.New()); err == nil {
+		t.Fatal("multi-store writes must be rejected until they are resolver-aware")
 	}
 }

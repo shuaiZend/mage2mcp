@@ -230,29 +230,46 @@ func registerModules(cfg config.Config, reg *registry.Registry) error {
 	var cloudflareSvc *cloudflare.Service
 	var ga4Svc *ga4.Service
 	if cfg.Modules.Magento.Enabled {
-		if len(cfg.Modules.Magento.Instances) != 1 {
-			return fmt.Errorf("magento: exactly one instance is supported in this release")
+		services := make(map[string]*magento.Service, len(cfg.Modules.Magento.Instances))
+		for _, inst := range cfg.Modules.Magento.Instances {
+			signer, err := magentoSigner(inst.Credential)
+			if err != nil {
+				return fmt.Errorf("magento %s: %w", inst.ID, err)
+			}
+			client, err := magento.NewClient(magento.ClientConfig{
+				BaseURL: inst.Endpoint, StoreCode: inst.StoreCode, Signer: signer,
+			})
+			if err != nil {
+				return fmt.Errorf("magento %s: %w", inst.ID, err)
+			}
+			svc, err := magento.NewService(client)
+			if err != nil {
+				return err
+			}
+			services[inst.ID] = svc
 		}
-		inst := cfg.Modules.Magento.Instances[0]
-		signer, err := magentoSigner(inst.Credential)
-		if err != nil {
-			return fmt.Errorf("magento %s: %w", inst.ID, err)
-		}
-		client, err := magento.NewClient(magento.ClientConfig{
-			BaseURL: inst.Endpoint, StoreCode: inst.StoreCode, Signer: signer,
-		})
-		if err != nil {
-			return fmt.Errorf("magento %s: %w", inst.ID, err)
-		}
-		svc, err := magento.NewService(client)
-		if err != nil {
-			return err
-		}
-		if err := magento.Register(reg, svc); err != nil {
-			return err
-		}
-		if cfg.Tools.Writes {
-			if err := magento.RegisterWrites(reg, svc); err != nil {
+		if len(services) == 1 {
+			for _, svc := range services {
+				if err := magento.Register(reg, svc); err != nil {
+					return err
+				}
+				if cfg.Tools.Writes {
+					if err := magento.RegisterWrites(reg, svc); err != nil {
+						return err
+					}
+				}
+			}
+		} else {
+			// Write tools are not yet resolver-aware: refuse rather than apply a
+			// write to the wrong store.
+			if cfg.Tools.Writes {
+				return fmt.Errorf("magento: write tools require exactly one store in this release")
+			}
+			resolver, err := magento.NewResolver(services)
+			if err != nil {
+				return err
+			}
+			if err := magento.RegisterWithResolver(reg, resolver); err != nil {
 				return err
 			}
 		}
