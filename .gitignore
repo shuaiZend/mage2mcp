@@ -17,6 +17,7 @@ npm-debug.log*
 
 # Environment and secrets
 .env
+config.yaml
 .env.*
 !.env.example
 *.pem
