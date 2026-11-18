@@ -178,10 +178,11 @@ func toolErrorResult(err error) *mcp.CallToolResult {
 }
 
 func deniedResult(err error) *mcp.CallToolResult {
-	code := errs.CodeOf(err)
+	code := string(errs.CodeOf(err))
 	return &mcp.CallToolResult{
-		IsError: true,
-		Content: []mcp.Content{&mcp.TextContent{Text: string(code) + ": " + err.Error()}},
+		IsError:           true,
+		StructuredContent: map[string]any{"code": code, "message": err.Error()},
+		Content:           []mcp.Content{&mcp.TextContent{Text: code + ": " + err.Error()}},
 	}
 }
 
