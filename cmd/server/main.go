@@ -97,7 +97,7 @@ func run() error {
 		Registry:  reg,
 		Authorize: authorizeFunc(cfg, policy),
 		Confirm:   confirmSvc,
-		Audit: func(ctx context.Context, tool, phase, state, code string) {
+		Audit: func(ctx context.Context, tool, instance, phase, state, code string) {
 			id, _ := auth.IdentityFromContext(ctx)
 			subject := "anonymous"
 			class := "anonymous"
@@ -105,7 +105,7 @@ func run() error {
 				subject, class = id.Subject, id.Class
 			}
 			_ = auditor.Record(ctx, audit.Event{
-				Subject: subject, IdentityClass: class, Tool: tool,
+				Subject: subject, IdentityClass: class, Tool: tool, Instance: instance,
 				Decision: "allow", Phase: phase, State: state, ErrorCode: code,
 			})
 		},

@@ -103,7 +103,8 @@ tests. The pattern is identical across modules.
 | Step | Status |
 |---|---|
 | GA4 resolver (`internal/ga4/resolver.go`) with single-instance fast path and tests | Done |
-| GA4 tools resolve `instance` through the resolver; instance enters RBAC and audit | Next |
+| Audit records the requested instance on every tool call | Done |
+| GA4 tools resolve `instance` through the resolver; instance enters RBAC | Next |
 | Cloudflare tools resolve `instance`; configuration accepts N zones | Done |
 | Cloudflare resolver (`internal/cloudflare/resolver.go`) with tests | Done |
 | Magento resolver (`internal/magento/resolver.go`) with tests | Done |
