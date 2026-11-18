@@ -17,7 +17,8 @@ const fail = (message) => failures.push(message);
 const TOOL_RE = /^\| `((?:magento|cloudflare|ga4|unified|platform)\.[a-z0-9_.]+)` \| ([a-z]+) \|/gm;
 const NAME_RE = /^(magento|cloudflare|ga4|unified|platform)\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const SCOPES = new Set(["read", "write", "destructive", "admin"]);
-const FORBIDDEN_TOOLS = ["execute_api", "execute_sql", "raw_graphql", "run_sql"];
+const FORBIDDEN_TOOLS = ["execute_api", "execute_sql", "raw_graphql", "run_sql", "execute"];
+const MCP_NAME_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 
 const toolsDoc = readFileSync(join(root, "docs/mcp-tools.md"), "utf8");
 const seen = new Map();
@@ -27,6 +28,7 @@ for (const match of toolsDoc.matchAll(TOOL_RE)) {
   const [, name, scope] = match;
   toolCount += 1;
   if (!NAME_RE.test(name)) fail(`tool name does not match the naming grammar: ${name}`);
+  if (!MCP_NAME_RE.test(name)) fail(`tool name violates the MCP character/length rule: ${name}`);
   if (!SCOPES.has(scope)) fail(`tool ${name} has unknown scope "${scope}"`);
   if (seen.has(name)) fail(`duplicate tool name: ${name}`);
   seen.set(name, scope);
@@ -80,6 +82,22 @@ if (duplicates.length > 0) fail(`duplicate ADR numbers: ${duplicates.join(", ")}
 adrNumbers.forEach((value, index) => {
   if (value !== index + 1) fail(`ADR numbering gap at ${String(value).padStart(4, "0")}`);
 });
+
+// MCP conformance: the catalog must state the structured-content, resource-link,
+// progress, and error semantics, and the conformance document must exist.
+const conformance = join(root, "docs/mcp-conformance.md");
+const conformanceText = readFileSync(conformance, "utf8");
+for (const [label, needle] of [
+  ["tools matrix", "### 1.1 Tools"],
+  ["transport matrix", "### 1.2 Transport and sessions"],
+  ["authorization matrix", "### 1.3 Authorization and security best practices"],
+  ["test plan", "## 4. Conformance tests to implement"],
+]) {
+  if (!conformanceText.includes(needle)) fail(`docs/mcp-conformance.md is missing: ${label}`);
+}
+for (const needle of ["structuredContent", "resource_link", "progressToken", "isError"]) {
+  if (!toolsDoc.includes(needle)) fail(`docs/mcp-tools.md does not state the MCP behavior: ${needle}`);
+}
 
 // Every tool that returns a job handle must have job tools available.
 if ([...seen.keys()].some((name) => name.includes("import.start")) &&

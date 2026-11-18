@@ -162,6 +162,16 @@ MIT CLI. Two transitive repositories are archived (`gopkg.in/yaml.v3`,
 `json-iterator/go`); the first is scheduled for replacement in Phase 1, the second
 is an upstream risk we cannot fix.
 
+## 8.0 MCP conformance round
+
+After the remediation round, a best-practice review against the MCP specification
+(2025-11-25) added [mcp-conformance.md](../mcp-conformance.md) and closed five
+gaps: output-schema coverage, the text fallback for structured content, progress
+and cancellation, resource links for large results, and explicit token-passthrough
+and audience-binding rules. ADR-0017 records the decisions; the design-contract
+check now enforces the tool-name, structured-content, resource-link, progress, and
+error invariants.
+
 ## 8.1 Independent review outcomes
 
 Three reviewers who authored none of the reviewed documents returned:
