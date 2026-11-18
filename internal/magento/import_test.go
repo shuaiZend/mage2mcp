@@ -141,3 +141,42 @@ func mustJSON(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+func TestExecuteImportCreatesUpdatesAndReportsPartialFailure(t *testing.T) {
+	var created, updated int
+	server := newImportFake(t, &created, &updated)
+	defer server.Close()
+	svc := newImportServiceAgainst(t, server.URL)
+	data := []byte("sku,name,type_id,price,attribute_set_id\nNEW-1,New product,simple,9.99,4\nOLD-1,Updated name,simple,1.00,4\nFAIL-1,Boom,simple,2.00,0\n")
+	result, err := svc.ExecuteImport(context.Background(), "csv", data, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 3 || result.Created != 1 || result.Updated != 1 || result.Failed != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if created != 1 || updated != 1 {
+		t.Fatalf("upstream calls: created=%d updated=%d", created, updated)
+	}
+}
+
+func TestExecuteImportSkipsExistingWhenNotUpdating(t *testing.T) {
+	var created, updated int
+	server := newImportFake(t, &created, &updated)
+	defer server.Close()
+	svc := newImportServiceAgainst(t, server.URL)
+	result, err := svc.ExecuteImport(context.Background(), "csv", []byte("sku,name\nOLD-1,Name\n"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skipped != 1 || result.Updated != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestExecuteImportRejectsInvalidRows(t *testing.T) {
+	svc := testImportService(t)
+	if _, err := svc.ExecuteImport(context.Background(), "csv", []byte("sku,name\n,missing\n"), false); err == nil {
+		t.Fatal("invalid rows must be rejected before execution")
+	}
+}

@@ -22,7 +22,7 @@ import (
 
 var writeToolNames = []string{
 	productCreateToolName, productUpdateToolName, configurableCreateToolName,
-	configurableAddChildToolName, inventoryAssignToolName,
+	configurableAddChildToolName, inventoryAssignToolName, importExecuteToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
