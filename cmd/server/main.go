@@ -27,6 +27,7 @@ import (
 	"github.com/shuaiZend/mage2mcp/internal/observability"
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/security/auth"
+	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 	"github.com/shuaiZend/mage2mcp/internal/security/jwt"
 	"github.com/shuaiZend/mage2mcp/internal/security/rbac"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
@@ -59,8 +60,10 @@ func run() error {
 		return err
 	}
 	var auditor audit.Recorder = audit.NewMemory()
+	var confirmStore confirm.Store = confirm.NewMemoryStore()
+	var store *storage.Store
 	if cfg.Database.URL != "" {
-		store, err := storage.Open(context.Background(), storage.Config{
+		store, err = storage.Open(context.Background(), storage.Config{
 			URL: cfg.Database.URL, MaxConns: cfg.Database.MaxConns,
 		})
 		if err != nil {
@@ -71,9 +74,14 @@ func run() error {
 			return err
 		}
 		auditor = storage.NewAuditRecorder(store)
-		logger.Info("durable audit enabled", "store", "postgresql")
+		confirmStore = storage.NewConfirmStore(store)
+		logger.Info("durable audit and confirmations enabled", "store", "postgresql")
 	} else {
 		logger.Warn("database.url is not set: audit is in memory and lost on restart")
+	}
+	confirmSvc, err := confirm.NewService(confirmStore, confirm.DefaultTTL)
+	if err != nil {
+		return err
 	}
 	policy, err := rbac.New([]rbac.Grant{
 		{Role: "viewer", Tool: "*", Scope: rbac.ScopeRead, Effect: rbac.EffectAllow},
@@ -87,6 +95,7 @@ func run() error {
 		Logger:    logger,
 		Registry:  reg,
 		Authorize: authorizeFunc(cfg, policy),
+		Confirm:   confirmSvc,
 		Audit: func(ctx context.Context, tool, phase, state, code string) {
 			id, _ := auth.IdentityFromContext(ctx)
 			subject := "anonymous"

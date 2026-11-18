@@ -8,8 +8,10 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
 
-build: ## Build the server binary
+build: ## Build the server, worker, and admin binaries
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/mage2mcp ./cmd/server
+	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/mage2mcp-worker ./cmd/worker
+	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/mage2mcp-admin ./cmd/admin
 
 test: ## Run unit tests
 	$(GO) test ./...

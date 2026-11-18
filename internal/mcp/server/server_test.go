@@ -15,6 +15,8 @@ import (
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
+	"github.com/shuaiZend/mage2mcp/internal/security/auth"
+	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 )
 
 func newTestServer(t *testing.T) (*mcp.Server, *registry.Registry) {
@@ -213,5 +215,105 @@ func TestAuditReceivesIntentAndOutcome(t *testing.T) {
 	defer mu.Unlock()
 	if len(phases) < 2 || phases[0] != "intent" || phases[1] != "outcome" {
 		t.Fatalf("unexpected audit phases: %v", phases)
+	}
+}
+
+type confirmInput struct {
+	ConfirmationID string `json:"confirmation_id,omitempty"`
+	Value          string `json:"value"`
+}
+
+type confirmOutput struct {
+	OK bool `json:"ok"`
+}
+
+func TestConfirmationFlowThroughHTTP(t *testing.T) {
+	reg := registry.New()
+	tool := registry.Tool{
+		Name: "magento.product.update", Title: "Update product",
+		Description: "Test write tool.", Capability: "magento.product.write",
+		Permission: registry.PermissionWrite, Timeout: 30 * time.Second,
+		RequiresConfirmation: true,
+		Annotations:          mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false},
+		Register: func(srv *mcp.Server) error {
+			mcp.AddTool(srv, &mcp.Tool{Name: "magento.product.update", Title: "Update product",
+				Description: "Test write tool.",
+				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false}},
+				func(_ context.Context, _ *mcp.CallToolRequest, in confirmInput) (*mcp.CallToolResult, confirmOutput, error) {
+					if in.Value == "" {
+						return nil, confirmOutput{}, errs.New(errs.CodeInvalidArgument, "value is required")
+					}
+					return nil, confirmOutput{OK: true}, nil
+				})
+			return nil
+		},
+	}
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+	confirmSvc, err := confirm.NewService(confirm.NewMemoryStore(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewMCP(Options{Version: "test", Registry: reg, Confirm: confirmSvc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authMiddleware := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := auth.WithIdentity(r.Context(), &auth.Identity{Subject: "agent-1", Class: auth.ClassService})
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+	ts := httptest.NewServer(Handler(srv, Options{Registry: reg, AuthMiddleware: authMiddleware}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+
+	// First call: no confirmation id, expect confirmation_required with an id.
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "magento.product.update",
+		Arguments: map[string]any{"value": "new name"}})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected confirmation_required")
+	}
+	details, _ := res.StructuredContent.(map[string]any)
+	id, _ := details["details"].(map[string]any)["confirmation_id"].(string)
+	if id == "" {
+		t.Fatalf("no confirmation id in %+v", res.StructuredContent)
+	}
+
+	// Approve as a different human.
+	if err := confirmSvc.Approve(ctx, id, "human-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second call with the id succeeds.
+	res, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "magento.product.update",
+		Arguments: map[string]any{"value": "new name", "confirmation_id": id}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("approved call failed: %+v", res.Content)
+	}
+
+	// Replay is rejected.
+	res, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "magento.product.update",
+		Arguments: map[string]any{"value": "new name", "confirmation_id": id}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("replay must be rejected")
 	}
 }

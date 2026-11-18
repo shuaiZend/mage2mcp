@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
+	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 )
 
 func testStore(t *testing.T) *Store {
@@ -78,5 +79,31 @@ func TestAuditRejectsMissingFields(t *testing.T) {
 	rec := NewAuditRecorder(store)
 	if err := rec.Record(context.Background(), audit.Event{Tool: "x"}); err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestConfirmStoreLifecycle(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	svc, err := confirm.NewService(NewConfirmStore(store), confirm.DefaultTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []byte(`{"sku":"A-1","value":"new name"}`)
+	req, err := svc.Require(ctx, "magento.product.update", "store-us", "write", "Update A-1", "agent-1", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Approve(ctx, req.ID, "agent-1"); err == nil {
+		t.Fatal("self-approval must be rejected")
+	}
+	if err := svc.Approve(ctx, req.ID, "human-1"); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if err := svc.Consume(ctx, req.ID, "agent-1", args); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if err := svc.Consume(ctx, req.ID, "agent-1", args); err == nil {
+		t.Fatal("replay must be rejected")
 	}
 }
