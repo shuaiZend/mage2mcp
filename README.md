@@ -20,7 +20,7 @@ typed, audited, read-only-by-default tools.
 | Research baseline | [`docs/development/research-baseline.md`](docs/development/research-baseline.md) |
 | Source code | Phase 1 foundation: MCP server, auth, RBAC, audit, metrics, config, Docker |
 | Tests and CI | Unit, integration (PostgreSQL service), race, lint, security, and supply-chain gates on every PR |
-| Write tools | Implemented behind `tools.writes` (disabled by default until confirmation ships) |
+| Write tools | Product/configurable/inventory/import writes behind `tools.writes`, with two-step human approval |
 | Releases and container images | Not published yet; the release workflow is in place |
 | License and community documents | [Apache-2.0](LICENSE), [NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md) |
 

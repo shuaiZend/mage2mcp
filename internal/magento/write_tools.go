@@ -196,7 +196,7 @@ func RegisterWrites(reg *registry.Registry, svc *Service) error {
 	}
 	tools := []registry.Tool{
 		newProductCreateTool(svc), newProductUpdateTool(svc), newConfigurableCreateTool(svc),
-		newConfigurableAddChildTool(svc), newInventoryAssignTool(svc),
+		newConfigurableAddChildTool(svc), newInventoryAssignTool(svc), newImportExecuteTool(svc),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -330,4 +330,56 @@ func newInventoryAssignTool(svc *Service) registry.Tool {
 		return nil
 	}
 	return t
+}
+
+const (
+	importExecuteToolName        = "magento.import.execute"
+	importExecuteToolTitle       = "Execute a validated product import"
+	importExecuteToolDescription = "Magento write operation: executes a bounded CSV or JSON product import (base64, at most 8 MiB and 5000 rows) for the resolved instance. Existing SKUs are updated only when update_existing is true; failures are reported per row and earlier writes are not rolled back. Requires human confirmation."
+	importExecuteCapability      = "magento.import.write"
+)
+
+type importExecuteInput struct {
+	Instance       string `json:"instance"`
+	Format         string `json:"format"`
+	Data           string `json:"data_base64"`
+	UpdateExisting bool   `json:"update_existing"`
+	ConfirmationID string `json:"confirmation_id,omitempty"`
+}
+
+type importExecuteOutput struct {
+	Result *ImportResult `json:"result"`
+}
+
+const importExecuteSchema = `{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instance", "format", "data_base64"],
+  "properties": {
+    "instance": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+    "format": {"type": "string", "enum": ["csv", "json"]},
+    "data_base64": {"type": "string", "maxLength": 11184812},
+    "update_existing": {"type": "boolean", "default": false},
+    "confirmation_id": {"type": "string", "maxLength": 128}
+  }
+}`
+
+func newImportExecuteTool(svc *Service) registry.Tool {
+	tool := writeToolMetadata(importExecuteToolName, importExecuteToolTitle, importExecuteToolDescription, importExecuteCapability)
+	tool.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(importExecuteToolName, importExecuteToolTitle, importExecuteToolDescription, importExecuteSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in importExecuteInput) (*mcp.CallToolResult, importExecuteOutput, error) {
+				data, err := DecodeImportPayload(in.Data)
+				if err != nil {
+					return nil, importExecuteOutput{}, err
+				}
+				result, err := svc.ExecuteImport(ctx, in.Format, data, in.UpdateExisting)
+				if err != nil {
+					return nil, importExecuteOutput{}, err
+				}
+				return nil, importExecuteOutput{Result: result}, nil
+			})
+		return nil
+	}
+	return tool
 }

@@ -8,8 +8,10 @@ import (
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
@@ -213,4 +215,130 @@ func validateImportRow(row ImportRow, seen map[string]int) []ImportRowError {
 		}
 	}
 	return problems
+}
+
+// ImportResultRow is the outcome of one executed row.
+type ImportResultRow struct {
+	RowNumber int    `json:"row_number"`
+	SKU       string `json:"sku"`
+	Action    string `json:"action"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
+
+// ImportResult reports a partial-success execution. It never claims atomicity.
+type ImportResult struct {
+	Total   int               `json:"total"`
+	Created int               `json:"created"`
+	Updated int               `json:"updated"`
+	Skipped int               `json:"skipped"`
+	Failed  int               `json:"failed"`
+	Rows    []ImportResultRow `json:"rows"`
+}
+
+// ExecuteImport validates and executes a bounded product import.
+//
+// Rows are processed in order. A row that already exists is updated only when
+// updateExisting is true; otherwise it is skipped. Failures are recorded per
+// row and do not roll back earlier writes: the caller receives a partial-success
+// report and must decide whether to retry the failed rows.
+func (s *Service) ExecuteImport(ctx context.Context, format string, data []byte, updateExisting bool) (*ImportResult, error) {
+	preview, err := s.ValidateImport(ctx, format, data)
+	if err != nil {
+		return nil, err
+	}
+	if preview.Invalid > 0 {
+		return nil, errs.New(errs.CodeValidationFailed, "import has invalid rows; fix them before executing").
+			WithDetail("invalid_rows", fmt.Sprint(preview.Invalid))
+	}
+	rows, err := parseImportRows(format, data)
+	if err != nil {
+		return nil, err
+	}
+	result := &ImportResult{Total: len(rows)}
+	for _, row := range rows {
+		outcome := ImportResultRow{RowNumber: row.RowNumber, SKU: row.SKU}
+		_, getErr := s.Get(ctx, row.SKU)
+		switch {
+		case getErr == nil:
+			if !updateExisting {
+				outcome.Action, outcome.Status = "exists", "skipped"
+				result.Skipped++
+				result.Rows = append(result.Rows, outcome)
+				continue
+			}
+			update := UpdateProductInput{Name: &row.Name, Attributes: row.Attributes}
+			if row.Price != "" {
+				update.Price = &row.Price
+			}
+			if _, err := s.Update(ctx, row.SKU, update); err != nil {
+				outcome.Action, outcome.Status, outcome.Error = "update", "failed", importErrorMessage(err)
+				result.Failed++
+			} else {
+				outcome.Action, outcome.Status = "update", "succeeded"
+				result.Updated++
+			}
+		case errs.CodeOf(getErr) == errs.CodeNotFound:
+			attrSetID, convErr := importAttributeSetID(row)
+			if convErr != nil {
+				outcome.Action, outcome.Status, outcome.Error = "create", "failed", importErrorMessage(convErr)
+				result.Failed++
+				result.Rows = append(result.Rows, outcome)
+				continue
+			}
+			create := CreateProductInput{SKU: row.SKU, Name: row.Name, Price: row.Price,
+				AttributeSetID: attrSetID, Attributes: row.Attributes}
+			if row.TypeID != "" {
+				create.TypeID = row.TypeID
+			}
+			if _, err := s.Create(ctx, create); err != nil {
+				outcome.Action, outcome.Status, outcome.Error = "create", "failed", importErrorMessage(err)
+				result.Failed++
+			} else {
+				outcome.Action, outcome.Status = "create", "succeeded"
+				result.Created++
+			}
+		default:
+			outcome.Action, outcome.Status, outcome.Error = "lookup", "failed", importErrorMessage(getErr)
+			result.Failed++
+		}
+		result.Rows = append(result.Rows, outcome)
+	}
+	return result, nil
+}
+
+// importAttributeSetID reads the attribute_set_id attribute from the row.
+// New products require one; there is no safe default across stores.
+func importAttributeSetID(row ImportRow) (int, error) {
+	raw, ok := row.Attributes["attribute_set_id"]
+	if !ok {
+		return 0, errs.New(errs.CodeValidationFailed, "attribute_set_id is required to create a product").
+			WithDetail("row", fmt.Sprint(row.RowNumber))
+	}
+	id, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || id <= 0 {
+		return 0, errs.New(errs.CodeValidationFailed, "attribute_set_id must be a positive integer").
+			WithDetail("row", fmt.Sprint(row.RowNumber))
+	}
+	delete(row.Attributes, "attribute_set_id")
+	return id, nil
+}
+
+func importErrorMessage(err error) string {
+	var typed *errs.Error
+	if errors.As(err, &typed) {
+		return string(typed.Code) + ": " + typed.Message
+	}
+	return "internal error"
+}
+
+func parseImportRows(format string, data []byte) ([]ImportRow, error) {
+	switch format {
+	case "csv":
+		return parseImportCSV(data)
+	case "json":
+		return parseImportJSON(data)
+	default:
+		return nil, errs.New(errs.CodeUnsupportedFormat, "format must be csv or json")
+	}
 }
