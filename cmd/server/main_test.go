@@ -151,3 +151,21 @@ func TestConfiguredInstances(t *testing.T) {
 		t.Fatal("disabled module must not be reported")
 	}
 }
+
+func TestRegisterModulesSupportsMultipleGA4Properties(t *testing.T) {
+	cfg := config.Default()
+	cfg.Auth.Enabled = false
+	cfg.Modules.GA4 = config.Module{Enabled: true, Instances: []config.Instance{
+		{ID: "prop-a", PropertyID: "111", Credential: "t"},
+		{ID: "prop-b", PropertyID: "222", Credential: "t"},
+	}}
+	reg := registry.New()
+	if err := registerModules(cfg, reg); err != nil {
+		t.Fatalf("registerModules: %v", err)
+	}
+	for _, name := range []string{"ga4.analytics.traffic", "ga4.property.metadata", "ga4.property.capabilities", "ga4.analytics.realtime", "ga4.ecommerce.overview"} {
+		if _, ok := reg.Lookup(name); !ok {
+			t.Fatalf("%s not registered", name)
+		}
+	}
+}

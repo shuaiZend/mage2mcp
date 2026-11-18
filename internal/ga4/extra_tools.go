@@ -47,6 +47,12 @@ func RegisterExtra(reg *registry.Registry, svc *Service) error {
 	if reg == nil || svc == nil {
 		return errors.New("ga4: RegisterExtra needs a non-nil registry and service")
 	}
+	return registerExtraTools(reg, singleLookup(svc))
+}
+
+// registerExtraTools builds the capability, realtime, and ecommerce tools
+// against an instance lookup (ADR-0018).
+func registerExtraTools(reg *registry.Registry, lookup serviceLookup) error {
 	capabilities := &mcp.Tool{
 		Name:  capabilitiesToolName,
 		Title: "GA4 property capabilities",
@@ -70,7 +76,11 @@ func RegisterExtra(reg *registry.Registry, svc *Service) error {
 			Capability: capabilitiesCapability, Permission: registry.PermissionRead, Timeout: 60 * time.Second,
 			Annotations: *capabilities.Annotations,
 			Register: func(server *mcp.Server) error {
-				mcp.AddTool(server, capabilities, func(ctx context.Context, _ *mcp.CallToolRequest, _ CapabilitiesInput) (*mcp.CallToolResult, PropertyCapabilities, error) {
+				mcp.AddTool(server, capabilities, func(ctx context.Context, _ *mcp.CallToolRequest, input CapabilitiesInput) (*mcp.CallToolResult, PropertyCapabilities, error) {
+					svc, err := lookup(input.Instance)
+					if err != nil {
+						return nil, PropertyCapabilities{}, err
+					}
 					result, err := svc.Capabilities(ctx)
 					if err != nil {
 						return nil, PropertyCapabilities{}, err
@@ -86,6 +96,10 @@ func RegisterExtra(reg *registry.Registry, svc *Service) error {
 			Annotations: *realtime.Annotations,
 			Register: func(server *mcp.Server) error {
 				mcp.AddTool(server, realtime, func(ctx context.Context, _ *mcp.CallToolRequest, input RealtimeInput) (*mcp.CallToolResult, RealtimeOutput, error) {
+					svc, err := lookup(input.Instance)
+					if err != nil {
+						return nil, RealtimeOutput{}, err
+					}
 					result, err := svc.Realtime(ctx, RealtimeQuery{
 						Dimensions: input.Dimensions,
 						Metrics:    input.Metrics,
@@ -100,7 +114,7 @@ func RegisterExtra(reg *registry.Registry, svc *Service) error {
 			},
 		},
 	}
-	tools = append(tools, newEcommerceTool(svc))
+	tools = append(tools, newEcommerceTool(lookup))
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -188,7 +202,7 @@ type EcommerceOutput struct {
 	Overview *EcommerceOverview `json:"overview"`
 }
 
-func newEcommerceTool(svc *Service) registry.Tool {
+func newEcommerceTool(lookup serviceLookup) registry.Tool {
 	definition := &mcp.Tool{
 		Name:        ecommerceToolName,
 		Title:       ecommerceToolTitle,
@@ -201,6 +215,10 @@ func newEcommerceTool(svc *Service) registry.Tool {
 		Annotations: *definition.Annotations,
 		Register: func(server *mcp.Server) error {
 			mcp.AddTool(server, definition, func(ctx context.Context, _ *mcp.CallToolRequest, in EcommerceInput) (*mcp.CallToolResult, EcommerceOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, EcommerceOutput{}, err
+				}
 				overview, err := svc.EcommerceOverview(ctx, in.StartDate, in.EndDate)
 				if err != nil {
 					return nil, EcommerceOutput{}, err

@@ -33,12 +33,16 @@ type MetadataInput struct {
 	Instance string `json:"instance" jsonschema:"configured GA4 instance id"`
 }
 
-// Register adds the read-only GA4 tools to reg. It never mutates svc and
-// returns the first validation or registration error.
+// Register adds the read-only GA4 tools to reg for one service.
 func Register(reg *registry.Registry, svc *Service) error {
 	if reg == nil || svc == nil {
 		return errors.New("ga4: Register needs a non-nil registry and service")
 	}
+	return registerTools(reg, singleLookup(svc))
+}
+
+// registerTools builds the report tools against an instance lookup (ADR-0018).
+func registerTools(reg *registry.Registry, lookup serviceLookup) error {
 	traffic := &mcp.Tool{
 		Name:  trafficToolName,
 		Title: "GA4 traffic report",
@@ -62,6 +66,10 @@ func Register(reg *registry.Registry, svc *Service) error {
 			Annotations: *traffic.Annotations,
 			Register: func(server *mcp.Server) error {
 				mcp.AddTool(server, traffic, func(ctx context.Context, _ *mcp.CallToolRequest, input TrafficInput) (*mcp.CallToolResult, ReportResult, error) {
+					svc, err := lookup(input.Instance)
+					if err != nil {
+						return nil, ReportResult{}, err
+					}
 					result, err := svc.Traffic(ctx, TrafficQuery{StartDate: input.StartDate, EndDate: input.EndDate, Metrics: input.Metrics})
 					if err != nil {
 						return nil, ReportResult{}, err
@@ -76,7 +84,11 @@ func Register(reg *registry.Registry, svc *Service) error {
 			Capability: metadataCapability, Permission: registry.PermissionRead, Timeout: 30 * time.Second,
 			Annotations: *metadata.Annotations,
 			Register: func(server *mcp.Server) error {
-				mcp.AddTool(server, metadata, func(ctx context.Context, _ *mcp.CallToolRequest, _ MetadataInput) (*mcp.CallToolResult, PropertyMetadata, error) {
+				mcp.AddTool(server, metadata, func(ctx context.Context, _ *mcp.CallToolRequest, input MetadataInput) (*mcp.CallToolResult, PropertyMetadata, error) {
+					svc, err := lookup(input.Instance)
+					if err != nil {
+						return nil, PropertyMetadata{}, err
+					}
 					result, err := svc.Metadata(ctx)
 					if err != nil {
 						return nil, PropertyMetadata{}, err
