@@ -242,6 +242,8 @@ A dependency may be added only if its license, read from its own `LICENSE`, is o
 | `Apache-2.0` | Allowed | Include the license text; propagate any `NOTICE` into the release NOTICE |
 | `MPL-2.0` | Allowed with review, not in the automated allowlist | File-level copyleft: MPL-covered files stay MPL; publish modifications to them; never paste MPL code into files we license Apache-2.0. Because the CI allowlist omits it, adding one requires a policy update and Security review |
 | `MIT-0` | Allowed | Permissive, no attribution required; OSI-approved. Approved 2026-11-18 for `segmentio/asm` and future use; keep the identifier distinct from `MIT` in the SBOM |
+| `CC-BY-4.0` | Allowed for documentation and data | Appears in the MCP Go SDK composite license (documentation). Never acceptable for executable code the project must defend |
+| `LicenseRef-scancode-google-patent-license-golang` | Allowed | The additional Go patent grant attached to `golang.org/x/*`; compatible with Apache-2.0 |
 
 ### 8.2 Denylist
 
