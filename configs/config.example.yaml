@@ -1,0 +1,44 @@
+# mage2mcp example configuration.
+#
+# Copy to config.yaml and fill in ${VAR} references. Never commit real
+# credentials: every credential field is a reference to an environment
+# variable or secret-manager entry.
+server:
+  listen: "127.0.0.1:8080"
+  public_url: "https://mcp.example.com"
+  shutdown_grace: 10s
+  max_body_bytes: 1048576
+
+auth:
+  # Authentication is required outside loopback development. The gateway
+  # refuses to start with auth disabled on a non-loopback listener.
+  enabled: true
+  issuer: "${MAGE2MCP_AUTH_ISSUER}"
+  audience: "${MAGE2MCP_AUTH_AUDIENCE}"
+  jwks_url: "${MAGE2MCP_AUTH_JWKS_URL}"
+
+log:
+  level: "info"
+  format: "json"
+
+datasources:
+  magento:
+    enabled: false
+    instances:
+      - id: "store-us"
+        endpoint: "https://shop.example.com"
+        store_code: "default"
+        credential: "${MAGENTO_US_CREDENTIAL}"
+  cloudflare:
+    enabled: false
+    instances:
+      - id: "zone-us"
+        account_id: "${CLOUDFLARE_ACCOUNT_ID}"
+        zone_id: "${CLOUDFLARE_ZONE_ID}"
+        credential: "${CLOUDFLARE_API_TOKEN}"
+  ga4:
+    enabled: false
+    instances:
+      - id: "giztop"
+        property_id: "354542598"
+        credential: "${GA4_SERVICE_ACCOUNT}"

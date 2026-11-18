@@ -32,7 +32,7 @@ floor and track current dependencies?
 
 Adopt option 2.
 
-- `go.mod` declares `go 1.26.0` with a `toolchain go1.27.4` directive.
+- `go.mod` declares `go 1.26.0` with **no** `toolchain` directive: the pinned golangci-lint release is built with Go 1.26 and refuses to analyze a module that pins a newer toolchain. Contributors use their installed toolchain; CI tests 1.26.x and 1.27.x.
 - CI matrix: `1.26.x` and `1.27.x`, with `GOTOOLCHAIN=local` so CI never silently
   downloads a different toolchain.
 - The README, CONTRIBUTING, and quickstart state Go 1.26+ as the requirement.
