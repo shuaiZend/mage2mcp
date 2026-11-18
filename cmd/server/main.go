@@ -13,15 +13,22 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/shuaiZend/mage2mcp/internal/cloudflare"
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
+	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/ga4"
+	"github.com/shuaiZend/mage2mcp/internal/magento"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/server"
 	"github.com/shuaiZend/mage2mcp/internal/observability"
+	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 	"github.com/shuaiZend/mage2mcp/internal/security/jwt"
+	"github.com/shuaiZend/mage2mcp/internal/security/rbac"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -47,10 +54,34 @@ func run() error {
 	metrics := observability.NewMetrics()
 
 	reg := registry.New()
+	if err := registerModules(cfg, reg); err != nil {
+		return err
+	}
+	auditor := audit.NewMemory()
+	policy, err := rbac.New([]rbac.Grant{
+		{Role: "viewer", Tool: "*", Scope: rbac.ScopeRead, Effect: rbac.EffectAllow},
+		{Role: "analyst", Tool: "*", Scope: rbac.ScopeRead, Effect: rbac.EffectAllow},
+	})
+	if err != nil {
+		return err
+	}
 	mcpServer, err := server.NewMCP(server.Options{
-		Version:  version,
-		Logger:   logger,
-		Registry: reg,
+		Version:   version,
+		Logger:    logger,
+		Registry:  reg,
+		Authorize: authorizeFunc(cfg, policy),
+		Audit: func(ctx context.Context, tool, phase, state, code string) {
+			id, _ := auth.IdentityFromContext(ctx)
+			subject := "anonymous"
+			class := "anonymous"
+			if id != nil {
+				subject, class = id.Subject, id.Class
+			}
+			_ = auditor.Record(ctx, audit.Event{
+				Subject: subject, IdentityClass: class, Tool: tool,
+				Decision: "allow", Phase: phase, State: state, ErrorCode: code,
+			})
+		},
 	})
 	if err != nil {
 		return err
@@ -116,6 +147,99 @@ func buildAuth(cfg config.Config, logger *slog.Logger) (func(http.Handler) http.
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 	return auth.Middleware(verifier, logger), nil
+}
+
+// authorizeFunc returns nil when authentication is disabled (loopback-only
+// development), so the dev quickstart can call tools without an identity.
+func authorizeFunc(cfg config.Config, policy *rbac.Policy) func(context.Context, string) error {
+	if !cfg.Auth.Enabled {
+		return nil
+	}
+	return func(ctx context.Context, tool string) error {
+		id, ok := auth.IdentityFromContext(ctx)
+		if !ok {
+			return errs.New(errs.CodeUnauthenticated, "no verified identity")
+		}
+		return policy.Authorize(id, tool, "", rbac.ScopeRead)
+	}
+}
+
+// registerModules builds one service per enabled module and registers its tools.
+// Multi-instance routing is not wired yet: a module with more than one instance
+// is a startup error rather than a silently wrong credential choice.
+func registerModules(cfg config.Config, reg *registry.Registry) error {
+	if cfg.Modules.Magento.Enabled {
+		if len(cfg.Modules.Magento.Instances) != 1 {
+			return fmt.Errorf("magento: exactly one instance is supported in this release")
+		}
+		inst := cfg.Modules.Magento.Instances[0]
+		signer, err := magentoSigner(inst.Credential)
+		if err != nil {
+			return fmt.Errorf("magento %s: %w", inst.ID, err)
+		}
+		client, err := magento.NewClient(magento.ClientConfig{
+			BaseURL: inst.Endpoint, StoreCode: inst.StoreCode, Signer: signer,
+		})
+		if err != nil {
+			return fmt.Errorf("magento %s: %w", inst.ID, err)
+		}
+		svc, err := magento.NewService(client)
+		if err != nil {
+			return err
+		}
+		if err := magento.Register(reg, svc); err != nil {
+			return err
+		}
+	}
+	if cfg.Modules.Cloudflare.Enabled {
+		if len(cfg.Modules.Cloudflare.Instances) != 1 {
+			return fmt.Errorf("cloudflare: exactly one instance is supported in this release")
+		}
+		inst := cfg.Modules.Cloudflare.Instances[0]
+		client, err := cloudflare.NewClient(cloudflare.Config{
+			APIBaseURL: "https://api.cloudflare.com/client/v4",
+			APIToken:   inst.Credential, ZoneID: inst.ZoneID, AccountID: inst.AccountID,
+		})
+		if err != nil {
+			return fmt.Errorf("cloudflare %s: %w", inst.ID, err)
+		}
+		if err := cloudflare.Register(reg, cloudflare.NewService(client)); err != nil {
+			return err
+		}
+	}
+	if cfg.Modules.GA4.Enabled {
+		if len(cfg.Modules.GA4.Instances) != 1 {
+			return fmt.Errorf("ga4: exactly one instance is supported in this release")
+		}
+		inst := cfg.Modules.GA4.Instances[0]
+		svc, err := ga4.NewService(ga4.Config{
+			PropertyID: inst.PropertyID, TokenSource: ga4.StaticToken(inst.Credential),
+		})
+		if err != nil {
+			return fmt.Errorf("ga4 %s: %w", inst.ID, err)
+		}
+		if err := ga4.Register(reg, svc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// magentoSigner parses the credential form. "bearer:<token>" is supported for
+// stores that enable integration-as-bearer; "oauth1:<key>:<secret>:<token>:<token-secret>"
+// is the production form.
+func magentoSigner(credential string) (magento.Signer, error) {
+	if strings.HasPrefix(credential, "bearer:") {
+		return &magento.BearerSigner{Token: strings.TrimPrefix(credential, "bearer:")}, nil
+	}
+	if strings.HasPrefix(credential, "oauth1:") {
+		parts := strings.Split(strings.TrimPrefix(credential, "oauth1:"), ":")
+		if len(parts) != 4 {
+			return nil, fmt.Errorf("oauth1 credential must be oauth1:<key>:<secret>:<token>:<token-secret>")
+		}
+		return magento.NewOAuth1Signer(parts[0], parts[1], parts[2], parts[3])
+	}
+	return nil, fmt.Errorf("unsupported credential form; use bearer:<token> or oauth1:<key>:<secret>:<token>:<token-secret>")
 }
 
 func isLoopbackListen(listen string) bool {

@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
 )
 
@@ -141,4 +143,75 @@ func mustRegistry(t *testing.T) *registry.Registry {
 	t.Helper()
 	_, reg := newTestServer(t)
 	return reg
+}
+
+func TestAuthorizationDeniesToolCall(t *testing.T) {
+	reg := mustRegistry(t)
+	srv, err := NewMCP(Options{
+		Version: "test", Registry: reg,
+		Authorize: func(context.Context, string) error {
+			return errs.New(errs.CodePermissionDenied, "denied by test")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(Handler(srv, Options{Registry: reg}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = session.Close() }()
+
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "platform.info"})
+	if err != nil {
+		t.Fatalf("call tool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected the call to be denied")
+	}
+	if len(res.Content) == 0 {
+		t.Fatal("expected a denial message")
+	}
+}
+
+func TestAuditReceivesIntentAndOutcome(t *testing.T) {
+	reg := mustRegistry(t)
+	var mu sync.Mutex
+	var phases []string
+	srv, err := NewMCP(Options{
+		Version: "test", Registry: reg,
+		Audit: func(_ context.Context, _, phase, _, _ string) {
+			mu.Lock()
+			defer mu.Unlock()
+			phases = append(phases, phase)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(Handler(srv, Options{Registry: reg}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	if _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "platform.info"}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(phases) < 2 || phases[0] != "intent" || phases[1] != "outcome" {
+		t.Fatalf("unexpected audit phases: %v", phases)
+	}
 }

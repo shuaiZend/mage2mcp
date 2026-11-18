@@ -88,7 +88,7 @@ func Default() Config {
 // overrides, and validates the result.
 func Load(path string) (Config, error) {
 	cfg := Default()
-	raw, err := os.ReadFile(path) //nolint:gosec // G304: the config path is an operator-supplied CLI argument
+	raw, err := os.ReadFile(path) // #nosec G304 -- the config path is an operator-supplied CLI argument
 	if err != nil {
 		return Config{}, fmt.Errorf("config: read %s: %w", path, err)
 	}

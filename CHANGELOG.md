@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redaction, Cloudflare Access JWT verification, default-deny RBAC, append-only
   audit recorder, YAML configuration with validation, distroless container image,
   Compose stack, and Makefile targets.
+- Read-only module tools: `magento.product.get`, `magento.product.search`
+  (OAuth 1.0a or bearer), `cloudflare.analytics.traffic`,
+  `cloudflare.security.summary` (fixed GraphQL templates), `ga4.analytics.traffic`,
+  and `ga4.property.metadata` (with the compatibility validator).
+- Authorization and audit middleware around every `tools/call`, with a default-deny
+  RBAC policy and an append-only in-memory recorder.
 - Test suite with unit, integration, and race coverage; CI runs formatting, vet,
   lint, module integrity, tests with race detector, coverage floor, secret
   scanning, vulnerability scanning, license review, and action pinning.

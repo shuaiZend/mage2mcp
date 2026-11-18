@@ -46,8 +46,8 @@ const (
 	CodeCurrencyMismatch            Code = "currency_mismatch"
 	CodeIncompleteWindow            Code = "incomplete_window"
 	CodeUnsupportedFormat           Code = "unsupported_format"
-	CodeCredentialScopeExceeded     Code = "credential_scope_exceeded"     //nolint:gosec // G101: error code, not a credential
-	CodeCredentialScopeInsufficient Code = "credential_scope_insufficient" //nolint:gosec // G101: error code, not a credential
+	CodeCredentialScopeExceeded     Code = "credential_scope_exceeded"     // #nosec G101 -- error code, not a credential
+	CodeCredentialScopeInsufficient Code = "credential_scope_insufficient" // #nosec G101 -- error code, not a credential
 	CodeProbeSKUConflict            Code = "probe_sku_conflict"
 )
 
