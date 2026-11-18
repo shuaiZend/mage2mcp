@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GA4 ecommerce overview: `ga4.ecommerce.overview` reports purchases and
   revenue per day, but only after the capability probe confirms ecommerce
   tracking; otherwise it returns `ecommerce_not_tracked` instead of zeros.
+- GA4 product performance: `ga4.ecommerce.products` reports item-level views,
+  add-to-carts, purchases, and item revenue per `itemId`, capability-gated like
+  the overview so an untracked property returns `ecommerce_not_tracked`.
 - Cloudflare security events: `cloudflare.security.events` returns bounded,
   newest-first sampled events (action, rule, country, path, user agent) without
   client IPs; 30-day window, 31-day retention disclosure, limit 1-1000.
