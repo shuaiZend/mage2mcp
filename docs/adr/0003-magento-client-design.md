@@ -41,10 +41,13 @@ Adopt option 5.
 - **GraphQL** is used read-only to verify storefront-visible correctness: that a
   configurable product resolves to the expected variants with the expected
   options, prices, and stock status.
-- **Authentication:** integration access token preferred (long-lived, revocable,
-  scoped); admin username/password token exchange supported but discouraged and
-  disabled by default. Tokens are cached per instance and refreshed before
-  expiry.
+- **Authentication:** integration credentials with OAuth 1.0a signing are the
+  production default (HMAC-signed requests, no global configuration toggle).
+  Integration access tokens used as bearer tokens work only when the store sets
+  `oauth/consumer/enable_integration_as_bearer=1`. Admin username/password token
+  exchange is development-only, disabled by default, and needs a 2FA-capable
+  route when 2FA is enabled. Credentials are per instance; admin tokens are
+  cached for four hours minus skew and never persisted.
 - **EAV:** attributes are discovered at runtime from attribute sets and
   attributes endpoints; no store-specific field is hardcoded. Attribute scope,
   `frontend_input`, and `is_configurable` are validated before any variant work.
@@ -74,7 +77,11 @@ stores. Integration tokens avoid storing admin passwords and reduce blast radius
 - Two API surfaces to maintain and test.
 - GraphQL verification depends on storefront visibility and may be affected by
   cache; the client must account for cache warm-up.
-- Bulk import depends on Magento's message queue being configured.
+- Bulk import depends on Magento's message queue being configured, and the
+  `import/csv` and `import/json` endpoints are Adobe Commerce features; Magento
+  Open Source must fall back to chunked REST writes.
+- OAuth 1.0a request signing is more complex than a bearer header and must be
+  covered by signature-vector tests.
 
 ### Security impact
 

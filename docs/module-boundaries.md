@@ -117,6 +117,21 @@ const (
     CodeUnsupportedCapability Code = "unsupported_capability"
     CodeConfirmationRequired Code = "confirmation_required"
     CodeInternal             Code = "internal"
+
+    // Domain-specific codes required by dependent documents. They are part of the
+    // closed set and covered by contract tests; modules may not invent new codes.
+    CodeIllegalTransition        Code = "illegal_transition"
+    CodeIdempotencyKeyReuse      Code = "idempotency_key_reuse"
+    CodeArtifactExpired          Code = "artifact_expired"
+    CodeConfirmationMismatch     Code = "confirmation_param_mismatch"
+    CodeConfirmationUsed         Code = "confirmation_used"
+    CodeConfirmationExpired      Code = "confirmation_expired"
+    CodeEcommerceNotTracked      Code = "ecommerce_not_tracked"
+    CodeRequiresLogpush          Code = "requires_logpush"
+    CodeInsufficientData         Code = "insufficient_data"
+    CodeMappingIncomplete        Code = "mapping_incomplete"
+    CodeCurrencyMismatch         Code = "currency_mismatch"
+    CodeIncompleteWindow         Code = "incomplete_window"
 )
 
 type Error struct {
@@ -140,7 +155,26 @@ Rules:
 - Mapping from upstream errors to `Code` is each module's responsibility and is
   covered by table-driven tests.
 
-### 4.3 Pagination and time
+### 4.3 Job enqueue
+
+```go
+package jobs
+
+// Enqueuer is the only async dependency a tool handler may take. The concrete
+// implementation lives in internal/jobs and is injected in cmd/server, so no
+// module imports the jobs package and the dependency table stays acyclic.
+type Enqueuer interface {
+    Enqueue(ctx context.Context, task Task) (JobID string, err error)
+    Status(ctx context.Context, jobID string) (*JobState, error)
+    Cancel(ctx context.Context, jobID string) error
+}
+```
+
+Modules that start long-running work accept an `Enqueuer` in their constructor.
+Import, report, and ingestion jobs are registered by the worker, which is the only
+place that knows the handler map.
+
+### 4.4 Pagination and time
 
 ```go
 package models
@@ -214,6 +248,14 @@ type InventoryService interface {
     UnassignSourceItems(ctx context.Context, instanceID string, items []SourceItemRef) (*BulkResult, error)
 }
 
+type CategoryService interface {
+    List(ctx context.Context, instanceID string) ([]models.Category, error)
+    Get(ctx context.Context, instanceID string, categoryID int) (*models.Category, error)
+    Create(ctx context.Context, instanceID string, in CreateCategoryInput) (*models.Category, error)
+    Update(ctx context.Context, instanceID string, categoryID int, in UpdateCategoryInput) (*models.Category, error)
+    AssignProducts(ctx context.Context, instanceID string, categoryID int, skus []string) error
+}
+
 type MediaService interface {
     List(ctx context.Context, instanceID, sku string) ([]models.MediaEntry, error)
     Upload(ctx context.Context, instanceID, sku string, in MediaUploadInput) (*models.MediaEntry, error)
@@ -249,6 +291,10 @@ type SecurityService interface {
     Summary(ctx context.Context, instanceID string, q SecuritySummaryQuery) (*SecuritySummary, error)
 }
 
+type ZoneService interface {
+    List(ctx context.Context, instanceID string) ([]Zone, error)
+}
+
 type LogsService interface {
     // Read-only by construction: no create, update, or delete methods exist.
     ListJobs(ctx context.Context, instanceID string) ([]LogpushJob, error)
@@ -278,40 +324,60 @@ type AnalyticsService interface {
 
 ### 5.4 Unified (`internal/unified`)
 
-`unified` declares the narrow interfaces it consumes; module services satisfy
-them structurally. Wiring happens in `cmd/server`.
+`unified` declares the narrow interfaces it consumes. Every signature uses neutral
+types from `internal/core/models`; module DTOs never appear here. Adapters in
+`cmd/server` translate module results into those neutral types.
 
 ```go
 type OrderSource interface {
-    Summary(ctx context.Context, instanceID string, r models.TimeRange) (*magento.SalesSummary, error)
+    SalesSummary(ctx context.Context, instanceID string, r models.TimeRange) (*models.SalesSummary, error)
 }
 
 type TrafficSource interface {
-    Query(ctx context.Context, instanceID string, q cloudflare.AnalyticsQuery) (*cloudflare.AnalyticsResult, error)
+    TrafficSummary(ctx context.Context, instanceID string, q models.TrafficQuery) (*models.TrafficSummary, error)
 }
 
 type SessionSource interface {
-    Report(ctx context.Context, instanceID string, q ga4.ReportQuery) (*ga4.ReportResult, error)
+    SessionSummary(ctx context.Context, instanceID string, q models.SessionQuery) (*models.SessionSummary, error)
+}
+
+type Binding struct {
+    ID        string
+    Magento   string
+    Cloudflare string
+    GA4       string
 }
 
 type TrafficService interface {
-    Compare(ctx context.Context, q TrafficComparison) (*TrafficComparisonResult, error)
+    Compare(ctx context.Context, b Binding, q TrafficComparison) (*TrafficComparisonResult, error)
+    Geography(ctx context.Context, b Binding, q GeographyQuery) (*GeographyResult, error)
 }
 
 type EcommerceService interface {
-    ProductFunnel(ctx context.Context, q ProductFunnelQuery) (*ProductFunnelResult, error)
+    ProductFunnel(ctx context.Context, b Binding, q ProductFunnelQuery) (*ProductFunnelResult, error)
+    ChannelRevenue(ctx context.Context, b Binding, q ChannelRevenueQuery) (*ChannelRevenueResult, error)
 }
 
 type SecurityService interface {
-    BotVsHuman(ctx context.Context, q BotTrafficQuery) (*BotTrafficResult, error)
+    BotVsHuman(ctx context.Context, b Binding, q BotTrafficQuery) (*BotTrafficResult, error)
+    WAFImpact(ctx context.Context, b Binding, q WAFImpactQuery) (*WAFImpactResult, error)
+}
+
+type AnalyticsService interface {
+    SKUPerformance(ctx context.Context, b Binding, q SKUPerformanceQuery) (*SKUPerformanceResult, error)
+    DeclineCorrelation(ctx context.Context, b Binding, q DeclineQuery) (*DeclineResult, error)
+}
+
+type MappingService interface {
+    Propose(ctx context.Context, b Binding, q MappingProposalQuery) (*MappingProposal, error)
+    Confirm(ctx context.Context, b Binding, proposalID string) (*Mapping, error)
 }
 ```
 
-The imports shown above are illustrative only: `unified` must not import module
-packages. In practice the consumer interfaces reference neutral types from
-`internal/core/models`, and adapters in `cmd/server` translate module results.
-If a neutral type is missing, it is added to `core/models` through an ADR — not
-by importing the module.
+The neutral types named above (`SalesSummary`, `TrafficQuery`, `TrafficSummary`,
+`SessionQuery`, `SessionSummary`, `Binding`, and every unified query/result type)
+are part of `core/models`. Adding one requires an ADR only if it changes an existing
+field; adding a new type is additive.
 
 ## 6. DTO rules
 

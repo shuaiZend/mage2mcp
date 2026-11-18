@@ -1,7 +1,9 @@
 # MCP tool catalog and contract
 
-**Status:** Phase 0 design baseline. Tool names and schemas are frozen for
-Phase 1–5; additive changes are allowed, breaking changes require an ADR.
+**Status:** Phase 0 design baseline. Tool names, scopes, and permissions are
+frozen. Full input and output schemas are specified here for the Phase 1–2 tools
+and are finalized per tool in Phase 1–2; the two schemas below are the reference
+style. Additive changes are allowed; breaking changes require an ADR.
 
 This document defines how tools are named, described, validated, authorized, and
 versioned, and lists the initial catalog. It is the contract between the MCP layer
@@ -117,7 +119,7 @@ Errors are returned as tool errors (`isError: true`) with:
     "code": "confirmation_required",
     "message": "This operation requires confirmation.",
     "retryable": false,
-    "details": { "nonce": "...", "expires_in_seconds": 900 }
+    "details": { "confirmation_id": "...", "expires_at": "2026-11-18T12:15:00Z" }
   },
   "meta": { "correlation_id": "..." }
 }
@@ -128,9 +130,9 @@ Errors are returned as tool errors (`isError: true`) with:
 | Scope | Meaning | Examples |
 |---|---|---|
 | `read` | Reads upstream data; no side effects | `magento.product.get`, `ga4.analytics.report` |
-| `write` | Creates or updates; reversible | `magento.product.create`, `magento.inventory.assign` |
-| `destructive` | Deletes or overwrites; requires confirmation | `magento.product.delete`, `magento.configurable.remove_child`, `magento.import.start` |
-| `admin` | Changes gateway configuration; not exposed as MCP tools | — |
+| `write` | Creates or updates. **Confirmation is required by default**; an operator may disable it per tool only for additive writes that accept no free-form text | `magento.product.create`, `magento.inventory.assign` |
+| `destructive` | Deletes or overwrites. Confirmation is always required | `magento.product.delete`, `magento.configurable.remove_child`, `magento.import.start` |
+| `admin` | Inspects gateway or credential metadata; never returned as data | `cloudflare.logs.jobs` |
 
 Roles map to scopes: `viewer` → read; `analyst` → read; `operator` → read + write;
 `admin` → read + write + destructive. A deployment may narrow this per instance.
@@ -198,12 +200,26 @@ Cloudflare and GA4 tools are always `read`.
 | `magento.order.get` | read | Fetch one order with items and totals |
 | `magento.order.search` | read | Search orders by date, status, store, customer email hash |
 | `magento.order.summary` | read | Aggregated sales for a time range: revenue, orders, AOV, top SKUs |
-| `magento.import.validate` | read | Validate a CSV/JSON/XLSX import and return a preview |
+| `magento.import.validate` | read | Validate a CSV/JSON import (XLSX is converted to CSV before validation) and return a preview |
 | `magento.import.start` | destructive | Start an async import (requires confirmation) |
 | `magento.import.status` | read | Batch status by `batch_id`, counts, and per-item errors |
-| `magento.import.resume` | write | Resume a paused or failed batch from its last checkpoint |
+| `magento.import.resume` | destructive | Resume a paused or failed batch from its last checkpoint; confirmation is bound to the batch id, not the payload |
 | `magento.import.cancel` | write | Cancel a running import |
 | `magento.import.report` | read | Export per-item results |
+
+Import endpoints (`/V1/import/csv`, `/V1/import/json`) are Adobe Commerce features.
+On Magento Open Source the import tools return `unsupported_capability` and point to
+the chunked REST write path.
+
+### 7.5a Jobs
+
+| Tool | Scope | Purpose |
+|---|---|---|
+| `platform.job.get` | read | Status, progress, attempt count, and typed error for any job the caller may see |
+| `platform.job.cancel` | write | Cooperative cancellation; terminal state is checked before each upstream call |
+
+A tool that returns a job handle always returns a `job_id` usable with these tools.
+Jobs are scoped to the caller's identity and to the instances or binding the job touches.
 
 ### 7.6 Cloudflare
 
@@ -217,12 +233,12 @@ entitlement for a dataset is checked per query and reported as
 | `cloudflare.zone.list` | read | List zones visible to the token, with plan names |
 | `cloudflare.analytics.traffic` | read | Requests, bytes, cached ratio over time by dimension |
 | `cloudflare.analytics.status_codes` | read | Status-code distribution |
-| `cloudflare.analytics.top` | read | Top hostnames, paths, countries, or ASNs |
+| `cloudflare.analytics.top` | read | Top hostnames, paths, countries, or ASNs where the dataset exposes the field |
 | `cloudflare.analytics.cache` | read | Cache hit ratio and origin response breakdown |
 | `cloudflare.security.events` | read | Sampled security events with action and rule metadata |
 | `cloudflare.security.summary` | read | Counts by action, service, and rule for a window |
 | `cloudflare.security.bots` | read | Bot-related events where the plan exposes them |
-| `cloudflare.logs.jobs` | read | List Logpush jobs (read-only). Cloudflare requires `Logs: Write` even for this GET because job configs contain destination credentials; registered only when the optional log-inspection credential profile is enabled |
+| `cloudflare.logs.jobs` | admin | List Logpush job metadata (id, name, enabled, dataset, last error). The destination configuration is never returned, because it contains storage credentials. Cloudflare requires `Logs: Write` even for this GET; registered only when the optional log-inspection profile is enabled |
 
 ### 7.7 GA4
 
@@ -242,6 +258,11 @@ entitlement for a dataset is checked per query and reported as
 
 ### 7.8 Unified analytics
 
+Unified tools take `binding` instead of `instance`: a named `(magento, cloudflare, ga4)`
+triple declared in configuration. The caller must be authorized for every member
+instance; a grant on one member is not sufficient. When exactly one binding exists it
+is the default and may be omitted.
+
 | Tool | Scope | Purpose |
 |---|---|---|
 | `unified.traffic.compare` | read | Cloudflare requests vs GA4 sessions over aligned windows |
@@ -250,6 +271,10 @@ entitlement for a dataset is checked per query and reported as
 | `unified.ecommerce.product_funnel` | read | GA4 item funnel vs Magento sales for matched SKUs |
 | `unified.ecommerce.channel_revenue` | read | GA4 channel attribution vs Magento revenue |
 | `unified.analytics.sku_performance` | read | Views, carts, orders, and revenue per SKU with mapping confidence |
+| `unified.traffic.geography` | read | Country and ASN distribution compared across Cloudflare and GA4 |
+| `unified.analytics.decline_correlation` | read | Correlate a traffic decline with a sales decline over aligned windows |
+| `unified.mapping.sku_propose` | write | Propose a GA4 itemId to Magento SKU mapping from normalized keys, with confidence |
+| `unified.mapping.sku_confirm` | destructive | Confirm or supersede a SKU mapping; requires confirmation bound to the mapping hash |
 
 ## 8. Example schemas
 
@@ -263,7 +288,7 @@ entitlement for a dataset is checked per query and reported as
   "properties": {
     "instance": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
     "query": { "type": "string", "maxLength": 256 },
-    "sku": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+    "sku": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
     "type": { "enum": ["simple", "configurable", "virtual", "downloadable", "bundle"] },
     "status": { "enum": ["enabled", "disabled"] },
     "category_id": { "type": "integer", "minimum": 1 },
@@ -287,7 +312,7 @@ entitlement for a dataset is checked per query and reported as
       "additionalProperties": false,
       "required": ["sku", "name", "attribute_set_id", "price"],
       "properties": {
-        "sku": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+        "sku": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
         "name": { "type": "string", "maxLength": 255 },
         "attribute_set_id": { "type": "integer", "minimum": 1 },
         "price": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]{1,4})?$" },
@@ -306,23 +331,28 @@ entitlement for a dataset is checked per query and reported as
     "children": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 500,
+      "maxItems": 50,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["sku", "attributes"],
         "properties": {
-          "sku": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+          "sku": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
           "attributes": { "type": "object", "additionalProperties": { "type": "string" } },
           "price": { "type": "string" },
           "quantity": { "type": "integer", "minimum": 0 }
         }
       }
     },
-    "confirmation_nonce": {
+    "idempotency_key": {
       "type": "string",
       "maxLength": 128,
-      "description": "Nonce returned by a confirmation_required error after human approval. Bound to these exact parameters; any change invalidates it."
+      "description": "Required for multi-write operations. A replay with the same key returns the original result instead of creating duplicates."
+    },
+    "confirmation_id": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Opaque id returned by a confirmation_required error. It becomes usable only after a different human identity approves it on the approval surface; the requester never receives the approval secret."
     }
   }
 }

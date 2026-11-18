@@ -44,11 +44,10 @@ Use GitHub Security Advisories:
 This creates a private advisory visible only to the reporter and the maintainers, and it
 gives us a private place to collaborate on a fix and a coordinated disclosure date.
 
-**Email and PGP fallback: TO BE CONFIGURED.** The maintainer intends to publish a
-security contact address and a PGP key fingerprint here before the first release. Until
-that information appears in this section, GitHub Security Advisories is the only
-supported private channel. Do not send vulnerability details to the conduct address or to
-any address not listed in this document.
+**GitHub Security Advisories is the only supported private channel.** Do not send
+vulnerability details to the conduct address, to a public issue, or to any address not
+listed in this document. An email fallback may be added later; it will be published here
+with a PGP fingerprint before it is used.
 
 If you are unsure whether something is a vulnerability, report it privately anyway. A
 report that turns out to be a hardening suggestion is still useful and costs little.
@@ -81,6 +80,11 @@ it was exposed.
 
 These are targets, not guarantees. The project is maintained on a best-effort basis and
 does not offer a service-level agreement.
+
+Severity follows the project's review definitions: **Critical** means exploitable data
+loss or credential exposure, **High** a missing control on a trust boundary, **Medium** a
+weak or ambiguous control, **Low** hardening. The same definitions are used in
+[review-process.md](docs/development/review-process.md).
 
 | Stage | Target |
 |---|---|

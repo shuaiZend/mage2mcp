@@ -50,7 +50,7 @@ itself signed off.
 
 | Tool | Version | Purpose |
 |---|---|---|
-| Go | 1.25 or newer | Build and test the gateway |
+| Go | 1.26 or newer | Build and test the gateway |
 | Docker with Compose | Current release (tested with 29.8 / Compose v5.5) | PostgreSQL, Redis, and local runs |
 | PostgreSQL | 16 or newer | Configuration metadata, audit log, job state |
 | Redis | 7 or newer | Asynq queues |
@@ -60,9 +60,10 @@ itself signed off.
 R2 and ClickHouse are optional. They are only needed for request-level Cloudflare log
 analysis in Phase 3 and are not required for local development.
 
-The official MCP Go SDK v1.8.0 declares `go 1.25.0` in its `go.mod`, so **Go 1.25 is a
-hard minimum**. Go 1.27.x is the current toolchain; CI tests both Go 1.25.x and
-Go 1.27.x. An older local Go installation can still build the project when toolchain
+The official MCP Go SDK v1.8.0 declares `go 1.25.0`, and the planned direct
+dependencies require Go 1.26, so **Go 1.26 is the hard minimum** (see
+[ADR-0013](docs/adr/0013-go-toolchain-floor.md)). Go 1.27.x is the current toolchain;
+CI tests both Go 1.26.x and Go 1.27.x. An older local Go installation can still build the project when toolchain
 auto-download is enabled:
 
 ```bash
@@ -171,17 +172,17 @@ roles; the review rules still apply and become meaningful as the team grows.
 
 | Area | Path | Owner | Required review |
 |---|---|---|---|
-| Core contracts, models, config schema | `internal/core/` | Architect | Architect |
+| Core contracts, models, config schema | `internal/core/` | Architect | Maintainer |
 | Authentication, RBAC, audit, secrets | `internal/security/` | Security owner | Architect + Security |
-| MCP server, registry, transport, tools | `internal/mcp/` | Architect | Architect |
+| MCP server, registry, transport, tools | `internal/mcp/` | Architect | Maintainer |
 | Magento 2 module | `internal/magento/` | Magento owner | Magento owner |
 | Cloudflare module | `internal/cloudflare/` | Cloudflare owner | Cloudflare owner |
 | GA4 module | `internal/ga4/` | GA4 owner | GA4 owner |
 | Unified analytics | `internal/unified/` | Unified owner | Architect + Unified owner |
-| Jobs and queues | `internal/jobs/` | Architect | Architect |
-| Storage and migrations | `internal/storage/` | Architect | Architect |
-| Observability | `internal/observability/` | Architect | Architect |
-| Process wiring | `cmd/` | Architect | Architect |
+| Jobs and queues | `internal/jobs/` | Architect | Maintainer |
+| Storage and migrations | `internal/storage/` | Architect | Maintainer |
+| Observability | `internal/observability/` | Architect | Maintainer |
+| Process wiring | `cmd/` | Architect | Maintainer |
 | Cross-cutting tests | `tests/` | QA | QA |
 | Documentation | `docs/`, `README.md`, `README.zh-CN.md` | Docs owner | Docs owner |
 
@@ -234,16 +235,16 @@ coverage.
 
 ### Quality gates
 
-Every pull request must pass the gates below. Most run in CI today; the Go jobs activate
-as soon as `go.mod` exists. DCO, changelog, and documentation review are checked by
-reviewers.
+Every pull request must pass the gates below. The docs and DCO jobs run in CI today; the
+Go jobs activate as soon as `go.mod` exists. Changelog and documentation review are checked
+by reviewers.
 
 | Gate | Check | Blocking |
 |---|---|---|
 | Formatting | `gofmt -l .` produces no output | Yes |
 | Vet | `go vet ./...` | Yes |
 | Build | `go build ./...` | Yes |
-| Unit and integration tests | `go test -race ./...` on Go 1.25.x and 1.27.x | Yes |
+| Unit and integration tests | `go test -race ./...` on Go 1.26.x and 1.27.x | Yes |
 | Security tests | Auth, RBAC, confirmation, redaction suites | Yes |
 | Secret scan | gitleaks over the full history | Yes |
 | Dependency review | No High severity advisories and no denied licenses | Yes |

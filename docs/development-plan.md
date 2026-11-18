@@ -58,7 +58,7 @@ be parallelized safely.
 
 | Workstream | Tasks | Owner |
 |---|---|---|
-| Module and toolchain | `go.mod` (go 1.25.0), directory skeleton, Makefile, `.golangci.yml`, tool version pins | Architect |
+| Module and toolchain | `go.mod` (go 1.26.0), directory skeleton, Makefile, `.golangci.yml`, tool version pins | Architect |
 | Core | Config schema and validation, error package, neutral models, capability model, `DataSource` contract | Architect |
 | Storage | PostgreSQL schema, migrations, repositories, Redis adapters, Asynq wiring | Architect |
 | Security | JWT verifier with JWKS cache, RBAC policy engine, audit writer, confirmation service, secret resolution | Security |

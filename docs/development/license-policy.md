@@ -45,7 +45,7 @@ The six dimensions from the project brief, for the three licenses seriously cons
 | Dimension | Apache-2.0 | MIT | GPL-3.0 |
 |---|---|---|---|
 | Commercial use, including hosted service | Permitted; no source obligation for network use | Permitted; no source obligation | Permitted, but any distributed derivative must be GPL-3.0; GPL-3.0 has no network clause, so a purely hosted service triggers nothing |
-| Patent grant | Express grant from each contributor, with termination on patent suit (section 3) | No express grant; only whatever implied license local law recognizes | Express contributor grant in section 11, but no dedicated retaliation clause aimed at a licensee who sues |
+| Patent grant | Express grant from each contributor, terminated by a patent suit (Apache-2.0 section 3) | No express grant; only whatever implied license local law recognizes | Express contributor grant (GPLv3 section 11), but no dedicated retaliation clause aimed at a licensee who sues |
 | Derivative works | Permitted under any license; must keep notices, include the license, and state changed files | Permitted under any license; must keep the copyright and permission notice | Must be licensed GPL-3.0 when distributed; source must be offered |
 | Enterprise internal deployment | No obligation beyond internal use; no distribution, no notice duty | Same, with even less process | Internal use without distribution is unencumbered, but legal teams treat copyleft as a procurement blocker |
 | Third-party integration | Links freely with MIT, BSD, ISC, and Apache-2.0 code; combinable into GPLv3 works, not GPLv2-only works | Links freely with everything permissive; same GPLv3-only direction as Apache-2.0 | Forces the combined distributed work to GPL-3.0, which most Magento and Cloudflare integrators cannot accept |
@@ -75,7 +75,7 @@ The six dimensions from the project brief, for the three licenses seriously cons
 |---|---|---|
 | Patent termination (section 3) | A licensee who files a patent suit alleging the work infringes loses the patent license for the whole work, not just the disputed part. Some patent-holding integrators refuse Apache-2.0 for this reason, and we cannot waive the clause. | Documented in the README license section; integrators that cannot accept it are out of scope |
 | NOTICE obligations (section 4(d)) | Redistributors must reproduce the attribution notices. Today `NOTICE` is a pointer file, and the Prometheus modules ship real NOTICE files that must be reproduced (section 9.3). | Release NOTICE is generated from the SBOM before tagging; the gap is an open question |
-| GPLv2-only incompatibility | Apache-2.0 code cannot be combined into a GPLv2-only work, because its patent and indemnity terms are additional restrictions under GPLv2 section 6. A GPLv2-only Magento extension cannot merge this code. | Accepted; documented in section 5 and in the README |
+| GPLv2-only incompatibility | Apache-2.0 code cannot be combined into a GPLv2-only work, because its patent, notice, and termination terms are additional restrictions under GPLv2 section 6. A GPLv2-only Magento extension cannot merge this code. | Accepted; documented in section 5 and in the README |
 | No protection against SaaS competitors | A competitor may host a modified fork without publishing changes. | Accepted: the defensible asset is integration quality and operational hardening, not source secrecy. Relicensing would need contributor consent and a new ADR |
 
 ## 4. Why not MIT
@@ -110,8 +110,8 @@ The compatibility runs in one direction, and the direction matters:
   treats Apache-2.0 as GPLv3-compatible and GPLv3 section 7 accommodates its terms, so a
   GPLv3 project can absorb mage2mcp code.
 - **GPL-3.0 code may not be relicensed as Apache-2.0**, so this project cannot take GPLv3
-  code into its own tree. **Apache-2.0 is not GPLv2-compatible at all**: its patent and
-  indemnity terms are additional restrictions under GPLv2 section 6, in either direction.
+  code into its own tree. **Apache-2.0 is not GPLv2-compatible at all**: its patent, notice,
+  and termination terms are additional restrictions under GPLv2 section 6, in either direction.
 
 So the denylist in section 8 governs *inbound* code while the outbound direction stays
 permissive: GPLv3 users are welcome downstream, GPLv2-only users are not served.
@@ -175,7 +175,7 @@ Apache-2.0 11, BSD-2-Clause 3, ISC 1, MIT-0 1, dual MIT + Apache-2.0 1.
 | `github.com/prometheus/common` | v0.72.0 | Apache-2.0 | Active | Yes | Compatible; NOTICE to propagate | 2026-11-18 |
 | `github.com/prometheus/procfs` | v0.22.0 | Apache-2.0 | Active | Yes | Compatible; NOTICE to propagate | 2026-11-18 |
 | `github.com/robfig/cron/v3` | v3.0.1 | MIT | Dormant | Yes | Compatible | 2026-11-18 |
-| `github.com/segmentio/asm` | v1.1.3 | MIT-0 | Active | Yes | Compatible in effect; variant not on allowlist | 2026-11-18 |
+| `github.com/segmentio/asm` | v1.1.3 | MIT-0 | Active | Yes | Compatible; MIT-0 allowlisted 2026-11-18 | 2026-11-18 |
 | `github.com/segmentio/encoding` | v0.5.4 | MIT | Active | Yes | Compatible | 2026-11-18 |
 | `github.com/spf13/cast` | v1.10.0 | MIT | Active | Yes | Compatible | 2026-11-18 |
 | `github.com/stretchr/objx` | v0.5.3 | MIT | Active | Yes (test-only) | Compatible | 2026-11-18 |
@@ -195,9 +195,8 @@ Apache-2.0 11, BSD-2-Clause 3, ISC 1, MIT-0 1, dual MIT + Apache-2.0 1.
 | `google.golang.org/protobuf` | v1.36.12 | BSD-3-Clause | Active | Yes | Compatible | 2026-11-18 |
 | `gopkg.in/check.v1` | v1.0.0-20201130134442-10cb98267c6c | BSD-2-Clause | Dormant | Yes (test-only) | Compatible | 2026-11-18 |
 
-No module in the resolved graph is under a denylisted license. Three findings affect the
-same review without being license failures: two archived repositories and one MIT-0 variant
-that is not yet allowlisted. The Apache-2.0 NOTICE obligations are handled in section 9.3.
+No module in the resolved graph is under a denylisted license. Two findings affect the
+same review without being license failures: two archived repositories. The Apache-2.0 NOTICE obligations are handled in section 9.3.
 
 ### 6.3 Findings that affect the dependency set
 
@@ -206,7 +205,7 @@ that is not yet allowlisted. The Apache-2.0 NOTICE obligations are handled in se
 | `gopkg.in/yaml.v3` is archived | Repository archived, last push 2025-04-01 | Keep only while the replacement is validated; `go.yaml.in/yaml/v3` v3.0.5 is already in the graph via `prometheus/common` |
 | `github.com/json-iterator/go` is archived | Repository archived, last push 2024-05-27 | Pulled by `prometheus/common`; not replaceable by us, tracked as an upstream risk |
 | `github.com/segmentio/asm` is MIT-0 | Repository `LICENSE` read on 2026-11-18 | Permissive and compatible, but not an allowlisted identifier; pre-approve the variant per section 8.3 |
-| Two direct modules require Go 1.26 | `prometheus/client_golang` v1.25.0 and `redis/go-redis/v9` v9.23.0 both declare `go 1.26.0` | The module `go` directive must be at least 1.26, or these two pinned to v1.24.1 and v9.22.0 to keep the 1.25 floor. This conflicts with the `1.25.x` CI matrix entry (section 10.4) |
+| Two direct modules require Go 1.26 | `prometheus/client_golang` v1.25.0 and `redis/go-redis/v9` v9.23.0 both declare `go 1.26.0` | **Resolved:** the project floor is raised to 1.26 and the CI matrix is 1.26.x/1.27.x ([ADR-0013](../adr/0013-go-toolchain-floor.md)); no older pins |
 
 ## 7. MCP Go SDK licensing nuance
 
@@ -241,14 +240,14 @@ A dependency may be added only if its license, read from its own `LICENSE`, is o
 | `BSD-2-Clause` | Allowed | Keep the copyright notice and disclaimer |
 | `BSD-3-Clause` | Allowed | Keep the copyright notice, disclaimer, and no-endorsement clause |
 | `Apache-2.0` | Allowed | Include the license text; propagate any `NOTICE` into the release NOTICE |
-| `MPL-2.0` | Allowed with review | File-level copyleft: MPL-covered files stay MPL; publish modifications to them; never paste MPL code into files we license Apache-2.0 |
-| `MIT-0` | Pending (section 8.3) | Permissive, no attribution required; compatible in effect, but not yet an approved identifier |
+| `MPL-2.0` | Allowed with review, not in the automated allowlist | File-level copyleft: MPL-covered files stay MPL; publish modifications to them; never paste MPL code into files we license Apache-2.0. Because the CI allowlist omits it, adding one requires a policy update and Security review |
+| `MIT-0` | Allowed | Permissive, no attribution required; OSI-approved. Approved 2026-11-18 for `segmentio/asm` and future use; keep the identifier distinct from `MIT` in the SBOM |
 
 ### 8.2 Denylist
 
-Any of these blocks a pull request. The list matches the workflow deny list in
-[`dependency-review.yml`](../../.github/workflows/dependency-review.yml) plus two entries
-that workflow cannot express.
+Any of these blocks a pull request. The workflow uses an allowlist rather than a denylist
+so an unknown license fails closed; this denylist records the identifiers that must never
+be approved and is enforced by that allowlist plus review.
 
 | Identifier or condition | Why it is denied |
 |---|---|
@@ -264,7 +263,7 @@ that workflow cannot express.
 
 | Case | Rule |
 |---|---|
-| `MIT-0` | Compatible and attribution-free. Approve as a named variant here before first use; the identifier stays distinct from `MIT` in the SBOM |
+| `MIT-0` | Allowed (section 8.1). Attribution-free; the identifier stays distinct from `MIT` in the SBOM |
 | `CC0-1.0`, `Unlicense`, `CC-BY-4.0` | Public-domain dedications and attribution-only licenses, allowed for fixtures, data, and documentation but never for code the project must defend; maintainer approval, a recorded patent-risk note, and attribution in the file or notices bundle |
 | Dual license (for example `MIT OR Apache-2.0`) | Choose the allowlisted branch, record the choice in the inventory, keep that branch's notices |
 | Custom terms, EULA, "source available" | Denied by default. An exception needs an ADR, a Security review, and a written statement of the obligation accepted |
@@ -324,23 +323,18 @@ is currently referenced by a floating major tag and must move to a SHA pin (10.3
 | `actions/checkout`, `actions/setup-go`, `actions/setup-node`, `actions/upload-artifact` | `@v4`, `@v5`, `@v4`, `@v4` | MIT | Pin by SHA in Phase 1 |
 | `actions/dependency-review-action`, `softprops/action-gh-release`, `github/codeql-action/upload-sarif` | `@v4`, `@v2`, `@v3` | MIT | Dependency review enforces section 8.2 |
 | `anchore/sbom-action`, `sigstore/cosign-installer`, `docker/build-push-action`, `ossf/scorecard-action` | `@v0`, `@v3`, `@v6`, `@v2.4.0` | Apache-2.0 | Pin by SHA in Phase 1 |
-| `gitleaks/gitleaks-action` | `@v2` | Proprietary EULA | **Policy violation**, see 10.2 |
+| `gitleaks` CLI (`github.com/gitleaks/gitleaks/v8`) | `v8.30.1` | MIT | Compliant; installed with `go install` |
 
 `go install`ed tools are dependencies too: `govulncheck` (`golang.org/x/vuln`, BSD-3-Clause)
 and `gosec` (`github.com/securego/gosec/v2`, Apache-2.0) are pinned to exact versions.
 
-### 10.2 The gitleaks action
+### 10.2 Secret scanning tool
 
-`gitleaks/gitleaks-action@v2` is not open source: its `LICENSE.txt` is a Gitleaks LLC EULA
-requiring a paid key to scan organization-owned repositories, forbidding modification, and
-granting only inspection and archival rights. That is a proprietary dependency in the CI
-path, which section 8.1 does not permit.
-
-Options, in preference order: (1) run the `gitleaks` CLI (`gitleaks/gitleaks`, MIT) as a
-pinned binary or digest-pinned container, so only MIT code runs; (2) keep the action under
-an explicit, dated exception valid only while the repository is owned by a personal
-account; (3) replace it with a scanner whose license is allowlisted. Until one lands, the
-exception is recorded in section 14.
+The `gitleaks/gitleaks-action@v2` action was rejected during Phase 0: its `LICENSE.txt` is a
+Gitleaks LLC EULA requiring a paid key for organization-owned repositories and forbidding
+modification. CI now installs the MIT-licensed `gitleaks` CLI
+(`github.com/gitleaks/gitleaks/v8@v8.30.1`) with `go install` and runs it directly, so only
+allowlisted code executes in the pipeline.
 
 ### 10.3 Pinning and review of actions
 
@@ -362,11 +356,10 @@ Keep the deny list only as a second line of defence, and handle `CC-BY-4.0` expl
 because the action cannot tell code from documentation.
 
 The action reads the dependency diff in a pull request; it does not read the resolved
-module graph, inspect `go install`ed tools, or run on `push`. Section 13 closes that gap.
-Separately, the `1.25.x` entry in the `ci.yml` Go matrix conflicts with the Go 1.26 floor of
-`prometheus/client_golang` v1.25.0 and `redis/go-redis/v9` v9.23.0 (section 6.3): either the
-matrix gains `1.26.x` and drops `1.25.x`, or those modules are pinned to their last
-Go 1.25-compatible releases.
+module graph, inspect `go install`ed tools, or run on `push`. The module-graph license scan
+that closes that gap is a Phase 1 gate in [CI/CD](ci-cd.md) section 5.
+The earlier `1.25.x` matrix conflict is resolved: the project floor is Go 1.26 and the
+matrix is `1.26.x`/`1.27.x`, per [ADR-0013](../adr/0013-go-toolchain-floor.md).
 
 ## 11. Contribution licensing
 
@@ -411,19 +404,18 @@ is tracked in [CI/CD](ci-cd.md) section 12.
 | Before each minor release | Confirm SBOM, notices bundle, and inventory agree | Maintainer |
 | Any exception, EULA, or ambiguous term | ADR plus Security review; counsel referral recorded | Maintainer |
 
-The maintainer (`@shuaiZend` in [CODEOWNERS](../../CODEOWNERS)) is the license steward.
-Security reviews anything changing the release path, the signing setup, or a license
-exception; a second maintainer rotates the role and records it here.
+The maintainer (`@shuaiZend` in [CODEOWNERS](../../CODEOWNERS)) is the license steward, and
+Security reviews any change to the release path, the signing setup, or a license exception.
 
 ## 14. Open questions
 
 | Question | Owner | Resolution point |
 |---|---|---|
-| Add `MIT-0` to the allowlist, or keep it as a named exception for `segmentio/asm`? | Maintainer | Before the first `go.mod` |
-| Replace `gitleaks-action` with the MIT CLI, or record a dated EULA exception? | Maintainer plus Security | Phase 1 |
-| Raise the Go floor to 1.26 and change the CI matrix, or pin `client_golang` v1.24.1 and `go-redis` v9.22.0? | Maintainer | Phase 1, with `go.mod` |
-| Migrate off archived `gopkg.in/yaml.v3` to `go.yaml.in/yaml/v3`? | Maintainer | Phase 1 |
-| Switch dependency review from `deny-licenses` to `allow-licenses`? | Maintainer | Phase 1 |
+| ~~Add `MIT-0` to the allowlist?~~ Resolved: allowed in section 8.1 | Maintainer | Closed 2026-11-18 |
+| ~~Replace `gitleaks-action`?~~ Resolved: MIT CLI v8.30.1, action removed | Maintainer plus Security | Closed 2026-11-18 |
+| ~~Raise the Go floor to 1.26?~~ Resolved: floor is 1.26 ([ADR-0013](../adr/0013-go-toolchain-floor.md)) | Maintainer | Closed 2026-11-18 |
+| Migrate off archived `gopkg.in/yaml.v3` to `go.yaml.in/yaml/v3`? Decided yes; `go.yaml.in/yaml/v3` is already in the graph | Maintainer | Phase 1, with `go.mod` |
+| ~~Switch dependency review to `allow-licenses`?~~ Resolved: workflow uses `allow-licenses` | Maintainer | Closed 2026-11-18 |
 | Move `docs/` to CC-BY-4.0, or keep one license for the repository? | Maintainer | Post-1.0 |
 | Must Apache-2.0 notices also appear in container image labels? | Maintainer | First image build |
 | Is a counsel review of the MCP SDK's MIT portions warranted before 1.0? | Maintainer | Before 1.0 |
@@ -436,8 +428,8 @@ exception; a second maintainer rotates the role and records it here.
 | Resolved module graph for the nine direct dependencies | Local Go toolchain with `goproxy.cn`, `go list -m all` | 2026-11-18 | 55 modules; Go 1.26.11 selected by two `go 1.26.0` floors |
 | SPDX license and maintenance status per module | GitHub REST API metadata (`license`, `archived`, `pushed_at`) plus `LICENSE` reads for `NOASSERTION` cases | 2026-11-18 | 55 of 55 identified; no denylisted license; 2 archived (`gopkg.in/yaml.v3`, `json-iterator/go`), 18 dormant, 1 slow, 34 active |
 | NOTICE files in Apache-2.0 dependencies | Raw repository files | 2026-11-18 | Present in the four Prometheus modules and `yaml/go-yaml`; absent in the MCP SDK |
-| CI action licenses | GitHub REST API per action repository | 2026-11-18 | 11 permissive, 1 proprietary (`gitleaks/gitleaks-action`) |
-| Dependency review configuration | `.github/workflows/dependency-review.yml` | 2026-11-18 | Deny list read; differs from section 8.2 as noted in 10.4 |
+| CI action licenses | GitHub REST API per action repository | 2026-11-18 | 12 permissive; the one proprietary action was removed and replaced by the MIT gitleaks CLI |
+| Dependency review configuration | `.github/workflows/dependency-review.yml` | 2026-11-18 | Allowlist mode; identifiers match section 8.1 |
 | Base image package licenses | No image exists | 2026-11-18 | `[U]`; verify with `syft <image> -o spdx-json` at the first build |
 
 ## 16. Decision record

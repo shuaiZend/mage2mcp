@@ -19,7 +19,7 @@ it, what it asserted, and what it did not cover.
 | Integration, mock upstream | Client behavior against an `httptest` server: status codes, pagination, error envelopes, rate limits, malformed bodies, timeouts | `internal/<module>/*_test.go`, `tests/fixtures/` | Every PR | Loopback only | Under 60 s per module |
 | Sandbox | The real vendor API against a dedicated non-production account | `tests/sandbox`, build tag `sandbox` | Nightly or manual | Yes | Minutes |
 | Real environment | Storefront GraphQL verification, configurable rendering, MSI effect, WAF rule effect | `tests/real`, manual checklist | Before a release | Yes | Hours |
-| Security | Auth, RBAC, confirmation, SSRF, injection, redaction, tenancy isolation | `test/security` | PR subset, nightly full | None | Under 2 min subset |
+| Security | Auth, RBAC, confirmation, SSRF, injection, redaction, tenancy isolation | `tests/security` | PR subset, nightly full | None | Under 2 min subset |
 | Race | Any test touching shared state, caches, sessions, or jobs | All packages | Every PR | None | 2x runtime |
 | Fuzz | Config parsing, import payloads, strict JSON, identifiers, cursors | `*_fuzz_test.go` | Nightly, 10 min per target | None | 10 min |
 | Load | Concurrency limits, queue depth, quota behavior, latency, memory | `tests/load`, build tag `load` | Weekly, mocks only | Loopback | 10–20 min |
@@ -153,7 +153,7 @@ How this strategy avoids gaming:
 | Scenario | Level | Assertion |
 |---|---|---|
 | Compatibility validator | Unit | Incompatible dimension and metric pairs are rejected before the API call with a documented reason; valid pairs pass |
-| Quota handling | Mock | Quota errors map to `rate_limited` with retry guidance; concurrency is capped at 10; retries are bounded |
+| Quota handling | Mock | Quota errors map to `rate_limited` with retry guidance; concurrency is capped at 4 per property; retries are bounded |
 | Ecommerce capability probe | Sandbox or real | A property with zero purchases is reported as "no ecommerce data", not as zero revenue |
 | Metadata | Mock | Dimensions and metrics are cached; an unknown field is rejected |
 | Result metadata | Unit | `TimeZone`, `Currency`, `Freshness`, and `Quality` are always present; absence is a contract violation |
@@ -226,8 +226,8 @@ activity.
 |---|---|---|---|---|
 | Unit, contract, mock integration | Yes | Yes | Yes | `go test ./...` |
 | Race detector | Yes | Yes | Yes | `go test -race ./...` |
-| Security fast subset | Yes | Yes | Yes | `go test ./test/security/... -short` |
-| Security full | No | Yes | Yes | `go test ./test/security/...` |
+| Security fast subset | Yes | Yes | Yes | `go test ./tests/security/... -short` |
+| Security full | No | Yes | Yes | `go test ./tests/security/...` |
 | Fuzz | No | Yes, 10 min per target | Yes | `go test -fuzz=FuzzX -fuzztime=10m ./internal/...` |
 | Load | No | No | Yes, mocks only | `go test ./tests/load/... -tags=load` |
 | Sandbox | No | Opt-in | Manual | `go test ./tests/sandbox/... -tags=sandbox` |

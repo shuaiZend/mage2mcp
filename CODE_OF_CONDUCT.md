@@ -1,6 +1,6 @@
 # Contributor Covenant Code of Conduct
 
-> **Enforcement contact: `conduct@mage2mcp.dev` — TO BE CONFIGURED.**
+> **Enforcement contact: `shuai@shuangyulin.cn`.**
 > This address is a placeholder. Until it is configured and monitored, reports can also
 > be sent by contacting the maintainer directly through GitHub, using the account linked
 > from the repository. Do not use public issues to report conduct incidents.
@@ -59,11 +59,10 @@ offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to
-the community leaders responsible for enforcement at `conduct@mage2mcp.dev`.
+the community leaders responsible for enforcement at `shuai@shuangyulin.cn`.
 
-> **TO BE CONFIGURED:** the mailbox above does not exist yet. Reports sent there will not
-> be received until the maintainer configures it. Contact the maintainer directly through
-> GitHub in the meantime.
+> Reports are handled confidentially by the maintainer. If the report concerns the
+> maintainer personally, use GitHub's abuse reporting instead.
 
 All complaints will be reviewed and investigated promptly and fairly.
 

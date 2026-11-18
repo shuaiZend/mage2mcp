@@ -36,7 +36,7 @@ joins the ruleset.
 | Attribute | Value |
 |---|---|
 | Triggers | `push` to `main`, `pull_request`, weekly schedule, `workflow_dispatch`; one concurrent run per ref, superseded runs cancelled |
-| Jobs | `detect`, `docs`, `go` (matrix 1.25.x and 1.27.x), `external-links` |
+| Jobs | `detect`, `docs`, `dco` (pull requests), `go` (matrix 1.26.x and 1.27.x), `external-links` |
 | What each job proves | `docs`: documentation obeys `.markdownlint-cli2.jsonc` and every relative link resolves. `go`: code is gofmt-clean, vet-clean, builds, and passes the suite under `-race` on both toolchains, with coverage uploaded. `external-links`: external URLs are alive, advisory only. `detect`: whether the Go jobs apply |
 | Runtime and failure | `docs` 1–2 min warm and blocking; `go` 3–5 min per matrix entry and blocking once required; `external-links` 3–6 min with `continue-on-error`, never blocking; `detect` fails only on checkout or shell errors |
 
@@ -55,7 +55,7 @@ joins the ruleset.
 |---|---|
 | Triggers | `pull_request` only |
 | Jobs | `dependency-review` |
-| What it proves | The dependency diff introduces no advisory of High severity or above and no license on the deny list (GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.1, LGPL-3.0, SSPL-1.0) |
+| What it proves | The dependency diff introduces no advisory of High severity or above and no license outside the allowlist (`0BSD`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `CC0-1.0`, `ISC`, `MIT`, `MIT-0`, `Unlicense`). An unknown license fails closed |
 | Runtime and failure | Under 1 min; fails the check and comments a summary on the PR. It never runs on `push`, so an administrator-bypass merge is not reviewed by this job |
 
 ### 2.4 `release.yml`
@@ -81,7 +81,7 @@ job definitions stay merged, valid, and ready for the day the module appears.
 
 The third row is the danger. GitHub treats a required check whose latest conclusion is
 `skipped` as satisfying the requirement, not as a failure. If `go.mod` were deleted,
-renamed, or moved while `go (1.25.x)` and `go (1.27.x)` were required, both checks would
+renamed, or moved while `go (1.26.x)` and `go (1.27.x)` were required, both checks would
 report `skipped` and the PR could merge with no Go verification. Therefore:
 
 1. A skipped job is never described as a passing job; the correct phrasing is
@@ -93,14 +93,15 @@ report `skipped` and the PR could merge with no Go verification. Therefore:
 
 ### 3.1 Required-check change in Phase 1
 
-Phase 1 adds `go (1.25.x)`, `go (1.27.x)`, `govulncheck`, and `gosec` to the required
+Phase 1 adds `go (1.26.x)`, `go (1.27.x)`, `govulncheck`, `gosec`, and `guard` to the required
 list. This is a repository ruleset update, not a code change: the job names already
 exist and are already reported, so only the ruleset changes.
 
 | Check name | Today | Phase 1 | Reported by |
 |---|---|---|---|
 | `docs` | Required | Required | `ci.yml` |
-| `go (1.25.x)` | Skipped, not required | Required | `ci.yml` matrix |
+| `dco` | Runs on PRs, not required | Required | `ci.yml` |
+| `go (1.26.x)` | Skipped, not required | Required | `ci.yml` matrix |
 | `go (1.27.x)` | Skipped, not required | Required | `ci.yml` matrix |
 | `govulncheck` | Skipped, not required | Required | `security.yml` |
 | `gosec` | Skipped, not required | Required | `security.yml` |
@@ -108,7 +109,7 @@ exist and are already reported, so only the ruleset changes.
 | `gitleaks` | Runs, not required | Recommended | `security.yml` |
 | `dependency-review` | Runs, not required | Recommended | `dependency-review.yml` |
 
-Job names are part of the interface. Renaming `go (1.25.x)` leaves the old name in the
+Job names are part of the interface. Renaming `go (1.26.x)` leaves the old name in the
 required list with no job to report it, blocking every PR. A rename and a ruleset update
 land in the same window, recorded in `docs/reviews/`.
 
@@ -127,16 +128,16 @@ Status: **Enforced** (runs and blocks), **Gated** (job exists, skipped until `go
 | Race detector | `go test -race` | `ci.yml` `go` | Gated | 1 |
 | govulncheck | `govulncheck ./...` | `security.yml` | Gated | 1 |
 | gosec | high severity, high confidence | `security.yml` | Gated | 1 |
-| License audit | dependency review deny list | `dependency-review.yml` | Partial: npm manifest only, no Go module graph | 1 |
+| License audit | dependency review allowlist | `dependency-review.yml` | Partial: npm manifest only, no Go module graph | 1 |
 | SBOM | syft SPDX JSON | `release.yml` | Partial: release only, never on a PR | 1, enforced in 6 |
 | Contract tests | `go test ./tests/contract/...` | none | Not enforced: no tests exist | 2 |
-| Security tests | `go test ./test/security/...` | none | Not enforced: no tests exist | 1–2 |
+| Security tests | `go test ./tests/security/...` | none | Not enforced: no tests exist | 1–2 |
 | Independent review | One approval, review record on bypass | GitHub ruleset | Enforced by process | 0 |
-| Docs | markdownlint and internal links | `ci.yml` `docs` | Enforced and required; red on `main` until referenced Phase 0 documents land | 0 |
+| Docs | markdownlint and internal links | `ci.yml` `docs` | Enforced and required; green on the Phase 0 branch | 0 |
 
 "Gated" is not "enforced": a failing Go job is a signal a human must honor, not a merge
-block. The docs gate is red because `README.md` and `docs/index.md` link to Phase 0
-documents still being written, and a required check that fails on `main` blocks all PRs.
+block. The docs gate is green on the Phase 0 branch; it becomes the only required check
+until the Go jobs activate.
 
 ## 5. Gap analysis and remediation
 
@@ -150,7 +151,7 @@ documents still being written, and a required check that fails on `main` blocks 
 | CodeQL not in a workflow | Default setup may be enabled in repository settings; this cannot be verified from the repository contents (`[U]`) | 1 | CodeQL runs on push and PR for Go, the check is required, and every alert is triaged or dismissed with a reason |
 | No coverage threshold | No code exists; a threshold of zero is noise | 1 warning, 6 blocking | A script fails the job below core 80 percent, security 90 percent, overall 70 percent; generated code is excluded |
 | No benchmark regression gate | No benchmarks exist | 6 | Hot-path benchmarks run on PR with benchstat; a regression above 10 percent fails or is waived with a record |
-| No DCO or import-boundary check | `CONTRIBUTING.md` promises DCO "once CI is in place"; the boundary check needs the package layout | 1 | Every commit carries a `Signed-off-by` matching its author, and a `go list -deps` check fails on any forbidden module edge |
+| No import-boundary check | The boundary check needs the package layout | 1 | A `go list -deps` check fails on any forbidden module edge |
 | No `go mod verify` or `go.sum` drift check | Threat model T-33 requires both; neither exists | 1 | CI fails on a modified `go.sum` without a `go.mod` change, and on any `go mod verify` failure |
 | Actions pinned by tag, not SHA | All workflows use tags such as `@v4` | 1 | Every `uses:` carries a 40-character SHA with a version comment; a lint job rejects a tag reference |
 | No image signature, provenance, fuzz, or load gate | Release signs blobs only; parsers do not exist yet | 6–7 | `cosign verify` and `gh attestation verify` succeed for the digest; fuzz runs 10 minutes nightly and load runs weekly against mocks |
@@ -161,7 +162,7 @@ documents still being written, and a required check that fails on `main` blocks 
 |---|---|---|---|---|
 | Go modules and build cache | `actions/setup-go`, `cache: true` | Hash of `go.sum` | 30–60 s per job | Configured |
 | npm packages | `actions/setup-node`, `cache: npm` | Hash of `package-lock.json` | 15–25 s | Configured |
-| Docker layers and buildx | `cache-from` and `cache-to` of type `gha` | Dockerfile plus `go.sum` | 3–6 min per release | Not configured; `docker/setup-buildx-action` is also missing, so the multi-arch push cannot work |
+| Docker layers and buildx | `cache-from` and `cache-to` of type `gha` | Dockerfile plus `go.sum` | 3–6 min per release | Not configured; `docker/setup-buildx-action` was missing and has been added, so the multi-arch push can work |
 
 Runtime budgets to be measured in Phase 1:
 
@@ -190,15 +191,15 @@ record in `docs/reviews/`, and stays required only while it runs on every PR.
 | Workflow | Job | Permissions | Reason |
 |---|---|---|---|
 | `ci.yml` | all | `contents: read` | Checkout and read-only checks |
-| `security.yml` | `gitleaks` | `contents: read`, `security-events: write` | Report to code scanning |
+| `security.yml` | `gitleaks` | `contents: read` | History scan; uploads nothing |
 | `security.yml` | `govulncheck` | `contents: read` | Module download and scan |
 | `security.yml` | `gosec` | `contents: read`, `security-events: write` | SARIF upload |
 | `security.yml` | `scorecard` | `contents: read`, `security-events: write`, `id-token: write`, `actions: read` | OIDC publication |
 | `dependency-review.yml` | `dependency-review` | `contents: read`, `pull-requests: write` | PR summary comment |
 | `release.yml` | `release` | `contents: write`, `packages: write`, `id-token: write` | Release assets, GHCR, keyless signing |
 
-`security.yml` currently grants `security-events: write` workflow-wide, including to
-`gitleaks` and `govulncheck`; Phase 1 scopes it per job. No workflow may add a
+`security.yml` grants `contents: read` and `actions: read` workflow-wide and scopes
+`security-events: write` to `gosec` and `scorecard` only. No workflow may add a
 permission outside this table without updating the table and passing Security review.
 
 ### 7.1 `pull_request_target` is banned
@@ -255,7 +256,7 @@ preference: a tag can be moved to a different commit. SHA pinning is a Phase 1 g
 | Dismiss stale approvals on new commits | Yes | An approval applies to a commit, not a branch |
 | Require review from CODEOWNERS | Yes | Ownership routing is enforced, not advisory |
 | Require conversation resolution | Yes | An unresolved thread is an unaddressed finding |
-| Required status checks | `docs` today; four more in Phase 1 | Section 3.1 |
+| Required status checks | `docs` today; five more in Phase 1 | Section 3.1 |
 | Require branches to be up to date | Yes | The tested merge result is the merged result |
 | Require linear history | Yes | Squash merge only; no merge commits |
 | Force push and deletion | Both blocked | Published history is shared; `main` cannot disappear |

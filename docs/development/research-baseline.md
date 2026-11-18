@@ -29,7 +29,7 @@ Rules:
 | F1 | Official MCP Go SDK latest stable is **v1.8.0**; its `go.mod` requires **go 1.25.0**; licensed Apache-2.0 with MIT-licensed portions remaining | `proxy.golang.org` equivalent via goproxy.cn: `@latest`, `v1.8.0.mod`, `LICENSE` | `[V-live]` |
 | F2 | SDK exports `mcp.NewServer`, `mcp.AddTool[In,Out]` (automatic JSON Schema 2020-12 validation of inputs and outputs), `mcp.NewStreamableHTTPHandler`, `auth.RequireBearerToken`, `auth.TokenVerifier`, `Server.AddReceivingMiddleware` | SDK v1.8.0 source: `mcp/tool.go`, `mcp/streamable.go`, `mcp/server.go`, `auth/auth.go` | `[V-live]` |
 | F3 | SDK supports protocol version **2026-07-28** and negotiates down to 2025-11-25 | SDK v1.8.0 `mcp/shared.go`, `mcp/server.go` | `[V-live]` |
-| F4 | Local workstation Go is 1.21.4, but `GOTOOLCHAIN=auto` successfully downloads and runs go1.25.0; latest available toolchain is go1.27.4 | Local `go run` probe; toolchain version list | `[V-live]` |
+| F4 | Local workstation Go is 1.21.4, but `GOTOOLCHAIN=auto` successfully downloads and runs go1.25.0; latest available toolchain is go1.27.4. Two planned direct dependencies (`prometheus/client_golang` v1.25.0, `redis/go-redis/v9` v9.23.0) declare `go 1.26.0`, so the project floor is 1.26 | Local `go run` probe; toolchain list; dependency `.mod` files | `[V-live]` |
 | F5 | `proxy.golang.org` is unreachable from the local workstation; `goproxy.cn` works. CI runners are expected to use the default proxy | Network probes | `[V-live]` |
 | F6 | Magento **2.4.9** exists in the current release line (alongside 2.4.8-p5, 2.4.7-p10) | Adobe Commerce release versions page | `[V-docs]` |
 | F7 | Configurable product endpoints confirmed: `POST /V1/products`, `POST /V1/configurable-products/{sku}/options`, `POST /V1/configurable-products/{sku}/child`, `GET /V1/products/{sku}`, `GET /V1/eav/attribute-sets/list`, `GET /V1/products/attribute-sets/{setId}/attributes`, `GET /V1/categories` | AdobeDocs/commerce-webapi tutorial sources | `[V-docs]` |
@@ -37,7 +37,7 @@ Rules:
 | F9 | Bulk/async status endpoints: `GET /V1/bulk/{bulkUuid}/status`, `GET /V1/bulk/{bulkUuid}/operation-status/{status}`, `GET /V1/bulk/{bulkUuid}/detailed-status`; asynchronous APIs require a configured message queue | Adobe Commerce bulk/async documentation | `[V-docs]` |
 | F10 | MSI endpoints confirmed: `POST /V1/inventory/bulk-product-source-assign`, `POST /V1/inventory/bulk-product-source-unassign`, `POST /V1/inventory/bulk-product-source-transfer`, `POST /V1/inventory/bulk-partial-source-transfer`, `POST /V1/inventory/source-items`, `GET /V1/inventory/source-items`, `POST /V1/inventory/source-items-delete` | Adobe Commerce inventory documentation | `[V-docs]` |
 | F11 | Magento import endpoints: `POST /V1/import/csv` (base64 payload) and `POST /V1/import/json`; validation strategies `validation-stop-on-errors` / `validation-skip-errors` with `allowedErrorCount` | Adobe Commerce import documentation | `[V-docs]` |
-| F12 | Magento REST authentication differs by deployment: self-hosted/PaaS uses admin or integration tokens; Adobe Commerce as a Cloud Service uses Adobe IMS OAuth and does not support traditional token generation | Adobe Commerce authentication documentation | `[V-docs]` |
+| F12 | Magento REST authentication differs by deployment: self-hosted/PaaS supports integration OAuth 1.0a (production default), integration bearer tokens only when `oauth/consumer/enable_integration_as_bearer=1`, and admin tokens (4 h, dev-only, 2FA-sensitive); Adobe Commerce as a Cloud Service uses Adobe IMS OAuth | Adobe Commerce authentication documentation; Magento 2.4.9 sources | `[V-docs]` |
 | F13 | Cloudflare Logpush is available on Free, Pro, and Business (self-service, usage-based), not Enterprise-only; 25 GB/month included per account, then $0.03/GB to internal destinations (R2, Pipelines) and $0.10/GB to external destinations; no historical backfill; logs are lost if a job fails | Cloudflare Logpush overview and pricing docs | `[V-docs]` |
 | F14 | An HTTP Requests Logpush record is roughly 1.5–3 kB uncompressed; 1M requests/day ≈ 1.5–3 GB/day ≈ 45–90 GB/month | Cloudflare Logpush sizing docs | `[V-docs]` |
 | F15 | Bot Score, bot tags, and verified-bot fields in `http_requests` logs require Bot Management (Enterprise add-on); they are unavailable on Pro | Cloudflare `http_requests` dataset field documentation | `[V-docs]` |
@@ -50,6 +50,8 @@ Rules:
 | F22 | Google API and documentation domains (`*.googleapis.com`, `developers.google.com`) are unreachable from the local workstation; GA4 verification is only possible through the configured GA4 MCP server | Network probes | `[V-live]` |
 | F23 | Candidate dependency licenses: pgx, asynq, chi, golang-jwt, jsonschema-go, testify = MIT; go-redis = BSD-2-Clause; prometheus/client_golang = Apache-2.0; all actively maintained and not archived | GitHub repository metadata | `[V-live]` |
 | F24 | Local tooling: gh CLI authenticated with `repo` + `workflow` scopes; Docker 29.8 with Compose v5.5; Node 26 / npm 11; git 2.39 | Local probes | `[V-live]` |
+| F25 | `POST /V1/import/csv` and `POST /V1/import/json` are Adobe Commerce features; Magento Open Source ships no ImportExport `webapi.xml`, so bulk import must fall back to chunked REST writes or async bulk | Magento 2.4.9 module sources; Adobe Import documentation | `[V-docs]` |
+| F26 | `PUT /async/V1/products/{sku}` appears in documentation but is not registered in 2.4.9 `webapi_async.xml`; async product routes are `POST async/V1/products` and `PUT async/bulk/V1/products/bySku` | Magento 2.4.9 `webapi_async.xml` | `[V-docs]` |
 
 ## Corrections to the project brief
 
@@ -64,8 +66,10 @@ must follow the corrected position and record the change in the relevant ADR.
 3. **The target GA4 property has no ecommerce data today.** Unified ecommerce
    scenarios can be structurally validated but not numerically validated against
    this property.
-4. **Go 1.25+ is a hard requirement**, driven by the official MCP SDK. The local
-   Go 1.21.4 install works only because toolchain auto-download is enabled.
+4. **Go 1.26+ is the project floor.** The MCP SDK requires 1.25, but two direct
+   dependencies require 1.26; the floor was raised rather than pinning older
+   libraries (ADR-0013). The local Go 1.21.4 install works only because toolchain
+   auto-download is enabled.
 
 ## Document conventions
 

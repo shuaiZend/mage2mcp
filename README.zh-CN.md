@@ -74,7 +74,7 @@ flowchart TB
 网关将使用官方 [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) 和 Streamable HTTP
 传输方式。SDK v1.8.0 支持 MCP 协议版本 `2026-07-28`，并可向下协商到 `2025-11-25`。
 
-一次工具调用会经过以下路径：
+在预期设计中，一次工具调用经过以下路径：
 
 1. **认证** —— 调用方出示 Cloudflare Access JWT，网关按已配置的 Access 应用进行校验。
 2. **授权** —— RBAC 判断调用方是否可以在该实例上使用此工具，以及该实例是否启用了写操作。
@@ -214,6 +214,8 @@ Data API 只返回聚合数据。维度与指标的兼容性按字段对逐对�
 
 ## 安全策略
 
+设计规定以下性质（尚未实现）：
+
 - **默认只读。** 除非运维方显式启用写入配置，否则写工具处于禁用状态；默认配置不暴露任何写
   能力。
 - **写入需确认。** 高风险操作要求提供绑定到规范化参数哈希的确认令牌。任何参数变化都会使确认
@@ -258,7 +260,7 @@ Data API 只返回聚合数据。维度与指标的兼容性按字段对逐对�
 
 | 组件 | 目标支持 | 说明 |
 |---|---|---|
-| Magento Open Source 与 Adobe Commerce | 2.4.x；主要目标为 2.4.9 | 使用 admin 或 integration token 调用 REST。GraphQL 仅用于只读店面验证 |
+| Magento Open Source 与 Adobe Commerce | 2.4.x；主要目标为 2.4.9 | 使用 Integration OAuth 1.0a 凭证调用 REST（仅在显式启用时使用 Bearer Token）。GraphQL 仅用于只读店面验证 |
 | Adobe Commerce as a Cloud Service | v0.x 不支持 | 使用 Adobe IMS OAuth，不支持传统令牌生成方式 |
 | Cloudflare 套餐 | Free、Pro、Business、Enterprise | 数据集与字段可用性因套餐而异 |
 | Cloudflare GraphQL Analytics | 计划中 | 默认限制为每 5 分钟 300 次查询；zone 级查询最多可包含 10 个 zone，账户级查询恰好 1 个账户 |
@@ -269,7 +271,7 @@ Data API 只返回聚合数据。维度与指标的兼容性按字段对逐对�
 | GA4 | Data API v1 | 仅聚合数据；原始事件需要 BigQuery 导出 |
 | GA4 配额 | 按 property 读取并遵守配额 | 参考 property 报告为每天 200,000 tokens、每小时 40,000 tokens、10 个并发请求 |
 | MCP 协议 | 计划中：`2026-07-28`，可向下协商到 `2025-11-25` | 由 MCP Go SDK v1.8.0 提供 |
-| Go | 1.25 或更高 | SDK v1.8.0 要求 `go 1.25.0`；当前工具链为 1.27.x |
+| Go | 1.26 或更高 | SDK v1.8.0 要求 `go 1.25.0`；当前直接依赖要求 1.26；当前工具链为 1.27.x |
 | PostgreSQL | 16 或更高 | 配置元数据、审计日志、任务状态 |
 | Redis | 7 或更高 | Asynq 队列 |
 | 容器运行时 | Docker 与 Compose | 本地栈与部署 |
@@ -329,3 +331,6 @@ Advisories 私下报告。在 1.0 之前，安全修复只针对最新的 v0.x �
 
 基于 Apache License 2.0 授权。参见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。第三方组件及其
 许可证记录在依赖清单中，并随每个版本发布的 SBOM 一并提供。
+
+mage2mcp 是独立的开源项目，与 Adobe、Magento、Cloudflare 或 Google 不存在隶属、
+背书或赞助关系。产品名称仅用于描述性说明。

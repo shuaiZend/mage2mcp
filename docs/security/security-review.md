@@ -115,22 +115,37 @@ use the gateway to obtain a vendor credential.
 
 ## 5. Confirmation protocol
 
-High-risk operations (product deletion, configurable link removal, bulk import
-execution, inventory overwrite) require a two-step call:
+High-risk operations (product deletion, configurable link removal, import start or
+resume, inventory overwrite) require approval by a **different human identity**
+through a separate surface. The requesting agent never holds both halves of the
+ceremony.
 
-1. The agent calls the tool without a confirmation token. The gateway validates
-   the parameters, computes `param_hash = SHA-256(canonical_json(params))`,
-   stores `(identity, tool, instance, param_hash, nonce, expires_at)`, and
-   returns `confirmation_required` with the nonce and the human-readable summary.
-2. A human approves out of band (UI or CLI). The approval is bound to the nonce.
-3. The agent re-submits the same parameters plus the nonce. The gateway verifies
-   the hash, the identity, the tool, the instance, the TTL (≤ 15 minutes), and
-   single use, then executes and marks the nonce consumed.
+1. The agent calls the tool without a confirmation id. The gateway validates the
+   parameters, computes `param_hash = SHA-256(canonical_json(params))`, and stores
+   `(requester_hash, tool, instance_or_binding, param_hash, confirmation_id,
+   expires_at, state='pending')`.
+2. The gateway returns `confirmation_required` with the opaque `confirmation_id`
+   and a summary generated from the validated parameters. It never returns the
+   approval secret and never marks the request approved.
+3. A human operator opens the **approval surface**: the `mage2mcp-admin` CLI or a
+   separate HTTP endpoint bound to a human-only Access application. The surface
+   lists pending confirmations with the parameter summary and hash.
+4. The operator approves or rejects. The approval writes `approver_hash`,
+   `approved_at`, and `state='approved'`. The approval is rejected unless
+   `approver_hash <> requester_hash`, the approver holds the `approver` permission,
+   the request is unexpired, and the hash still matches.
+5. The agent re-submits the same parameters plus `confirmation_id`. The gateway
+   verifies state, hash, identity, tool, instance or binding, TTL (default 300 s,
+   hard cap 900 s), and single use, then consumes the token and executes.
+6. Consumption and rejection are audited with both identities.
 
 Canonicalization rules are fixed and tested: sorted keys, no insignificant
-whitespace, explicit null handling, UTF-8 normalization, and numbers rendered in
-a canonical decimal form. A change to canonicalization invalidates all
-outstanding confirmations and requires an ADR.
+whitespace, explicit null handling, UTF-8 normalization, and numbers rendered in a
+canonical decimal form. A change to canonicalization invalidates all outstanding
+confirmations and requires an ADR.
+
+If the approval surface is unavailable, destructive operations fail closed. Reads
+and non-destructive writes are unaffected.
 
 ## 6. Input and output handling
 

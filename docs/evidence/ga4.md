@@ -72,13 +72,13 @@ users, so the mechanism is visible in realtime responses.
 | Dimension(s) | Metrics | Result |
 |---|---|---|
 | `date` | `ecommercePurchases`, `purchaseRevenue` | Accepted, 0 rows |
-| `date` | `ecommercePurchases`, `eventCount` | **Accepted, 7 rows** (contradicts F18) |
+| `date` | `ecommercePurchases`, `eventCount` | **Accepted, 7 rows** (amended F18) |
 | `date` | `ecommercePurchases` + `itemsPurchased` / `addToCarts` / `checkouts` / `itemsViewed` / `averagePurchaseRevenue` | Accepted, 0 rows each |
 | `date` | `ecommercePurchases`, `itemRevenue` | 400: "Please remove ecommercePurchases…" |
 | `date` | `itemsViewed`, `addToCarts`, `checkouts`, `ecommercePurchases`, `purchaseRevenue` | Accepted, 0 rows |
 | `sessionDefaultChannelGroup`, `transactionId` | `ecommercePurchases`, `purchaseRevenue` | Accepted, 0 rows |
 | `itemId` | `itemsViewed`, `itemsAddedToCart`, `itemsPurchased`, `itemRevenue` | Accepted, 0 rows |
-| `itemId` | `sessions`, `totalUsers` | **Accepted, 0 rows** (contradicts F18) |
+| `itemId` | `sessions`, `totalUsers` | **Accepted, 0 rows** (amended F18) |
 | `itemId` | `eventCount`; `sessions` + `screenPageViews` | 400: "Please remove eventCount…" / "…remove screenPageViews…" |
 | `itemId`, `itemName` | `averageSessionDuration`, `bounceRate` | 400: generic incompatibility |
 | `sessionSource`, `sessionMedium` | `eventCount` | **Accepted, 154 rows** (contradicts the skill library) |

@@ -524,9 +524,12 @@ configured GA4 MCP server, 2026-11-18. Replayable request JSON is in
 | 12 | `itemSku` existence; docs reachability | `itemSku` absent; `developers.google.com` unreachable, so citations are links | `[V-live]` |
 | 13 | `batchRunReports`, `runPivotReport`, `getMetadata` | Not exercised through the available MCP surface | `[U]` |
 
-### Contradictions with the baseline
+### Findings that amended F18
 
-| F18 claim | Live observation | Tag |
+F18 originally repeated the GA4 skills library's blanket scope rules. The live probes
+below replaced them; the baseline now records the corrected, pair-wise position.
+
+| Original F18 wording | Live observation | Tag |
 |---|---|---|
 | "`ecommercePurchases` cannot be combined with `eventCount`" | The pair returns 200 with 7 rows | `[V-live]` |
 | "`itemId`/`itemSku` cannot be combined with session-scoped metrics" | `itemId` + `sessions` and `itemId` + `totalUsers` are accepted; `itemId` + `screenPageViews`, `averageSessionDuration`, `bounceRate`, and `eventCount` are rejected. The rule is per field pair, not per scope, and `itemSku` does not exist in the schema at all | `[V-live]` |

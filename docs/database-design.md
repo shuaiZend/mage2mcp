@@ -233,6 +233,20 @@ CREATE TABLE datasource_instances (
 );
 CREATE INDEX datasource_instances_module_status_idx ON datasource_instances (module, status);
 
+CREATE TABLE instance_bindings (
+    id           text        PRIMARY KEY,
+    tenant_id    uuid        NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+    display_name text        NOT NULL,
+    magento_id   text        NOT NULL REFERENCES datasource_instances(id) ON DELETE RESTRICT,
+    cloudflare_id text       NOT NULL REFERENCES datasource_instances(id) ON DELETE RESTRICT,
+    ga4_id       text        NOT NULL REFERENCES datasource_instances(id) ON DELETE RESTRICT,
+    source       text        NOT NULL DEFAULT 'yaml' CHECK (source IN ('yaml','db')),
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT instance_bindings_id_fmt CHECK (id ~ '^[a-z0-9][a-z0-9-]{0,63}$'),
+    CONSTRAINT instance_bindings_distinct CHECK (magento_id <> cloudflare_id
+        AND magento_id <> ga4_id AND cloudflare_id <> ga4_id)
+);
+
 CREATE TABLE instance_credentials (
     id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     instance_id text        NOT NULL REFERENCES datasource_instances(id) ON DELETE CASCADE,
@@ -273,6 +287,7 @@ CREATE TABLE tool_permissions (
     tool_pattern text       NOT NULL,
     scope_kind  text        NOT NULL CHECK (scope_kind IN ('tool','capability_prefix')),
     instance_id text        NULL REFERENCES datasource_instances(id) ON DELETE CASCADE,
+    binding_id  text        NULL REFERENCES instance_bindings(id) ON DELETE CASCADE,
     effect      text        NOT NULL DEFAULT 'allow' CHECK (effect IN ('allow','deny')),
     scope       text        NOT NULL CHECK (scope IN ('read','write','destructive','admin')),
     requires_confirmation boolean NOT NULL DEFAULT false,
@@ -282,7 +297,8 @@ CREATE TABLE tool_permissions (
         (scope_kind = 'tool' AND tool_pattern ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,3}$')
      OR (scope_kind = 'capability_prefix' AND tool_pattern ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,2}$')),
     CONSTRAINT tool_permissions_no_wildcard CHECK (position('*' in tool_pattern) = 0),
-    CONSTRAINT tool_permissions_confirm_chk CHECK (requires_confirmation = false OR scope IN ('write','destructive'))
+    CONSTRAINT tool_permissions_confirm_chk CHECK (requires_confirmation = false OR scope IN ('write','destructive')),
+    CONSTRAINT tool_permissions_scope_one CHECK (NOT (instance_id IS NOT NULL AND binding_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX tool_permissions_uq
     ON tool_permissions (role_name, tool_pattern, instance_id) NULLS NOT DISTINCT;
@@ -298,7 +314,8 @@ duplicate. `tool_permissions.scope` mirrors the catalog's `permission` field (mc
 CREATE TABLE jobs (
     id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id      uuid        NULL REFERENCES tenants(id) ON DELETE RESTRICT,
-    instance_id    text        NOT NULL REFERENCES datasource_instances(id) ON DELETE RESTRICT,
+    instance_id    text        NULL REFERENCES datasource_instances(id) ON DELETE RESTRICT,
+    binding_id     text        NULL REFERENCES instance_bindings(id) ON DELETE RESTRICT,
     module         text        NOT NULL CHECK (module IN ('magento','cloudflare','ga4','unified','platform')),
     tool           text        NOT NULL,
     kind           text        NOT NULL CHECK (kind ~ '^[a-z][a-z0-9_]{2,63}$'),
@@ -333,7 +350,11 @@ CREATE TABLE jobs (
         (state IN ('succeeded','failed','canceled')) = (finished_at IS NOT NULL)),
     CONSTRAINT jobs_running_lease CHECK (state <> 'running' OR lease_expires_at IS NOT NULL),
     CONSTRAINT jobs_idem_fmt CHECK (idempotency_key IS NULL
-        OR idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$')
+        OR idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+    CONSTRAINT jobs_scope_chk CHECK (
+        (module = 'unified' AND binding_id IS NOT NULL AND instance_id IS NULL)
+     OR (module = 'platform' AND instance_id IS NULL AND binding_id IS NULL)
+     OR (module IN ('magento','cloudflare','ga4') AND instance_id IS NOT NULL AND binding_id IS NULL))
 );
 CREATE UNIQUE INDEX jobs_idempotency_uq ON jobs (instance_id, subject_hash, tool, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
@@ -400,6 +421,8 @@ CREATE TABLE import_batches (
         (state IN ('completed','completed_with_errors','failed','canceled')) = (finished_at IS NOT NULL)),
     CONSTRAINT import_batches_artifact CHECK ((artifact_ref IS NULL) = (artifact_expires_at IS NULL))
 );
+CREATE UNIQUE INDEX import_batches_payload_uq ON import_batches (instance_id, payload_sha256)
+    WHERE state NOT IN ('completed','completed_with_errors','failed','canceled');
 CREATE INDEX import_batches_instance_created_idx ON import_batches (instance_id, created_at DESC);
 CREATE INDEX import_batches_active_idx ON import_batches (instance_id, state) WHERE finished_at IS NULL;
 CREATE INDEX import_batches_purge_idx ON import_batches (finished_at) WHERE finished_at IS NOT NULL;
@@ -469,7 +492,8 @@ CREATE TABLE confirmation_tokens (
     token_hash     bytea       NOT NULL,  -- SHA-256 of the confirmation_id given to the client
     nonce_hash     bytea       NOT NULL,  -- SHA-256 of the nonce; the nonce is never stored
     tool           text        NOT NULL,
-    instance_id    text        NOT NULL REFERENCES datasource_instances(id) ON DELETE CASCADE,
+    instance_id    text        NULL REFERENCES datasource_instances(id) ON DELETE CASCADE,
+    binding_id     text        NULL REFERENCES instance_bindings(id) ON DELETE CASCADE,
     params_hash    bytea       NOT NULL,  -- SHA-256 over RFC 8785 canonical JSON
     params_summary jsonb       NOT NULL DEFAULT '{}'::jsonb,
     requester_hash bytea       NOT NULL,
@@ -492,7 +516,10 @@ CREATE TABLE confirmation_tokens (
     CONSTRAINT confirmation_tokens_no_self_approval CHECK (approver_hash IS NULL OR approver_hash <> requester_hash),
     CONSTRAINT confirmation_tokens_state_times CHECK (
         (approver_hash IS NOT NULL) = (approved_at IS NOT NULL)
-        AND (state = 'consumed') = (consumed_at IS NOT NULL)),
+        AND (state = 'consumed') = (consumed_at IS NOT NULL)
+        AND (state IN ('pending','expired','revoked') OR approver_hash IS NOT NULL)),
+    CONSTRAINT confirmation_tokens_scope_one CHECK (
+        (instance_id IS NOT NULL AND binding_id IS NULL) OR (instance_id IS NULL AND binding_id IS NOT NULL)),
     CONSTRAINT confirmation_tokens_summary_size CHECK (octet_length(params_summary::text) <= 2048)
 );
 CREATE INDEX confirmation_tokens_pending_idx ON confirmation_tokens (instance_id, created_at DESC)
@@ -1055,8 +1082,8 @@ already in the backup.
 | Q3 | Does the IdP group → role mapping stay in configuration (threat model §5.3) or move into `role_assignments`? This design makes the table authoritative and `source='idp_group'` a synchronized cache. | Architect + Security | Phase 1 |
 | Q4 | One global audit chain (serialized) or per-writer chains (this design)? | Architect | Phase 1, measured at target call rate |
 | Q5 | Is single-use enforcement the PostgreSQL CAS (this design) or the Redis `SETNX` (threat model §6.3)? Both ship; the CAS is authoritative and the threat model wording should agree. | Security | Phase 1 |
-| Q6 | Import resume: `Start` with the same `payload_sha256`, or a new `Resume` method on a frozen interface? | Architect | Phase 2 |
-| Q7 | Which job identifier is public? `magento.import.status` needs one, and `ImportService.Status(instanceID, jobID)` does not say whether `jobID` is `jobs.id` or `import_batches.id`. | Architect | Phase 2 |
+| Q6 | Import resume: the frozen interface has `Resume(ctx, instanceID, batchID)`. The remaining question is whether resume may run after the artifact TTL expires, or must fail with `artifact_expired` and require a new upload. | Architect | Phase 2 |
+| Q7 | Public identifier for import status: the frozen interface takes `batchID`, and this design exposes `import_batches.id` as `batch_id`. Confirm that `jobs.id` is never exposed for imports. | Architect | Phase 2 |
 | Q8 | Artifact store for import payloads: local volume, R2, or "client re-submits"? | Architect | Phase 2 |
 | Q9 | `tenant_id` becomes `NOT NULL` and enters every unique index in v1.x; confirm the cutover and whether RLS becomes default-on at the same time. | Architect | Post-1.0 |
 

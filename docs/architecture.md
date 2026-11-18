@@ -107,12 +107,13 @@ internal/magento  internal/cloudflare  internal/ga4  internal/unified
 |---|---|---|
 | `internal/core` | Configuration schema, error taxonomy, shared value types, `DataSource` contract, capability model | Standard library, config/validation libraries |
 | `internal/security` | JWT verification, JWKS cache, RBAC policy, audit writer, secret resolution | `core` |
-| `internal/mcp` | MCP server construction, tool registry, transport, request pipeline, tool definitions | `core`, `security`, module public interfaces |
+| `internal/mcp` | MCP server construction, tool registry, transport, request pipeline, tool definitions | `core` (including the job-enqueue interface), `security`, module public interfaces |
 | `internal/magento` | Magento REST/GraphQL client, product/EAV/configurable/inventory/import/order services, DTOs | `core` only |
 | `internal/cloudflare` | Cloudflare API client, GraphQL query templates, security events, Logpush metadata | `core` only |
 | `internal/ga4` | GA4 Data API client, report builder, compatibility validator, property capabilities | `core` only |
 | `internal/unified` | Cross-source models, joins, metric semantics, SKU mapping | `core` + module **public service interfaces** |
-| `internal/jobs` | Asynq task definitions, enqueue/dequeue, retry policy | `core`, module services |
+| `internal/jobs` | Asynq task definitions, enqueue/dequeue, retry policy | `core`, module services (as task handlers) |
+| `internal/admin` | Human-only approval surface for confirmations, read-only status | `core`, `security` |
 | `internal/storage` | PostgreSQL repositories, migrations runner, Redis adapters | `core` |
 | `internal/observability` | Structured logging, metrics, health, tracing | `core` |
 | `pkg/` | Optional reusable primitives with no domain knowledge | Standard library only |
@@ -145,9 +146,9 @@ sequenceDiagram
     H->>S: route to session
     S->>R: resolve tool by name
     R-->>S: tool spec + required permission
-    S->>Z: authorize(identity, tool, instance)
-    Z-->>S: allow / deny
-    S->>C: require confirmation? verify hash+nonce
+    S->>Z: authorize(identity, tool, instance or binding)
+    Z-->>S: allow / deny (all binding members must be granted)
+    S->>C: require confirmation? verify approval state, approver, hash, TTL
     C-->>S: ok / confirmation_required
     S->>T: execute with typed input
     T->>V: service call (context deadline)
@@ -197,6 +198,13 @@ Rules:
 - A tool is never registered without a permission, a timeout, and an input
   schema with `additionalProperties: false`.
 - There is no `execute_api`, `execute_sql`, or raw GraphQL passthrough tool.
+- Long-running work is enqueued through the `core/jobs.Enqueuer` interface. A tool
+  handler depends on that interface, never on `internal/jobs`, so the async design
+  does not violate the dependency table. The concrete enqueuer is injected in
+  `cmd/server`; job handlers are registered by the worker.
+- Unified tools are authorized against a **binding**: every member instance must be
+  granted. A binding is declared in configuration and persisted read-only in
+  `instance_bindings`.
 
 ## 7. Configuration and instances
 
@@ -207,6 +215,11 @@ references, never literals in the file.
 server:
   listen: "0.0.0.0:8080"
   public_url: "https://mcp.example.com"
+bindings:
+  - id: "store-us-analytics"
+    magento: "store-us"
+    cloudflare: "zone-us"
+    ga4: "giztop"
 auth:
   issuer: "https://<team>.cloudflareaccess.com"
   audience: "<application-aud-claim>"

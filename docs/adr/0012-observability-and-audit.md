@@ -58,8 +58,9 @@ sensitive payloads.
 
 ### Negative
 
-- Audit write failure must fail the operation (fail closed) or be explicitly
-  degraded; this needs an operator decision.
+- Audit write failure fails write and destructive operations (fail closed) and
+  degrades read operations with a warning. This is a deliberate availability
+  trade-off in favor of evidence integrity.
 - Extra storage for audit.
 
 ### Security impact
@@ -74,7 +75,10 @@ Low: standard library plus Prometheus client.
 ## Follow-up
 
 - Phase 1: implement logging, metrics, health, and audit writer.
-- Phase 1: decide audit-failure behavior and document it.
+- Audit failure policy: **fail closed for write and destructive tools**, fail open with a
+  warning for read tools. An audit write that cannot be persisted must prevent the write
+  from being reported as successful; the operation returns `internal` with a correlation
+  id and is recorded in the local fallback log.
 - Post-1.0: OpenTelemetry tracing.
 
 ## References

@@ -10,7 +10,7 @@ Impact High and no acceptable mitigation blocks the phase that introduces it.
 
 | ID | Risk | L | I | Mitigation | Owner | Review point |
 |---|---|---|---|---|---|---|
-| R1 | Go 1.25+ requirement excludes contributors on older toolchains | M | M | Document the floor; `toolchain` directive in `go.mod`; CI matrix 1.25/1.27; toolchain auto-download in the quickstart | Architect | Phase 1 |
+| R1 | Go 1.26+ requirement excludes contributors on older toolchains | M | M | Document the floor (ADR-0013); `toolchain` directive in `go.mod`; CI matrix 1.26/1.27; toolchain auto-download in the quickstart | Architect | Phase 1 |
 | R2 | Module proxy unreachable in some regions blocks local builds | M | L | Document `GOPROXY=https://goproxy.cn,direct` as a fallback; CI uses the default proxy; no vendoring by default | Architect | Phase 1 |
 | R3 | Google API domains unreachable from some networks prevents GA4 verification | M | M | GA4 verification runs in CI or from an allowed network; document the constraint; keep `[U]` markers honest | GA4 owner | Phase 4 |
 | R4 | Target GA4 property has no ecommerce data, so ecommerce scenarios cannot be numerically validated | H | M | Capability probe returns `ecommerce: absent`; tests use a synthetic property or recorded fixtures; never claim numerical validation | GA4 owner | Phase 4–5 |
@@ -34,6 +34,8 @@ Impact High and no acceptable mitigation blocks the phase that introduces it.
 | R22 | Third-party GitHub Action compromise | L | H | Pin actions to commit SHAs for security-sensitive jobs; restrict `GITHUB_TOKEN` permissions; review action changes | Maintainer | Phase 1 |
 | R23 | Audit write failure policy is undefined, risking silent loss of evidence | M | H | Decide fail-closed vs degraded before Phase 1 exit; default fail-closed for writes | Security | Phase 1 |
 | R24 | Credential rotation requires a restart | M | M | Document restart requirement initially; design hot reload for a later phase | Architect | Post-1.0 |
+| R29 | Magento OAuth 1.0a signing is implemented incorrectly (canonicalization, nonce, timestamp) and every request fails or is replayable | M | H | Signature-vector tests against Magento's own client; nonce/timestamp uniqueness; clock-skew handling; fallback documented | Magento owner | Phase 2 |
+| R30 | Import tools unavailable on Magento Open Source (F25), surprising operators | H | M | Capability detection returns `unsupported_capability`; documentation states the edition requirement; chunked REST fallback designed | Magento owner | Phase 2 |
 
 ## 2. Product and ecosystem risks
 

@@ -247,7 +247,7 @@ metrics that mean different things in different systems.
 
 ## Security posture
 
-The design enforces the following properties:
+The design specifies the following properties, none of which is implemented yet:
 
 - **Read-only by default.** Write tools are disabled unless an operator explicitly
   enables a write profile; the default configuration exposes no write capability.
@@ -260,7 +260,7 @@ The design enforces the following properties:
   do not depend on it.
 - **No direct database access.** All reads and writes go through official APIs, so
   business logic, validation, and permissions are preserved.
-- **Least-privilege tokens.** Magento integration tokens scoped to the required
+- **Least-privilege tokens.** Magento integration credentials scoped to the required
   resources; Cloudflare API tokens scoped to read-only analytics and zone access by
   default; and GA4 service accounts with Viewer access. The opt-in Logpush inspection
   profile carries `Logs Write` only because Cloudflare requires it for read calls; the
@@ -304,7 +304,7 @@ documentation behind each constraint is cited in the corresponding integration d
 
 | Component | Target support | Notes |
 |---|---|---|
-| Magento Open Source and Adobe Commerce | 2.4.x; 2.4.9 is the primary target | REST with an admin or integration token. GraphQL is used for read-only storefront verification |
+| Magento Open Source and Adobe Commerce | 2.4.x; 2.4.9 is the primary target | REST with integration OAuth 1.0a credentials (bearer tokens only when explicitly enabled). GraphQL is used for read-only storefront verification |
 | Adobe Commerce as a Cloud Service | Not supported in v0.x | Uses Adobe IMS OAuth and does not support traditional token generation |
 | Cloudflare plans | Free, Pro, Business, Enterprise | Dataset and field availability differs by plan |
 | Cloudflare GraphQL Analytics | Planned | Default limit is 300 queries per 5-minute window; a zone-scoped query may cover up to 10 zones, an account-scoped query exactly one account |
@@ -315,7 +315,7 @@ documentation behind each constraint is cited in the corresponding integration d
 | GA4 | Data API v1 | Aggregate-only; raw events require a BigQuery export |
 | GA4 quotas | Read and respected per property | A reference property reported 200,000 tokens/day, 40,000 tokens/hour, and 10 concurrent requests |
 | MCP protocol | Planned: `2026-07-28`, negotiating down to `2025-11-25` | Provided by MCP Go SDK v1.8.0 |
-| Go | 1.25 or newer | SDK v1.8.0 requires `go 1.25.0`; 1.27.x is the current toolchain |
+| Go | 1.26 or newer | SDK v1.8.0 requires `go 1.25.0`; current direct dependencies require 1.26; 1.27.x is the current toolchain |
 | PostgreSQL | 16 or newer | Configuration metadata, audit log, job state |
 | Redis | 7 or newer | Asynq queues |
 | Container runtime | Docker with Compose | Local stack and deployment |
@@ -380,3 +380,7 @@ latest v0.x minor release only while the project is pre-1.0.
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and
 [NOTICE](NOTICE). Third-party components and their licenses are recorded in the
 dependency manifest and in the SBOM published with each release.
+
+mage2mcp is an independent open-source project. It is not affiliated with, endorsed
+by, or sponsored by Adobe, Magento, Cloudflare, or Google. Product names are used
+descriptively only.

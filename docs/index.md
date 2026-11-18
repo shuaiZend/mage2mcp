@@ -1,7 +1,7 @@
 # Documentation
 
 This is the entry point for mage2mcp documentation. The project is in **Phase 0
-(design)**: the documents below are the approved baseline for implementation, not
+(design)**: the documents below are the proposed baseline pending maintainer approval, not
 descriptions of a running system.
 
 ## Verification legend
@@ -52,6 +52,7 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Testing strategy](development/testing-strategy.md) | Test layers, coverage targets, environments |
 | [License policy](development/license-policy.md) | License choice, dependency matrix, SBOM |
 | [Risk register](development/risk-register.md) | Open risks and mitigations |
+| [Reviews](reviews/phase-0-report.md) | Phase 0 report and independent review records |
 | [Research baseline](development/research-baseline.md) | Verified facts and sources |
 
 ## Decision records

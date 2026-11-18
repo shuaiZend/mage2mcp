@@ -15,7 +15,7 @@ questions are about the design, the API mappings, and the security model.
 | Bug reports | [GitHub Issues](https://github.com/shuaiZend/mage2mcp/issues) |
 | Feature proposals | [GitHub Issues](https://github.com/shuaiZend/mage2mcp/issues) |
 | Vulnerability reports | [GitHub Security Advisories](https://github.com/shuaiZend/mage2mcp/security/advisories) — private, never a public issue |
-| Code of conduct concerns | `conduct@mage2mcp.dev` (TO BE CONFIGURED) or the maintainer's GitHub account |
+| Code of conduct concerns | `shuai@shuangyulin.cn` or the maintainer's GitHub account |
 
 Search existing discussions and issues before opening a new one. Duplicate questions
 split the answer and waste reviewer time.
