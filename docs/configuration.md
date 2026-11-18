@@ -61,9 +61,10 @@ Environment overrides: `MAGE2MCP_REDIS_ADDR`, `MAGE2MCP_REDIS_PASSWORD`.
 
 ## `datasources`
 
-Each module has `enabled` and `instances`. Cloudflare supports several zones;
-every tool call must then name an `instance`, and an unknown or missing instance
-is rejected. Magento and GA4 still accept one instance each in this release.
+Each module has `enabled` and `instances`. Cloudflare and GA4 support several
+instances; every tool call must then name an `instance`, and an unknown or
+missing instance is rejected. Magento still accepts one store per gateway in
+this release.
 
 | Module | Instance keys |
 |---|---|

@@ -7,7 +7,34 @@ import (
 	"sort"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
 )
+
+// serviceLookup resolves an instance id to its service at call time.
+type serviceLookup func(instance string) (*Service, error)
+
+// singleLookup binds a lookup to exactly one service; the instance argument is
+// validated by the schema but does not select a different property.
+func singleLookup(svc *Service) serviceLookup {
+	return func(string) (*Service, error) { return svc, nil }
+}
+
+// lookup exposes the resolver as a lookup function.
+func (r *Resolver) lookup() serviceLookup {
+	return func(instance string) (*Service, error) { return r.Resolve(instance) }
+}
+
+// RegisterWithResolver registers all GA4 tools with per-call instance routing.
+func RegisterWithResolver(reg *registry.Registry, resolver *Resolver) error {
+	if reg == nil || resolver == nil {
+		return fmt.Errorf("ga4: RegisterWithResolver needs a registry and resolver")
+	}
+	lookup := resolver.lookup()
+	if err := registerTools(reg, lookup); err != nil {
+		return err
+	}
+	return registerExtraTools(reg, lookup)
+}
 
 // Resolver maps an instance id to its service (ADR-0018).
 //

@@ -287,26 +287,36 @@ func registerModules(cfg config.Config, reg *registry.Registry) error {
 		}
 	}
 	if cfg.Modules.GA4.Enabled {
-		if len(cfg.Modules.GA4.Instances) != 1 {
-			return fmt.Errorf("ga4: exactly one instance is supported in this release")
+		services := make(map[string]*ga4.Service, len(cfg.Modules.GA4.Instances))
+		for _, inst := range cfg.Modules.GA4.Instances {
+			tokenSource, err := ga4TokenSource(inst.Credential)
+			if err != nil {
+				return fmt.Errorf("ga4 %s: %w", inst.ID, err)
+			}
+			svc, err := ga4.NewService(ga4.Config{PropertyID: inst.PropertyID, TokenSource: tokenSource})
+			if err != nil {
+				return fmt.Errorf("ga4 %s: %w", inst.ID, err)
+			}
+			services[inst.ID] = svc
 		}
-		inst := cfg.Modules.GA4.Instances[0]
-		tokenSource, err := ga4TokenSource(inst.Credential)
-		if err != nil {
-			return fmt.Errorf("ga4 %s: %w", inst.ID, err)
-		}
-		svc, err := ga4.NewService(ga4.Config{
-			PropertyID: inst.PropertyID, TokenSource: tokenSource,
-		})
-		if err != nil {
-			return fmt.Errorf("ga4 %s: %w", inst.ID, err)
-		}
-		ga4Svc = svc
-		if err := ga4.Register(reg, svc); err != nil {
-			return err
-		}
-		if err := ga4.RegisterExtra(reg, svc); err != nil {
-			return err
+		if len(services) == 1 {
+			for _, svc := range services {
+				ga4Svc = svc
+			}
+			if err := ga4.Register(reg, ga4Svc); err != nil {
+				return err
+			}
+			if err := ga4.RegisterExtra(reg, ga4Svc); err != nil {
+				return err
+			}
+		} else {
+			resolver, err := ga4.NewResolver(services)
+			if err != nil {
+				return err
+			}
+			if err := ga4.RegisterWithResolver(reg, resolver); err != nil {
+				return err
+			}
 		}
 	}
 	if len(cfg.Bindings) > 0 {
