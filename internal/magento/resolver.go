@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
 )
 
 // Resolver maps an instance id to its store-bound service (ADR-0018).
@@ -68,4 +69,28 @@ func (r *Resolver) Instances() []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// serviceLookup resolves an instance id to its service at call time.
+type serviceLookup func(instance string) (*Service, error)
+
+// singleLookup binds a lookup to exactly one service; the instance argument is
+// validated by the schema but does not select a different store.
+func singleLookup(svc *Service) serviceLookup {
+	return func(string) (*Service, error) { return svc, nil }
+}
+
+// lookup exposes the resolver as a lookup function.
+func (r *Resolver) lookup() serviceLookup {
+	return func(instance string) (*Service, error) { return r.Resolve(instance) }
+}
+
+// RegisterWithResolver registers the read tools with per-call store routing.
+// Write tools keep the single-store path until they are wired through the
+// resolver in a later slice.
+func RegisterWithResolver(reg *registry.Registry, resolver *Resolver) error {
+	if reg == nil || resolver == nil {
+		return fmt.Errorf("magento: RegisterWithResolver needs a registry and resolver")
+	}
+	return registerReadTools(reg, resolver.lookup())
 }
