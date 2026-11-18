@@ -43,8 +43,8 @@ func TestRegisterMetadata(t *testing.T) {
 	if err := Register(reg, service); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if reg.Len() != 2 {
-		t.Fatalf("registered tools = %d, want 2", reg.Len())
+	if reg.Len() != 3 {
+		t.Fatalf("registered tools = %d, want 3", reg.Len())
 	}
 	tests := []struct {
 		name       string
@@ -191,8 +191,8 @@ func TestToolsListAndSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(tools.Tools) != 2 {
-		t.Fatalf("tools = %d, want 2", len(tools.Tools))
+	if len(tools.Tools) != 3 {
+		t.Fatalf("tools = %d, want 3", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
