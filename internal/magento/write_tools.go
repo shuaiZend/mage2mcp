@@ -188,15 +188,30 @@ type inventoryAssignOutput struct {
 // automatically. The confirmation middleware is installed by a later slice; the
 // metadata here is already the contract it enforces.
 func RegisterWrites(reg *registry.Registry, svc *Service) error {
-	if reg == nil {
-		return errs.New(errs.CodeInternal, "tool registry is required")
-	}
 	if svc == nil {
 		return errs.New(errs.CodeInternal, "Magento service is required")
 	}
+	return registerWriteTools(reg, singleLookup(svc))
+}
+
+// RegisterWritesWithResolver registers the write tools with per-call store
+// routing. Confirmation metadata is unchanged: every write still requires
+// two-step human approval.
+func RegisterWritesWithResolver(reg *registry.Registry, resolver *Resolver) error {
+	if resolver == nil {
+		return errs.New(errs.CodeInternal, "Magento resolver is required")
+	}
+	return registerWriteTools(reg, resolver.lookup())
+}
+
+// registerWriteTools builds the write tools against an instance lookup.
+func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
+	if reg == nil {
+		return errs.New(errs.CodeInternal, "tool registry is required")
+	}
 	tools := []registry.Tool{
-		newProductCreateTool(svc), newProductUpdateTool(svc), newConfigurableCreateTool(svc),
-		newConfigurableAddChildTool(svc), newInventoryAssignTool(svc), newImportExecuteTool(svc),
+		newProductCreateTool(lookup), newProductUpdateTool(lookup), newConfigurableCreateTool(lookup),
+		newConfigurableAddChildTool(lookup), newInventoryAssignTool(lookup), newImportExecuteTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -232,11 +247,15 @@ func destructiveHint() *bool {
 	return &value
 }
 
-func newProductCreateTool(svc *Service) registry.Tool {
+func newProductCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(productCreateToolName, productCreateToolTitle, productCreateToolDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
 		mcp.AddTool(srv, mcpWriteTool(productCreateToolName, productCreateToolTitle, productCreateToolDescription, productCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productCreateInput) (*mcp.CallToolResult, productWriteOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productWriteOutput{}, err
+				}
 				product, err := svc.Create(ctx, in.toCreateInput())
 				if err != nil {
 					return nil, productWriteOutput{}, err
@@ -248,11 +267,15 @@ func newProductCreateTool(svc *Service) registry.Tool {
 	return t
 }
 
-func newProductUpdateTool(svc *Service) registry.Tool {
+func newProductUpdateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(productUpdateToolName, productUpdateToolTitle, productUpdateToolDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
 		mcp.AddTool(srv, mcpWriteTool(productUpdateToolName, productUpdateToolTitle, productUpdateToolDescription, productUpdateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productUpdateInput) (*mcp.CallToolResult, productWriteOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productWriteOutput{}, err
+				}
 				product, err := svc.Update(ctx, in.SKU, UpdateProductInput{
 					Name: in.Name, Price: in.Price, Status: in.Status, Visibility: in.Visibility, Attributes: in.Attributes,
 				})
@@ -266,11 +289,15 @@ func newProductUpdateTool(svc *Service) registry.Tool {
 	return t
 }
 
-func newConfigurableCreateTool(svc *Service) registry.Tool {
+func newConfigurableCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(configurableCreateToolName, configurableCreateToolTitle, configurableCreateToolDescription, capabilityConfigurableWrite)
 	t.Register = func(srv *mcp.Server) error {
 		mcp.AddTool(srv, mcpWriteTool(configurableCreateToolName, configurableCreateToolTitle, configurableCreateToolDescription, configurableCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in configurableCreateInput) (*mcp.CallToolResult, configurableCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, configurableCreateOutput{}, err
+				}
 				result, err := svc.CreateConfigurable(ctx, in.toServiceInput())
 				if err != nil {
 					return nil, configurableCreateOutput{}, err
@@ -298,11 +325,15 @@ func (in configurableCreateInput) toServiceInput() CreateConfigurableInput {
 	return CreateConfigurableInput{Parent: in.Parent.toCreateInput(), Variants: variants, Children: children}
 }
 
-func newConfigurableAddChildTool(svc *Service) registry.Tool {
+func newConfigurableAddChildTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(configurableAddChildToolName, configurableAddChildToolTitle, configurableAddChildToolDescription, capabilityConfigurableWrite)
 	t.Register = func(srv *mcp.Server) error {
 		mcp.AddTool(srv, mcpWriteTool(configurableAddChildToolName, configurableAddChildToolTitle, configurableAddChildToolDescription, configurableAddChildSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in configurableAddChildInput) (*mcp.CallToolResult, configurableAddChildOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, configurableAddChildOutput{}, err
+				}
 				if err := svc.AddChild(ctx, in.ParentSKU, in.ChildSKU); err != nil {
 					return nil, configurableAddChildOutput{}, err
 				}
@@ -313,7 +344,7 @@ func newConfigurableAddChildTool(svc *Service) registry.Tool {
 	return t
 }
 
-func newInventoryAssignTool(svc *Service) registry.Tool {
+func newInventoryAssignTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(inventoryAssignToolName, inventoryAssignToolTitle, inventoryAssignToolDescription, capabilityInventoryWrite)
 	t.Register = func(srv *mcp.Server) error {
 		mcp.AddTool(srv, mcpWriteTool(inventoryAssignToolName, inventoryAssignToolTitle, inventoryAssignToolDescription, inventoryAssignSchema),
@@ -321,6 +352,10 @@ func newInventoryAssignTool(svc *Service) registry.Tool {
 				items := make([]SourceItem, 0, len(in.Items))
 				for _, item := range in.Items {
 					items = append(items, SourceItem(item))
+				}
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, inventoryAssignOutput{}, err
 				}
 				if err := svc.AssignSourceItems(ctx, items); err != nil {
 					return nil, inventoryAssignOutput{}, err
@@ -364,12 +399,16 @@ const importExecuteSchema = `{
   }
 }`
 
-func newImportExecuteTool(svc *Service) registry.Tool {
+func newImportExecuteTool(lookup serviceLookup) registry.Tool {
 	tool := writeToolMetadata(importExecuteToolName, importExecuteToolTitle, importExecuteToolDescription, importExecuteCapability)
 	tool.Register = func(srv *mcp.Server) error {
 		mcp.AddTool(srv, mcpWriteTool(importExecuteToolName, importExecuteToolTitle, importExecuteToolDescription, importExecuteSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importExecuteInput) (*mcp.CallToolResult, importExecuteOutput, error) {
 				data, err := DecodeImportPayload(in.Data)
+				if err != nil {
+					return nil, importExecuteOutput{}, err
+				}
+				svc, err := lookup(in.Instance)
 				if err != nil {
 					return nil, importExecuteOutput{}, err
 				}

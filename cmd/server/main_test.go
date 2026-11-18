@@ -63,20 +63,6 @@ func TestRegisterModulesBuildsTools(t *testing.T) {
 	}
 }
 
-func TestRegisterModulesRejectsMultiInstanceWithoutReadSupport(t *testing.T) {
-	// Cloudflare and GA4 support multiple instances; this test guards the
-	// Magento write path, which still requires one store.
-	cfg := config.Default()
-	cfg.Tools.Writes = true
-	cfg.Modules.Magento = config.Module{Enabled: true, Instances: []config.Instance{
-		{ID: "a", Endpoint: "https://a.example.com", StoreCode: "default", Credential: "bearer:x"},
-		{ID: "b", Endpoint: "https://b.example.com", StoreCode: "default", Credential: "bearer:y"},
-	}}
-	if err := registerModules(cfg, registry.New()); err == nil {
-		t.Fatal("expected multi-store writes to be rejected")
-	}
-}
-
 func TestMagentoSignerForms(t *testing.T) {
 	if _, err := magentoSigner("bearer:abc"); err != nil {
 		t.Fatalf("bearer: %v", err)
@@ -191,7 +177,7 @@ func TestRegisterModulesSupportsMultipleMagentoStoresForReads(t *testing.T) {
 	}
 }
 
-func TestRegisterModulesRejectsMultiStoreWrites(t *testing.T) {
+func TestRegisterModulesSupportsMultiStoreWrites(t *testing.T) {
 	cfg := config.Default()
 	cfg.Auth.Enabled = false
 	cfg.Tools.Writes = true
@@ -199,7 +185,11 @@ func TestRegisterModulesRejectsMultiStoreWrites(t *testing.T) {
 		{ID: "store-us", Endpoint: "https://us.example.com", StoreCode: "default", Credential: "bearer:t"},
 		{ID: "store-eu", Endpoint: "https://eu.example.com", StoreCode: "default", Credential: "bearer:t"},
 	}}
-	if err := registerModules(cfg, registry.New()); err == nil {
-		t.Fatal("multi-store writes must be rejected until they are resolver-aware")
+	reg := registry.New()
+	if err := registerModules(cfg, reg); err != nil {
+		t.Fatalf("registerModules: %v", err)
+	}
+	if _, ok := reg.Lookup("magento.product.create"); !ok {
+		t.Fatal("write tool not registered for multi-store")
 	}
 }

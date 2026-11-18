@@ -63,10 +63,8 @@ Environment overrides: `MAGE2MCP_REDIS_ADDR`, `MAGE2MCP_REDIS_PASSWORD`.
 
 Each module has `enabled` and `instances`. All three modules accept several
 instances: every tool call must then name an `instance`, and an unknown or
-missing instance is rejected. Magento write tools still require exactly one
-store per gateway until they are wired through the resolver; the server refuses
-to start a multi-store deployment with `tools.writes: true` rather than risk a
-write to the wrong store.
+missing instance is rejected. Every write still requires two-step human approval; the store is selected by the
+`instance` argument.
 
 | Module | Instance keys |
 |---|---|

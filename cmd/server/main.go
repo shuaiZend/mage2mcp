@@ -260,17 +260,17 @@ func registerModules(cfg config.Config, reg *registry.Registry) error {
 				}
 			}
 		} else {
-			// Write tools are not yet resolver-aware: refuse rather than apply a
-			// write to the wrong store.
-			if cfg.Tools.Writes {
-				return fmt.Errorf("magento: write tools require exactly one store in this release")
-			}
 			resolver, err := magento.NewResolver(services)
 			if err != nil {
 				return err
 			}
 			if err := magento.RegisterWithResolver(reg, resolver); err != nil {
 				return err
+			}
+			if cfg.Tools.Writes {
+				if err := magento.RegisterWritesWithResolver(reg, resolver); err != nil {
+					return err
+				}
 			}
 		}
 	}
