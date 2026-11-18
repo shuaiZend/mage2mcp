@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `ga4.property.metadata` (with the compatibility validator).
 - Authorization and audit middleware around every `tools/call`, with a default-deny
   RBAC policy and an append-only in-memory recorder.
+- GA4 ecommerce overview: `ga4.ecommerce.overview` reports purchases and
+  revenue per day, but only after the capability probe confirms ecommerce
+  tracking; otherwise it returns `ecommerce_not_tracked` instead of zeros.
 - Cloudflare security events: `cloudflare.security.events` returns bounded,
   newest-first sampled events (action, rule, country, path, user agent) without
   client IPs; 30-day window, 31-day retention disclosure, limit 1-1000.

@@ -50,6 +50,7 @@ Common behavior:
 | `ga4.analytics.realtime` | read | 60s | Last 30 minutes, allowlisted dimensions/metrics |
 | `ga4.property.metadata` | read | 30s | Available dimensions and metrics |
 | `ga4.property.capabilities` | read | 60s | Ecommerce tracking presence with evidence |
+| `ga4.ecommerce.overview` | read | 60s | Purchases/revenue per day; returns `ecommerce_not_tracked` instead of zeros when the property has no ecommerce data |
 
 ## Unified analytics
 
