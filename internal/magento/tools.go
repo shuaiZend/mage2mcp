@@ -82,7 +82,7 @@ func Register(reg *registry.Registry, svc *Service) error {
 	if svc == nil {
 		return errs.New(errs.CodeInternal, "Magento service is required")
 	}
-	for _, tool := range []registry.Tool{newGetTool(svc), newSearchTool(svc)} {
+	for _, tool := range []registry.Tool{newGetTool(svc), newSearchTool(svc), newImportValidateTool(svc)} {
 		if err := reg.Register(tool); err != nil {
 			return err
 		}
@@ -146,4 +146,60 @@ func newSearchTool(svc *Service) registry.Tool {
 		return nil
 	}
 	return t
+}
+
+const (
+	importValidateToolName        = "magento.import.validate"
+	importValidateToolTitle       = "Validate a product import"
+	importValidateToolDescription = "Parses and validates a CSV or JSON product import (base64-encoded, at most 8 MiB and 5000 rows) and returns a preview with per-row errors. Read-only: nothing is written to Magento."
+	importValidateCapability      = "magento.import.read"
+)
+
+type importValidateInput struct {
+	Instance string `json:"instance"`
+	Format   string `json:"format"`
+	Data     string `json:"data_base64"`
+}
+
+type importValidateOutput struct {
+	Preview *ImportPreview `json:"preview"`
+}
+
+const importValidateSchema = `{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instance", "format", "data_base64"],
+  "properties": {
+    "instance": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+    "format": {"type": "string", "enum": ["csv", "json"]},
+    "data_base64": {"type": "string", "maxLength": 11184812}
+  }
+}`
+
+func newImportValidateTool(svc *Service) registry.Tool {
+	return registry.Tool{
+		Name: importValidateToolName, Title: importValidateToolTitle,
+		Description: importValidateToolDescription, Capability: importValidateCapability,
+		Permission: registry.PermissionRead, Timeout: toolTimeout,
+		Annotations: mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+		Register: func(srv *mcp.Server) error {
+			mcp.AddTool(srv, &mcp.Tool{
+				Name: importValidateToolName, Title: importValidateToolTitle,
+				Description: importValidateToolDescription,
+				InputSchema: json.RawMessage(importValidateSchema),
+				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, in importValidateInput) (*mcp.CallToolResult, importValidateOutput, error) {
+				data, err := DecodeImportPayload(in.Data)
+				if err != nil {
+					return nil, importValidateOutput{}, err
+				}
+				preview, err := svc.ValidateImport(ctx, in.Format, data)
+				if err != nil {
+					return nil, importValidateOutput{}, err
+				}
+				return nil, importValidateOutput{Preview: preview}, nil
+			})
+			return nil
+		},
+	}
 }

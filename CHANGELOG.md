@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `ga4.property.metadata` (with the compatibility validator).
 - Authorization and audit middleware around every `tools/call`, with a default-deny
   RBAC policy and an append-only in-memory recorder.
+- Magento import validation: bounded CSV/JSON parsing (8 MiB, 5000 rows,
+  64 columns) with per-row errors, duplicate-SKU detection, and the
+  `magento.import.validate` read-only tool.
+- Configuration reference covering every key and environment override.
 - Unified analytics: declared bindings, a Cloudflare-requests vs GA4-sessions
   comparison with per-source values, a nil ratio when sessions are zero, and
   quality notes; `unified.traffic.compare` tool and binding configuration.
