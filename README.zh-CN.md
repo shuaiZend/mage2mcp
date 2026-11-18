@@ -7,8 +7,8 @@ mage2mcp 是一个独立的 [Model Context Protocol](https://modelcontextprotoco
 > **状态：Phase 1 —— 基础设施。**
 > 已具备可运行的 MCP 服务器：Streamable HTTP、Cloudflare Access JWT 认证、RBAC、
 > 审计、Prometheus 指标，以及 Magento 商品、Cloudflare 分析/安全、GA4 流量与元数据的
-> 只读工具。写操作、统一分析与持久化存储仍在推进。尚未发布版本，接口在 1.0 之前可能
-> 通过 ADR 变更。
+> 只读工具；可选 PostgreSQL 持久化审计与 Redis 任务 worker。写操作与统一分析仍在推进。
+> 尚未发布版本，接口在 1.0 之前可能通过 ADR 变更。
 
 ## 当前已有的内容
 

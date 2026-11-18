@@ -29,6 +29,7 @@ import (
 	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 	"github.com/shuaiZend/mage2mcp/internal/security/jwt"
 	"github.com/shuaiZend/mage2mcp/internal/security/rbac"
+	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -57,7 +58,23 @@ func run() error {
 	if err := registerModules(cfg, reg); err != nil {
 		return err
 	}
-	auditor := audit.NewMemory()
+	var auditor audit.Recorder = audit.NewMemory()
+	if cfg.Database.URL != "" {
+		store, err := storage.Open(context.Background(), storage.Config{
+			URL: cfg.Database.URL, MaxConns: cfg.Database.MaxConns,
+		})
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		if err := store.Migrate(context.Background()); err != nil {
+			return err
+		}
+		auditor = storage.NewAuditRecorder(store)
+		logger.Info("durable audit enabled", "store", "postgresql")
+	} else {
+		logger.Warn("database.url is not set: audit is in memory and lost on restart")
+	}
 	policy, err := rbac.New([]rbac.Grant{
 		{Role: "viewer", Tool: "*", Scope: rbac.ScopeRead, Effect: rbac.EffectAllow},
 		{Role: "analyst", Tool: "*", Scope: rbac.ScopeRead, Effect: rbac.EffectAllow},

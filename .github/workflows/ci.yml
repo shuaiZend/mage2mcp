@@ -49,6 +49,36 @@ jobs:
       - name: Design contract check
         run: npm run test:contracts
 
+  integration:
+    name: integration
+    needs: detect
+    if: needs.detect.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: mage2mcp
+          POSTGRES_PASSWORD: test-password
+          POSTGRES_DB: mage2mcp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mage2mcp"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+      - name: Run storage integration tests
+        env:
+          MAGE2MCP_TEST_DATABASE_URL: "postgres://mage2mcp:test-password@127.0.0.1:5432/mage2mcp?sslmode=disable"
+        run: go test -race -count=1 ./internal/storage/...
+
   go:
     name: go
     needs: detect
