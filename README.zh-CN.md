@@ -44,6 +44,19 @@ MCP 端点为 `POST /mcp`（Streamable HTTP）。生产环境应部署在 Cloudf
 并通过 `MAGE2MCP_AUTH_*` 环境变量保持认证开启。Docker 用户可在 `.env` 中设置必需变量后
 运行 `docker compose up`。
 
+### 高风险操作
+
+写工具在 `tools.writes: true` 之前保持关闭。启用后，每次写入都需要**另一个真人身份**
+通过管理面审批：
+
+```bash
+./bin/mage2mcp-admin -config config.yaml -as you@example.com pending
+./bin/mage2mcp-admin -config config.yaml -as you@example.com approve <confirmation-id>
+```
+
+审批需要 `database.url`：管理 CLI 与网关共享 PostgreSQL 确认存储。审批绑定到工具参数的
+规范化哈希，5 分钟过期（最长 15 分钟），且只能使用一次。
+
 ## 为什么需要它
 
 AI 智能体需要可靠、可审计地访问电商与分析系统。目前这种访问通常只有两种形态，而两者都不理想。

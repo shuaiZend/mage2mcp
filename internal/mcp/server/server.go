@@ -7,6 +7,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -16,6 +17,8 @@ import (
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
+	"github.com/shuaiZend/mage2mcp/internal/security/auth"
+	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 )
 
 // Options configures the server.
@@ -32,6 +35,8 @@ type Options struct {
 	Authorize func(ctx context.Context, tool string) error
 	// Audit records intent and outcome for every tools/call.
 	Audit func(ctx context.Context, tool, phase, state, errorCode string)
+	// Confirm enforces the two-step approval protocol for tools that require it.
+	Confirm *confirm.Service
 }
 
 // InfoInput is empty: platform.info takes no parameters.
@@ -61,7 +66,7 @@ func NewMCP(opts Options) (*mcp.Server, error) {
 // installPolicy wraps tools/call with authorization and audit. The MCP session
 // context carries the verified identity from the HTTP auth middleware.
 func installPolicy(srv *mcp.Server, opts Options) {
-	if opts.Authorize == nil && opts.Audit == nil {
+	if opts.Authorize == nil && opts.Audit == nil && opts.Confirm == nil {
 		return
 	}
 	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -85,6 +90,12 @@ func installPolicy(srv *mcp.Server, opts Options) {
 					return deniedResult(err), nil
 				}
 			}
+			if err := opts.enforceConfirmation(ctx, tool, call.Params.Arguments); err != nil {
+				if opts.Audit != nil {
+					opts.Audit(ctx, tool, "outcome", "denied", string(errs.CodeOf(err)))
+				}
+				return toolErrorResult(err), nil
+			}
 			result, err := next(ctx, method, req)
 			if opts.Audit != nil {
 				state, code := "succeeded", ""
@@ -96,6 +107,52 @@ func installPolicy(srv *mcp.Server, opts Options) {
 			return result, err
 		}
 	})
+}
+
+// enforceConfirmation applies ADR-0014 to tools whose metadata requires it.
+func (o Options) enforceConfirmation(ctx context.Context, tool string, args json.RawMessage) error {
+	if o.Confirm == nil {
+		return nil
+	}
+	meta, ok := o.Registry.Lookup(tool)
+	if !ok || !meta.RequiresConfirmation {
+		return nil
+	}
+	requester := "anonymous"
+	if id, ok := auth.IdentityFromContext(ctx); ok && id.Subject != "" {
+		requester = id.Subject
+	}
+	var fields map[string]any
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &fields); err != nil {
+			return errs.New(errs.CodeInvalidArgument, "arguments are not a JSON object")
+		}
+	}
+	confirmationID, _ := fields["confirmation_id"].(string)
+	if confirmationID == "" {
+		req, err := o.Confirm.Require(ctx, tool, "", meta.Permission, meta.Title, requester, args)
+		if err != nil {
+			return err
+		}
+		return errs.New(errs.CodeConfirmationRequired, "this operation requires approval by a different human").
+			WithDetail("confirmation_id", req.ID).
+			WithDetail("expires_at", req.ExpiresAt.Format(time.RFC3339))
+	}
+	if err := o.Confirm.Consume(ctx, confirmationID, requester, args); err != nil {
+		return err
+	}
+	return nil
+}
+
+func toolErrorResult(err error) *mcp.CallToolResult {
+	code := string(errs.CodeOf(err))
+	body := map[string]any{"code": code, "message": err.Error()}
+	var typed *errs.Error
+	if errors.As(err, &typed) && len(typed.Details) > 0 {
+		body["details"] = typed.Details
+	}
+	return &mcp.CallToolResult{IsError: true, StructuredContent: body,
+		Content: []mcp.Content{&mcp.TextContent{Text: code + ": " + err.Error()}}}
 }
 
 func deniedResult(err error) *mcp.CallToolResult {

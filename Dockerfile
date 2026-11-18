@@ -14,12 +14,17 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
  && CGO_ENABLED=0 GOOS=linux go build \
       -trimpath \
       -ldflags "-s -w -X main.version=${VERSION}" \
-      -o /out/mage2mcp-worker ./cmd/worker
+      -o /out/mage2mcp-worker ./cmd/worker \
+ && CGO_ENABLED=0 GOOS=linux go build \
+      -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION}" \
+      -o /out/mage2mcp-admin ./cmd/admin
 
 # Runtime stage: distroless static, non-root, no shell.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/mage2mcp-server /usr/local/bin/mage2mcp-server
 COPY --from=build /out/mage2mcp-worker /usr/local/bin/mage2mcp-worker
+COPY --from=build /out/mage2mcp-admin /usr/local/bin/mage2mcp-admin
 USER nonroot:nonroot
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/mage2mcp-server"]

@@ -48,6 +48,23 @@ Cloudflare Tunnel and keep authentication enabled with the `MAGE2MCP_AUTH_*`
 environment variables. Docker users can run `docker compose up` after setting the
 required variables in `.env`.
 
+### High-risk operations
+
+Write tools stay disabled until `tools.writes: true`. When enabled, every write
+requires approval by a **different human identity** through the admin surface:
+
+```bash
+# List pending confirmations
+./bin/mage2mcp-admin -config config.yaml -as you@example.com pending
+
+# Approve one (the agent's requester identity cannot approve its own request)
+./bin/mage2mcp-admin -config config.yaml -as you@example.com approve <confirmation-id>
+```
+
+Approval requires `database.url`: the admin CLI and the gateway share the
+PostgreSQL confirmation store. Approvals are bound to a canonical hash of the
+tool arguments, expire after 5 minutes (15 maximum), and are single use.
+
 ## Why this exists
 
 AI agents need reliable, auditable access to commerce and analytics systems. Today that
