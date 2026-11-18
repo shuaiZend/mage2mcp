@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -356,5 +357,74 @@ func TestAuthorizationReceivesInstance(t *testing.T) {
 	}
 	if gotInstance != "zone-b" {
 		t.Fatalf("authorizer instance = %q, want zone-b", gotInstance)
+	}
+}
+
+type instanceOnlyInput struct {
+	Instance string `json:"instance"`
+}
+
+func TestCrossInstanceAuthorizationIsEnforced(t *testing.T) {
+	reg := registry.New()
+	if err := reg.Register(registry.Tool{
+		Name: "magento.product.get", Title: "Get product", Description: "Test read tool.",
+		Capability: "magento.product.read", Permission: registry.PermissionRead,
+		Timeout: 30 * time.Second, Annotations: mcp.ToolAnnotations{ReadOnlyHint: true},
+		Register: func(srv *mcp.Server) error {
+			mcp.AddTool(srv, &mcp.Tool{Name: "magento.product.get", Title: "Get product",
+				Description: "Test read tool.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+				func(_ context.Context, _ *mcp.CallToolRequest, _ instanceOnlyInput) (*mcp.CallToolResult, confirmOutput, error) {
+					return nil, confirmOutput{OK: true}, nil
+				})
+			return nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewMCP(Options{
+		Version: "test", Registry: reg,
+		Authorize: func(_ context.Context, _, instance string) error {
+			if instance == "zone-b" {
+				return errs.New(errs.CodePermissionDenied, "grant covers zone-a only")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(Handler(srv, Options{Registry: reg}))
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+
+	// Instance inside the grant succeeds.
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "magento.product.get",
+		Arguments: map[string]any{"instance": "zone-a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("allowed instance denied: %+v", res.Content)
+	}
+
+	// Instance outside the grant is a typed tool error, not a protocol error.
+	res, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "magento.product.get",
+		Arguments: map[string]any{"instance": "zone-b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("cross-instance call must be denied")
+	}
+	body, _ := json.Marshal(res.StructuredContent)
+	if !strings.Contains(string(body), "permission_denied") {
+		t.Fatalf("denial body = %s", body)
 	}
 }
