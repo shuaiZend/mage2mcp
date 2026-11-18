@@ -18,6 +18,7 @@ mage2mcp 是一个独立的 [Model Context Protocol](https://modelcontextprotoco
 | 研究基线 | [`docs/development/research-baseline.md`](docs/development/research-baseline.md) |
 | 源代码 | Phase 1 基础：MCP 服务器、认证、RBAC、审计、指标、配置、Docker |
 | 测试与 CI | 每个 PR 运行单元、集成、竞态、静态、安全与供应链门禁 |
+| 写工具 | 已实现，由 `tools.writes` 控制（确认机制上线前默认关闭） |
 | 版本发布与容器镜像 | 尚未发布；发布流水线已就绪 |
 | 许可证与社区文档 | [Apache-2.0](LICENSE)、[NOTICE](NOTICE)、[CONTRIBUTING.md](CONTRIBUTING.md)、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)、[SECURITY.md](SECURITY.md)、[SUPPORT.md](SUPPORT.md) |
 

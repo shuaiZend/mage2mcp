@@ -25,7 +25,14 @@ type Config struct {
 	Log      Log      `yaml:"log"`
 	Database Database `yaml:"database"`
 	Redis    Redis    `yaml:"redis"`
+	Tools    Tools    `yaml:"tools"`
 	Modules  Modules  `yaml:"datasources"`
+}
+
+// Tools controls optional tool surfaces. Writes stay disabled until the
+// confirmation middleware ships: a write tool without approval is unsafe.
+type Tools struct {
+	Writes bool `yaml:"writes"`
 }
 
 // Database configures the optional PostgreSQL store. An empty URL keeps the
@@ -99,6 +106,7 @@ func Default() Config {
 		Auth:     Auth{Enabled: true},
 		Log:      Log{Level: "info", Format: "json"},
 		Database: Database{MaxConns: 10},
+		Tools:    Tools{Writes: false},
 	}
 }
 
@@ -141,6 +149,9 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("MAGE2MCP_LOG_LEVEL"); v != "" {
 		c.Log.Level = v
+	}
+	if v := os.Getenv("MAGE2MCP_TOOLS_WRITES"); v == "true" || v == "1" {
+		c.Tools.Writes = true
 	}
 	if v := os.Getenv("MAGE2MCP_DATABASE_URL"); v != "" {
 		c.Database.URL = v
