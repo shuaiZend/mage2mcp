@@ -1,0 +1,18 @@
+# Default owner for everything in the repository.
+* @shuaiZend
+
+# Architecture, public contracts, and cross-cutting decisions require the
+# Architect reviewer. Module owners are added here as the team grows; until
+# then the maintainer is the accountable owner for every path.
+/docs/adr/                    @shuaiZend
+/docs/architecture.md         @shuaiZend
+/docs/module-boundaries.md    @shuaiZend
+/internal/core/               @shuaiZend
+/internal/mcp/                @shuaiZend
+/internal/security/           @shuaiZend
+/internal/magento/            @shuaiZend
+/internal/cloudflare/         @shuaiZend
+/internal/ga4/                @shuaiZend
+/internal/unified/            @shuaiZend
+/.github/workflows/           @shuaiZend
+/SECURITY.md                  @shuaiZend

@@ -1,0 +1,19 @@
+{
+  // markdownlint-cli2 configuration for mage2mcp documentation.
+  "globs": ["**/*.md"],
+  "ignores": ["node_modules/**", ".git/**", "CHANGELOG.md", ".github/PULL_REQUEST_TEMPLATE.md"],
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD024": { "siblings_only": true },
+    "MD029": { "style": "ordered" },
+    "MD033": { "allowed_elements": ["details", "summary", "br", "sub", "sup", "kbd"] },
+    "MD034": false,
+    // MD060 is purely cosmetic table spacing; tables are hand-formatted for readability.
+    "MD060": false,
+    "MD036": false,
+    "MD041": true,
+    "MD046": { "style": "fenced" },
+    "MD048": { "style": "backtick" }
+  }
+}

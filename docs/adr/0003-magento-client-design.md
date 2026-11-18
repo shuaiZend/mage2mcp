@@ -1,0 +1,100 @@
+# ADR-0003: Magento client design — REST for writes, GraphQL for verification
+
+- **Status:** Accepted
+- **Date:** 2026-11-18
+- **Deciders:** maintainer, Architect, Magento owner
+- **Supersedes:** none
+
+## Context
+
+The project must manage Magento 2.4.x products, including full configurable
+product lifecycle, without installing a Magento module and without touching the
+database. Magento exposes REST and GraphQL, with different capabilities and
+authentication models across self-hosted and SaaS deployments.
+
+## Problem
+
+Which Magento surface should each capability use, and how do we authenticate,
+model EAV data, and prove that a configurable product is actually correct rather
+than merely accepted by the API?
+
+## Options considered
+
+1. **Magento plugin + internal PHP API.** Richest access, explicitly forbidden by
+   the project brief, and a maintenance burden across Magento versions.
+2. **Direct database access.** Fast for reads, unsafe, version-fragile, and
+   explicitly forbidden.
+3. **REST only.** Complete admin coverage, stable versioned endpoints, but no
+   storefront-shaped read model.
+4. **GraphQL only.** Excellent storefront reads, but Magento GraphQL has no
+   product write mutations.
+5. **REST for writes and admin reads, GraphQL for storefront verification.**
+   Uses each surface for what it actually supports.
+
+## Decision
+
+Adopt option 5.
+
+- **REST** (`/rest/{store}/V1/...`) is the only write path and the primary admin
+  read path: products, configurable parent/child/options, attributes and sets,
+  categories, media, MSI inventory, orders, bulk import and bulk status.
+- **GraphQL** is used read-only to verify storefront-visible correctness: that a
+  configurable product resolves to the expected variants with the expected
+  options, prices, and stock status.
+- **Authentication:** integration access token preferred (long-lived, revocable,
+  scoped); admin username/password token exchange supported but discouraged and
+  disabled by default. Tokens are cached per instance and refreshed before
+  expiry.
+- **EAV:** attributes are discovered at runtime from attribute sets and
+  attributes endpoints; no store-specific field is hardcoded. Attribute scope,
+  `frontend_input`, and `is_configurable` are validated before any variant work.
+- **Deployment scope:** self-hosted / PaaS Magento 2.4.x, primary target 2.4.9.
+  Adobe Commerce as a Service (IMS OAuth) is out of scope for v0.x and must be
+  detected and rejected with a clear error rather than failing obscurely.
+
+## Rationale
+
+GraphQL cannot create or update products, so a GraphQL-only design is impossible.
+REST alone cannot prove the storefront result, which the brief explicitly
+requires. Using both, each for its strength, satisfies the functional requirement
+without a plugin. Runtime EAV discovery is the only way to support arbitrary
+stores. Integration tokens avoid storing admin passwords and reduce blast radius.
+
+## Consequences
+
+### Positive
+
+- Full lifecycle without a Magento module or database access.
+- Storefront verification catches the failure mode where Magento returns 200 but
+  the product is not buyable.
+- Store-agnostic: no hardcoded attribute codes.
+
+### Negative
+
+- Two API surfaces to maintain and test.
+- GraphQL verification depends on storefront visibility and may be affected by
+  cache; the client must account for cache warm-up.
+- Bulk import depends on Magento's message queue being configured.
+
+### Security impact
+
+Integration tokens are scoped and revocable; admin credentials are never
+persisted. The client must not follow arbitrary base URLs from user input (SSRF),
+must enforce TLS, and must never log tokens. Write tools require explicit
+permission and confirmation for destructive operations.
+
+### Maintenance cost
+
+Moderate: two clients, plus version compatibility work for 2.4.x. Offset by
+avoiding a PHP module that would need its own release cycle per Magento version.
+
+## Follow-up
+
+- Phase 0: verify the endpoint map against a live 2.4.9 schema endpoint.
+- Phase 2: implement storefront verification and cache-warm handling.
+- Post-1.0: evaluate Adobe Commerce as a Service (IMS) support.
+
+## References
+
+- [Magento integration design](../integrations/magento.md)
+- [research baseline](../development/research-baseline.md) facts F6–F12
