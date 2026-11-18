@@ -114,7 +114,7 @@ func registerExtraTools(reg *registry.Registry, lookup serviceLookup) error {
 			},
 		},
 	}
-	tools = append(tools, newEcommerceTool(lookup))
+	tools = append(tools, newEcommerceTool(lookup), newProductsTool(lookup))
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -224,6 +224,54 @@ func newEcommerceTool(lookup serviceLookup) registry.Tool {
 					return nil, EcommerceOutput{}, err
 				}
 				return nil, EcommerceOutput{Overview: overview}, nil
+			})
+			return nil
+		},
+	}
+}
+
+const (
+	productsToolName   = "ga4.ecommerce.products"
+	productsToolTitle  = "GA4 product performance"
+	productsToolDesc   = "Read-only item-level GA4 report: views, add-to-carts, purchases, and item revenue per itemId for the configured property. The capability probe runs first; a property without ecommerce tracking returns ecommerce_not_tracked instead of zeros. Item revenue is GA4-attributed revenue, not Magento order revenue."
+	productsCapability = "ga4.ecommerce.read"
+)
+
+// ProductsInput is the input of ga4.ecommerce.products.
+type ProductsInput struct {
+	Instance  string `json:"instance" jsonschema:"configured GA4 instance id"`
+	StartDate string `json:"start_date,omitempty" jsonschema:"YYYY-MM-DD or relative value; defaults to 7daysAgo"`
+	EndDate   string `json:"end_date,omitempty" jsonschema:"YYYY-MM-DD or relative value; defaults to yesterday"`
+	Limit     int64  `json:"limit,omitempty" jsonschema:"maximum rows, 1-200"`
+}
+
+// ProductsOutput is the structured result of ga4.ecommerce.products.
+type ProductsOutput struct {
+	Performance *ProductPerformance `json:"performance"`
+}
+
+func newProductsTool(lookup serviceLookup) registry.Tool {
+	definition := &mcp.Tool{
+		Name:        productsToolName,
+		Title:       productsToolTitle,
+		Description: productsToolDesc,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: boolPtr(true)},
+	}
+	return registry.Tool{
+		Name: definition.Name, Title: definition.Title, Description: definition.Description,
+		Capability: productsCapability, Permission: registry.PermissionRead, Timeout: 60 * time.Second,
+		Annotations: *definition.Annotations,
+		Register: func(server *mcp.Server) error {
+			mcp.AddTool(server, definition, func(ctx context.Context, _ *mcp.CallToolRequest, in ProductsInput) (*mcp.CallToolResult, ProductsOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, ProductsOutput{}, err
+				}
+				performance, err := svc.TopProducts(ctx, in.StartDate, in.EndDate, in.Limit)
+				if err != nil {
+					return nil, ProductsOutput{}, err
+				}
+				return nil, ProductsOutput{Performance: performance}, nil
 			})
 			return nil
 		},

@@ -48,8 +48,8 @@ func newExtraToolSession(t *testing.T) *mcp.ClientSession {
 	if err := RegisterExtra(reg, newTestService(t, extraAPIHandler(t))); err != nil {
 		t.Fatalf("RegisterExtra: %v", err)
 	}
-	if reg.Len() != 3 {
-		t.Fatalf("registered tools = %d, want 3", reg.Len())
+	if reg.Len() != 4 {
+		t.Fatalf("registered tools = %d, want 4", reg.Len())
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "ga4-extra-test", Version: "0"}, nil)
 	for _, tool := range reg.List() {
@@ -78,8 +78,8 @@ func TestRegisterExtraMetadata(t *testing.T) {
 	if err := RegisterExtra(reg, newTestService(t, extraAPIHandler(t))); err != nil {
 		t.Fatalf("RegisterExtra: %v", err)
 	}
-	if reg.Len() != 3 {
-		t.Fatalf("registered tools = %d, want 3", reg.Len())
+	if reg.Len() != 4 {
+		t.Fatalf("registered tools = %d, want 4", reg.Len())
 	}
 	cases := []struct {
 		name       string
