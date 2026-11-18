@@ -4,22 +4,46 @@ mage2mcp is a standalone [Model Context Protocol](https://modelcontextprotocol.i
 gateway that exposes Magento 2, Cloudflare, and Google Analytics 4 to AI agents through
 typed, audited, read-only-by-default tools.
 
-> **Status: Phase 0 — design in progress.**
-> There is no runnable server yet. No release has been published, no container image
-> exists, and no installation instructions work today. The architecture, module
-> boundaries, API mappings, and security model are being written and reviewed in
-> public. Interfaces described here are design targets for v0.x and may change with
-> an ADR before 1.0.
+> **Status: Phase 1 — foundation.**
+> A runnable MCP server exists: Streamable HTTP, Cloudflare Access JWT
+> authentication, RBAC, audit, Prometheus metrics, and the `platform.info` tool.
+> Magento, Cloudflare, and GA4 tool implementations are in progress. There is no
+> release yet, and interfaces may change with an ADR before 1.0.
 
 ## What exists today
 
 | Item | State |
 |---|---|
-| Design documents | Being written in [`docs/`](docs/) during Phase 0 |
+| Design documents | Complete Phase 0 baseline in [`docs/`](docs/) |
 | Research baseline | [`docs/development/research-baseline.md`](docs/development/research-baseline.md) |
-| Source code | None yet |
-| Releases and container images | None yet |
+| Source code | Phase 1 foundation: MCP server, auth, RBAC, audit, metrics, config, Docker |
+| Tests and CI | Unit, integration, race, lint, security, and supply-chain gates on every PR |
+| Releases and container images | Not published yet; the release workflow is in place |
 | License and community documents | [Apache-2.0](LICENSE), [NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md) |
+
+## Quickstart (development)
+
+```bash
+# 1. Build
+go build -o bin/mage2mcp ./cmd/server
+
+# 2. Configure: copy the example, then for a loopback-only development run set
+#    `auth.enabled: false`. The gateway refuses to start with auth disabled on a
+#    non-loopback listener.
+cp configs/config.example.yaml config.yaml
+
+# 3. Run
+./bin/mage2mcp -config config.yaml
+
+# 4. Check liveness and readiness
+curl -s localhost:8080/healthz
+curl -s localhost:8080/readyz
+```
+
+The MCP endpoint is `POST /mcp` (Streamable HTTP). In production, run behind a
+Cloudflare Tunnel and keep authentication enabled with the `MAGE2MCP_AUTH_*`
+environment variables. Docker users can run `docker compose up` after setting the
+required variables in `.env`.
 
 ## Why this exists
 

@@ -86,7 +86,16 @@ jobs:
       - name: Test with race detector
         run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
       - name: Coverage summary
-        run: go tool cover -func=coverage.out | tail -n 1 >> "$GITHUB_STEP_SUMMARY"
+        run: go tool cover -func=coverage.out | tail -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Enforce coverage floor
+        shell: bash
+        run: |
+          total="$(go tool cover -func=coverage.out | tail -n 1 | awk '{print $3}' | tr -d '%')"
+          echo "total coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { if (t < 70) exit 1 }' || {
+            echo "::error::total coverage ${total}% is below the 70% floor"
+            exit 1
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-${{ matrix.go-version }}

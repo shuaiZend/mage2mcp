@@ -4,20 +4,43 @@ mage2mcp 是一个独立的 [Model Context Protocol](https://modelcontextprotoco
 通过类型化、可审计、默认只读的工具，把 Magento 2、Cloudflare 和 Google Analytics 4
 暴露给 AI 智能体。
 
-> **状态：Phase 0 —— 设计中。**
-> 目前还没有可运行的服务器。尚未发布任何版本，没有容器镜像，也没有任何可用的安装说明。
-> 架构、模块边界、API 映射和安全模型正在公开编写与评审。本文描述的接口是 v0.x 的设计目标，
-> 在 1.0 之前可能通过 ADR 变更。
+> **状态：Phase 1 —— 基础设施。**
+> 已具备可运行的 MCP 服务器：Streamable HTTP、Cloudflare Access JWT 认证、RBAC、
+> 审计、Prometheus 指标，以及 `platform.info` 工具。Magento、Cloudflare、GA4 的
+> 工具实现正在推进。尚未发布版本，接口在 1.0 之前可能通过 ADR 变更。
 
 ## 当前已有的内容
 
 | 项目 | 状态 |
 |---|---|
-| 设计文档 | Phase 0 期间正在 [`docs/`](docs/) 中编写 |
+| 设计文档 | [`docs/`](docs/) 中已完成 Phase 0 基线 |
 | 研究基线 | [`docs/development/research-baseline.md`](docs/development/research-baseline.md) |
-| 源代码 | 尚无 |
-| 版本发布与容器镜像 | 尚无 |
+| 源代码 | Phase 1 基础：MCP 服务器、认证、RBAC、审计、指标、配置、Docker |
+| 测试与 CI | 每个 PR 运行单元、集成、竞态、静态、安全与供应链门禁 |
+| 版本发布与容器镜像 | 尚未发布；发布流水线已就绪 |
 | 许可证与社区文档 | [Apache-2.0](LICENSE)、[NOTICE](NOTICE)、[CONTRIBUTING.md](CONTRIBUTING.md)、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)、[SECURITY.md](SECURITY.md)、[SUPPORT.md](SUPPORT.md) |
+
+## 快速开始（开发）
+
+```bash
+# 1. 构建
+go build -o bin/mage2mcp ./cmd/server
+
+# 2. 配置：复制示例配置；仅限本机回环开发时，将 `auth.enabled` 设为 false。
+#    网关拒绝在非回环监听地址上以关闭认证的方式启动。
+cp configs/config.example.yaml config.yaml
+
+# 3. 运行
+./bin/mage2mcp -config config.yaml
+
+# 4. 检查存活与就绪
+curl -s localhost:8080/healthz
+curl -s localhost:8080/readyz
+```
+
+MCP 端点为 `POST /mcp`（Streamable HTTP）。生产环境应部署在 Cloudflare Tunnel 之后，
+并通过 `MAGE2MCP_AUTH_*` 环境变量保持认证开启。Docker 用户可在 `.env` 中设置必需变量后
+运行 `docker compose up`。
 
 ## 为什么需要它
 
