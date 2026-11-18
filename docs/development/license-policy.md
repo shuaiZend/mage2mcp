@@ -323,7 +323,7 @@ is currently referenced by a floating major tag and must move to a SHA pin (10.3
 | `actions/checkout`, `actions/setup-go`, `actions/setup-node`, `actions/upload-artifact` | `@v4`, `@v5`, `@v4`, `@v4` | MIT | Pin by SHA in Phase 1 |
 | `actions/dependency-review-action`, `softprops/action-gh-release`, `github/codeql-action/upload-sarif` | `@v4`, `@v2`, `@v3` | MIT | Dependency review enforces section 8.2 |
 | `anchore/sbom-action`, `sigstore/cosign-installer`, `docker/build-push-action`, `ossf/scorecard-action` | `@v0`, `@v3`, `@v6`, `@v2.4.0` | Apache-2.0 | Pin by SHA in Phase 1 |
-| `gitleaks` CLI (`github.com/gitleaks/gitleaks/v8`) | `v8.30.1` | MIT | Compliant; installed with `go install` |
+| `gitleaks` CLI (`github.com/zricethezav/gitleaks/v8`) | `v8.30.1` | MIT | Compliant; installed with `go install` |
 
 `go install`ed tools are dependencies too: `govulncheck` (`golang.org/x/vuln`, BSD-3-Clause)
 and `gosec` (`github.com/securego/gosec/v2`, Apache-2.0) are pinned to exact versions.
@@ -333,7 +333,7 @@ and `gosec` (`github.com/securego/gosec/v2`, Apache-2.0) are pinned to exact ver
 The `gitleaks/gitleaks-action@v2` action was rejected during Phase 0: its `LICENSE.txt` is a
 Gitleaks LLC EULA requiring a paid key for organization-owned repositories and forbidding
 modification. CI now installs the MIT-licensed `gitleaks` CLI
-(`github.com/gitleaks/gitleaks/v8@v8.30.1`) with `go install` and runs it directly, so only
+(`github.com/zricethezav/gitleaks/v8@v8.30.1`) with `go install` and runs it directly, so only
 allowlisted code executes in the pipeline.
 
 ### 10.3 Pinning and review of actions
