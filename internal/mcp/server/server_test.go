@@ -36,7 +36,8 @@ func newTestServer(t *testing.T) (*mcp.Server, *registry.Registry) {
 	}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	srv, err := NewMCP(Options{Version: "test", Registry: reg})
+	srv, err := NewMCP(Options{Version: "test", Registry: reg,
+		Instances: map[string][]string{"cloudflare": {"zone-a", "zone-b"}}, WriteTools: true})
 	if err != nil {
 		t.Fatalf("NewMCP: %v", err)
 	}
@@ -104,6 +105,9 @@ func TestMCPClientListsAndCallsPlatformInfo(t *testing.T) {
 	}
 	if info.Name != "mage2mcp" || info.Version != "test" {
 		t.Fatalf("unexpected info: %+v", info)
+	}
+	if len(info.Instances["cloudflare"]) != 2 || !info.WritesEnabled {
+		t.Fatalf("info does not report configuration: %+v", info)
 	}
 }
 
