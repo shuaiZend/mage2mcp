@@ -34,7 +34,7 @@ type Options struct {
 	// calls and is only acceptable in local development without authentication.
 	Authorize func(ctx context.Context, tool string) error
 	// Audit records intent and outcome for every tools/call.
-	Audit func(ctx context.Context, tool, phase, state, errorCode string)
+	Audit func(ctx context.Context, tool, instance, phase, state, errorCode string)
 	// Confirm enforces the two-step approval protocol for tools that require it.
 	Confirm *confirm.Service
 	// Instances reports the configured instance ids per module for platform.info.
@@ -85,20 +85,21 @@ func installPolicy(srv *mcp.Server, opts Options) {
 				return next(ctx, method, req)
 			}
 			tool := call.Params.Name
+			instance := instanceArgument(call.Params.Arguments)
 			if opts.Audit != nil {
-				opts.Audit(ctx, tool, "intent", "pending", "")
+				opts.Audit(ctx, tool, instance, "intent", "pending", "")
 			}
 			if opts.Authorize != nil {
 				if err := opts.Authorize(ctx, tool); err != nil {
 					if opts.Audit != nil {
-						opts.Audit(ctx, tool, "outcome", "denied", string(errs.CodeOf(err)))
+						opts.Audit(ctx, tool, instance, "outcome", "denied", string(errs.CodeOf(err)))
 					}
 					return deniedResult(err), nil
 				}
 			}
 			if err := opts.enforceConfirmation(ctx, tool, call.Params.Arguments); err != nil {
 				if opts.Audit != nil {
-					opts.Audit(ctx, tool, "outcome", "denied", string(errs.CodeOf(err)))
+					opts.Audit(ctx, tool, instance, "outcome", "denied", string(errs.CodeOf(err)))
 				}
 				return toolErrorResult(err), nil
 			}
@@ -108,7 +109,7 @@ func installPolicy(srv *mcp.Server, opts Options) {
 				if err != nil {
 					state, code = "failed", string(errs.CodeOf(err))
 				}
-				opts.Audit(ctx, tool, "outcome", state, code)
+				opts.Audit(ctx, tool, instance, "outcome", state, code)
 			}
 			return result, err
 		}
@@ -148,6 +149,21 @@ func (o Options) enforceConfirmation(ctx context.Context, tool string, args json
 		return err
 	}
 	return nil
+}
+
+// instanceArgument extracts the routing instance from raw tool arguments so the
+// audit row records the instance the caller asked for, even when resolution
+// later rejects it.
+func instanceArgument(args json.RawMessage) string {
+	if len(args) == 0 {
+		return ""
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(args, &fields); err != nil {
+		return ""
+	}
+	value, _ := fields["instance"].(string)
+	return value
 }
 
 func toolErrorResult(err error) *mcp.CallToolResult {

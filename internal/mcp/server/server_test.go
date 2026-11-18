@@ -189,13 +189,14 @@ func TestAuthorizationDeniesToolCall(t *testing.T) {
 func TestAuditReceivesIntentAndOutcome(t *testing.T) {
 	reg := mustRegistry(t)
 	var mu sync.Mutex
-	var phases []string
+	var phases, instances []string
 	srv, err := NewMCP(Options{
 		Version: "test", Registry: reg,
-		Audit: func(_ context.Context, _, phase, _, _ string) {
+		Audit: func(_ context.Context, _, instance, phase, _, _ string) {
 			mu.Lock()
 			defer mu.Unlock()
 			phases = append(phases, phase)
+			instances = append(instances, instance)
 		},
 	})
 	if err != nil {
@@ -212,13 +213,17 @@ func TestAuditReceivesIntentAndOutcome(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = session.Close() }()
-	if _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "platform.info"}); err != nil {
+	if _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "platform.info",
+		Arguments: map[string]any{"instance": "store-us"}}); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(phases) < 2 || phases[0] != "intent" || phases[1] != "outcome" {
 		t.Fatalf("unexpected audit phases: %v", phases)
+	}
+	if len(instances) < 2 || instances[0] != "store-us" {
+		t.Fatalf("audit did not record the instance: %v", instances)
 	}
 }
 
