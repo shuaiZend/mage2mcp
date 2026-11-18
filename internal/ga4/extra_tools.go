@@ -100,6 +100,7 @@ func RegisterExtra(reg *registry.Registry, svc *Service) error {
 			},
 		},
 	}
+	tools = append(tools, newEcommerceTool(svc))
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -166,4 +167,47 @@ func stringEnums(values []string) []any {
 		out[i] = value
 	}
 	return out
+}
+
+const (
+	ecommerceToolName   = "ga4.ecommerce.overview"
+	ecommerceToolTitle  = "GA4 ecommerce overview"
+	ecommerceToolDesc   = "Read-only aggregate report of GA4 purchases and revenue per day for the configured property. The property capability probe runs first; a property without ecommerce tracking returns ecommerce_not_tracked instead of zeros. Revenue is GA4-attributed revenue, not Magento order revenue."
+	ecommerceCapability = "ga4.ecommerce.read"
+)
+
+// EcommerceInput is the input of ga4.ecommerce.overview.
+type EcommerceInput struct {
+	Instance  string `json:"instance" jsonschema:"configured GA4 instance id"`
+	StartDate string `json:"start_date,omitempty" jsonschema:"YYYY-MM-DD or relative value; defaults to 7daysAgo"`
+	EndDate   string `json:"end_date,omitempty" jsonschema:"YYYY-MM-DD or relative value; defaults to yesterday"`
+}
+
+// EcommerceOutput is the structured result of ga4.ecommerce.overview.
+type EcommerceOutput struct {
+	Overview *EcommerceOverview `json:"overview"`
+}
+
+func newEcommerceTool(svc *Service) registry.Tool {
+	definition := &mcp.Tool{
+		Name:        ecommerceToolName,
+		Title:       ecommerceToolTitle,
+		Description: ecommerceToolDesc,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: boolPtr(true)},
+	}
+	return registry.Tool{
+		Name: definition.Name, Title: definition.Title, Description: definition.Description,
+		Capability: ecommerceCapability, Permission: registry.PermissionRead, Timeout: 60 * time.Second,
+		Annotations: *definition.Annotations,
+		Register: func(server *mcp.Server) error {
+			mcp.AddTool(server, definition, func(ctx context.Context, _ *mcp.CallToolRequest, in EcommerceInput) (*mcp.CallToolResult, EcommerceOutput, error) {
+				overview, err := svc.EcommerceOverview(ctx, in.StartDate, in.EndDate)
+				if err != nil {
+					return nil, EcommerceOutput{}, err
+				}
+				return nil, EcommerceOutput{Overview: overview}, nil
+			})
+			return nil
+		},
+	}
 }
