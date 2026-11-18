@@ -56,6 +56,15 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Reviews](reviews/phase-0-report.md) | Phase 0 report and independent review records |
 | [Research baseline](development/research-baseline.md) | Verified facts and sources |
 
+## Operations
+
+| Document | Scope |
+|---|---|
+| [Deployment](operations/deployment.md) | Components, Compose, Cloudflare Tunnel, configuration, capacity |
+| [Backup and restore](operations/backup-restore.md) | What to back up, restore checklist, retention |
+| [Upgrade](operations/upgrade.md) | Versioning, procedure, rollback, compatibility |
+| [Monitoring](operations/monitoring.md) | Health, metrics, logs, audit queries, alerts |
+
 ## Decision records
 
 Architecture decisions live in [adr/](adr/). Every significant technical choice
