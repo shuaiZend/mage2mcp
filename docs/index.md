@@ -27,6 +27,7 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Database design](database-design.md) | Schema, indexes, retention, migrations |
 | [Unified analytics](unified-analytics.md) | Cross-source metric semantics and join rules |
 | [Development plan](development-plan.md) | Phases, exit criteria, traceability matrix |
+| [Configuration](configuration.md) | Every configuration key, default, and environment override |
 
 ## Integrations
 
