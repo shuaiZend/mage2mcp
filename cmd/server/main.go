@@ -176,6 +176,25 @@ func buildAuth(cfg config.Config, logger *slog.Logger) (func(http.Handler) http.
 	return auth.Middleware(verifier, logger), nil
 }
 
+// configuredInstances lists instance ids per module for platform.info.
+func configuredInstances(cfg config.Config) map[string][]string {
+	out := map[string][]string{}
+	add := func(module string, instances []config.Instance) {
+		if len(instances) == 0 {
+			return
+		}
+		ids := make([]string, 0, len(instances))
+		for _, inst := range instances {
+			ids = append(ids, inst.ID)
+		}
+		out[module] = ids
+	}
+	add("magento", cfg.Modules.Magento.Instances)
+	add("cloudflare", cfg.Modules.Cloudflare.Instances)
+	add("ga4", cfg.Modules.GA4.Instances)
+	return out
+}
+
 // ga4TokenSource accepts either an inline service-account JSON document or a
 // static bearer token. Service-account JSON is the production form.
 func ga4TokenSource(credential string) (ga4.TokenSource, error) {

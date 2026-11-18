@@ -37,6 +37,10 @@ type Options struct {
 	Audit func(ctx context.Context, tool, phase, state, errorCode string)
 	// Confirm enforces the two-step approval protocol for tools that require it.
 	Confirm *confirm.Service
+	// Instances reports the configured instance ids per module for platform.info.
+	Instances map[string][]string
+	// WriteTools reports whether write tools are registered.
+	WriteTools bool
 }
 
 // InfoInput is empty: platform.info takes no parameters.
@@ -44,10 +48,12 @@ type InfoInput struct{}
 
 // InfoOutput is the structured result of platform.info.
 type InfoOutput struct {
-	Name             string   `json:"name"`
-	Version          string   `json:"version"`
-	ProtocolVersions []string `json:"protocol_versions"`
-	Tools            []string `json:"tools"`
+	Name             string              `json:"name"`
+	Version          string              `json:"version"`
+	ProtocolVersions []string            `json:"protocol_versions"`
+	Tools            []string            `json:"tools"`
+	Instances        map[string][]string `json:"instances,omitempty"`
+	WritesEnabled    bool                `json:"writes_enabled"`
 }
 
 // NewMCP builds the MCP server and registers every tool in the registry.
@@ -181,6 +187,8 @@ func registerPlatformInfo(srv *mcp.Server, opts Options) {
 			Version:          opts.Version,
 			ProtocolVersions: []string{"2025-11-25", "2026-07-28"},
 			Tools:            names,
+			Instances:        opts.Instances,
+			WritesEnabled:    opts.WriteTools,
 		}, nil
 	})
 }

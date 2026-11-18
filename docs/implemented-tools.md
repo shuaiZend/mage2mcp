@@ -18,7 +18,7 @@ Common behavior:
 
 | Tool | Scope | Timeout | Notes |
 |---|---|---|---|
-| `platform.info` | read | 30s | Name, version, protocol versions, registered tools |
+| `platform.info` | read | 30s | Name, version, protocol versions, registered tools, configured instances, and whether write tools are enabled |
 
 ## Magento 2
 

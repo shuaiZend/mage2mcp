@@ -138,3 +138,16 @@ func TestRegisterModulesSupportsMultipleCloudflareZones(t *testing.T) {
 		t.Fatal("traffic tool not registered")
 	}
 }
+
+func TestConfiguredInstances(t *testing.T) {
+	cfg := config.Default()
+	cfg.Modules.Cloudflare = config.Module{Enabled: true, Instances: []config.Instance{{ID: "zone-a"}, {ID: "zone-b"}}}
+	cfg.Modules.GA4 = config.Module{Enabled: true, Instances: []config.Instance{{ID: "giztop"}}}
+	got := configuredInstances(cfg)
+	if len(got["cloudflare"]) != 2 || len(got["ga4"]) != 1 {
+		t.Fatalf("instances = %+v", got)
+	}
+	if _, ok := got["magento"]; ok {
+		t.Fatal("disabled module must not be reported")
+	}
+}
