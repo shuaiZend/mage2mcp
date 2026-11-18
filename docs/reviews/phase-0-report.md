@@ -204,9 +204,35 @@ audit key custody, SHA-pinned actions, and release provenance. The architecture
 review's High findings (AR-06 to AR-21) also remain open; the Criticals were fixed but
 the architecture reviewer has not re-reviewed the updated contracts.
 
-**This means Phase 0 is not approved as-is.** The correct next step is a short
-remediation round that closes the remaining High findings and re-runs the security
-review, then Phase 1.
+**Remediation round (2026-11-19).** A second round fixed the blocking findings and
+re-ran both reviews:
+
+| Review | After remediation | Remaining |
+|---|---|---|
+| Security | Approve with changes, 0 Critical | 7 of 15 closed; 4 partial; 4 open at the snapshot, all four fixed afterwards (admin scope, SKU grammar, schema tightening, stale nonce references). New blocking items R-02/R-03/R-04/R-11 were fixed after the snapshot. |
+| Architecture | Block, 1 new Critical (N-03) | N-03 (binding grants collapsed into the global permission slot; unified job idempotency not deduplicated) fixed. N-01, N-02, N-04, N-05, N-06, N-07 and the three missing service methods fixed. |
+
+Fixes applied in this round:
+
+- Binding authorization: `binding_id` participates in `tool_permissions_uq` and
+  `jobs_idempotency_uq`; the resolution order has an explicit binding level; a
+  binding grant never widens to its members.
+- Approval authority: a `role_capabilities` table holds `confirmation:approve`,
+  `pii:read`, and `audit:export`; `roles.rank` is cosmetic.
+- Audit: `state='denied'` is representable; the intent row is the gate and the
+  terminal row is the completion record; ADR-0012 now states the two-phase policy;
+  partitions are pre-created in migrations; `ingest_manifest` is defined.
+- Supply chain: all 36 action references are pinned to commit SHAs, the
+  `actions-pinned` job rejects tag references, `sha_pinning_required` is enabled,
+  and the release workflow is split into a read-only `verify` job and a restricted
+  `publish` job with a CI-green gate, tag-on-main check, provenance attestation,
+  and image signing.
+- Budgets and codes: one Cloudflare budget (150 per 5 min), one GA4 reserve rule,
+  and the new error codes are part of the closed taxonomy.
+
+**Status: conditionally approved.** The design is implementable and the blocking
+defects found by review are closed. Before Phase 1 code lands, the maintainer
+should accept the residual High items and the follow-up review of the fixes.
 
 ## 9. Multi-agent execution and review
 
@@ -244,8 +270,9 @@ The full register has 30 entries in `docs/development/risk-register.md`.
 
 ## 11. Decisions requested from the maintainer
 
-1. **Authorize a Phase 1 remediation round** to close the remaining High findings
-   from the security review, followed by a re-review. Phase 0 is not approved as-is.
+1. **Approve Phase 1 start** on the basis of this remediation round, or request a
+   third review pass of the fixes. The blocking defects are closed; the remaining
+   items are Phase 1 gate conditions listed below.
 2. **Confirm the corrected positions** on Logpush, GraphQL writes, the GA4
    ecommerce gap, OAuth 1.0a, and the Go 1.26 floor.
 3. **Decide how to supply test credentials** for live Magento and Cloudflare
@@ -275,7 +302,7 @@ Phase 0 is complete and internally reviewed. The design is implementable, the
 external claims are tagged and sourced, the unresolved items are listed with
 verification steps, and the security and licensing positions are explicit.
 
-**Requested decision:** authorize the remediation round described in §8.1. Phase 1
-starts after the remaining High findings are closed and the security review is
-re-run. The alternative — accepting the listed High risks and starting Phase 1
-immediately — is available but not recommended.
+**Requested decision:** approve Phase 1 start, accepting the listed Phase 1 gate
+conditions (Magento ACL probe validation on a live instance, JWT `type` claim
+confirmation, per-property GA4 credentials, and the import artifact store). A third
+review pass is available on request.

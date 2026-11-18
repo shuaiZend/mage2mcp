@@ -44,7 +44,7 @@ Status legend: **Designed** (this phase), **Planned** (implementation scheduled)
 | Z3 | Instance scoping on every service call | Modules | Integration | Designed |
 | Z4 | Read-only default; write tools disabled unless configured | Registry + config | Integration | Designed |
 | C1 | Confirmation token bound to canonical parameter hash | `internal/security/confirm` | Adversarial | Designed |
-| C2 | Nonce, TTL, single use, identity/tool binding | `internal/security/confirm` | Adversarial | Designed |
+| C2 | Opaque confirmation id, approver identity, TTL, single use, parameter binding | `internal/security/confirm` | Adversarial | Designed |
 | C3 | Confirmation audited, including refusals | `internal/security/audit` | Integration | Designed |
 | V1 | JSON Schema 2020-12 validation, `additionalProperties:false` | SDK + tool specs | Contract | Designed |
 | V2 | Size limits on tool inputs and request bodies | `internal/mcp` | Integration | Designed |
@@ -70,7 +70,12 @@ Status legend: **Designed** (this phase), **Planned** (implementation scheduled)
 | SC1 | Pinned dependencies, `go.sum`, dependency review | CI | CI | Designed |
 | SC2 | SBOM, checksums, cosign signature per release | Release | Release dry run | Designed |
 | SC3 | `govulncheck`, `gosec`, `gitleaks`, Scorecard | CI | CI | Designed |
-| SC4 | Actions pinned by SHA for security-sensitive jobs | CI | Review | Planned |
+| SC4 | Actions pinned by SHA for every job | CI | Policy check | Designed |
+| A7 | Service tokens verified only at the Access edge; gateway accepts the JWT assertion only | `internal/security/auth` | Adversarial | Designed |
+| A8 | Replay detection bound to `(token hash, session id)` with a bounded window | `internal/security/jwt` | Adversarial | Designed |
+| E5 | Startup credential-scope probe: read-only mode requires a 403 on a write endpoint | `internal/magento` | Integration | Designed |
+| L4 | Audit intent row written before execution, terminal outcome appended after | `internal/security/audit` | Integration | Designed |
+| D1 | R2 and ClickHouse classified as Restricted, with retention and access control | `internal/logs` | Review + test | Designed |
 
 ## 3. Authentication
 
@@ -188,8 +193,9 @@ never calls a Cloudflare mutation endpoint, even with that token.
 
 - Imports accept CSV, JSON, and normalized XLSX within a configured size limit;
   content type is sniffed, not trusted.
-- XLSX is parsed with a bounded reader; zip bombs and excessive shared strings are
-  rejected.
+- XLSX is parsed with a bounded converter: 64 MiB decompressed, 10 000 entries, a
+  shared-strings cap, macros rejected, external links ignored. Limits apply after
+  decompression, and gzip CSV is opt-in with the same cap.
 - Exported CSV/XLSX cells beginning with `=`, `+`, `-`, or `@` are prefixed to
   prevent formula injection when opened in a spreadsheet.
 - Images are decoded and re-encoded before upload; SVG is rejected. Dimensions
@@ -214,18 +220,23 @@ Every tool call produces an audit row:
 
 | Field | Content |
 |---|---|
-| `id`, `occurred_at` | UUID, UTC timestamp |
-| `identity_id`, `identity_class` | Verified subject and class |
-| `tool`, `instance_id` | Registry name and target instance |
-| `permission`, `decision` | Permission checked and allow/deny |
-| `param_hash` | Canonical hash, never the parameters |
-| `outcome`, `error_code` | Success or typed failure |
-| `correlation_id` | Joins to logs without exposing payloads |
+| `event_id`, `occurred_at` | UUIDv7, UTC timestamp |
+| `subject_hash`, `identity_class` | Verified subject and class |
+| `tool`, `instance_id` or `binding_id` | Registry name and target scope |
+| `scope`, `decision` | Permission checked and allow/deny |
+| `phase`, `state` | `intent`/`outcome`; `pending`, `succeeded`, `failed`, `denied`, `outcome_unknown`, `degraded` |
+| `params_hash` | Canonical hash, never the parameters |
+| `error_code` | Typed failure, if any |
+| `request_id` | Joins to logs without exposing payloads |
 | `confirmation_id` | Present when a confirmation was used |
+| `intent_id` | Links an outcome row to its intent row |
 
-Audit rows are append-only. The application database role has no `UPDATE` or
+An audit **intent** row is written before execution (`decision=allow`, `state=pending`)
+and a terminal outcome row after; a crash between them is detectable as a pending
+row with no outcome. Audit rows are append-only. The application database role has no `UPDATE` or
 `DELETE` grant on the table. Retention defaults to 365 days and is enforced by
-partition detach and drop.
+partition archive-then-drop: export to the sink, record the digest in a signed checkpoint,
+and only then drop the partition. A drop without a recorded checkpoint fails the maintenance run.
 
 ## 11. Rate limiting and resource control
 
@@ -246,8 +257,8 @@ partition detach and drop.
 - Dependency review blocks high-severity advisories and disallowed licenses on
   PRs that change manifests.
 - Releases produce an SPDX SBOM, SHA-256 checksums, and a cosign signature.
-- Actions are pinned by tag today; security-sensitive jobs move to commit SHAs
-  and `sha_pinning_required` is enabled in Phase 1.
+- Every action is pinned to a 40-character commit SHA. The `actions-pinned` CI job
+  rejects a tag reference, and the repository enforces `sha_pinning_required`.
 - No `pull_request_target` workflow may check out and execute fork code.
 
 ## 13. Secure defaults checklist
@@ -275,7 +286,7 @@ partition detach and drop.
 | Expired, not-yet-valid, wrong audience, wrong issuer tokens | 1 | Unit |
 | JWKS rotation and forced-refresh flood | 1 | Integration |
 | Missing permission, wrong instance, disabled module | 1 | Table-driven |
-| Confirmation replay, parameter substitution, expired nonce | 1 | Adversarial |
+| Confirmation replay, parameter substitution, expired or self-approved confirmation | 1 | Adversarial |
 | Cross-instance data access | 1–2 | Integration |
 | SSRF via base URL, DNS rebinding, redirect to metadata | 1 | Adversarial |
 | Oversized JSON, deep nesting, duplicate keys | 1 | Fuzz |

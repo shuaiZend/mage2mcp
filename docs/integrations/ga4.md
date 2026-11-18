@@ -89,11 +89,12 @@ suggestion to split `[U]` for the exact error text.
 | Scope | `.../auth/analytics.readonly` | Same scope; request nothing broader |
 | Rotation | New key with overlap, then retire the old one; log the rotation | Re-consent or rotate the refresh token; revoke on offboarding |
 | Failure | `PERMISSION_DENIED` when not a viewer | `invalid_grant` when revoked or expired |
-| Multi-property | One account can view many properties; the gateway still scopes per instance | Access follows the consenting user |
+| Multi-property | One service account may hold viewer on several properties `[U]`; the gateway still deploys one instance per property and prefers one credential per property (§12) | Access follows the consenting user |
 
 `analytics.readonly` and nothing else makes the read-only guarantee mechanical: a bug cannot
-write because the token cannot write. Credentials are per instance, not per property (§12);
-none appears in a response, log, or error string, and a missing credential fails closed.
+write because the token cannot write. Credentials are per instance by default, and an instance
+is exactly one property (§12); none appears in a response, log, or error string, and a missing
+credential fails closed.
 
 **Why the Admin API is out of scope.** It manages accounts, properties, streams, custom
 dimensions, key events, and audiences — none of which answers a reporting question, all of
@@ -101,6 +102,9 @@ which is mutating. Excluding it removes an entire incident class at zero functio
 configuration stays a human task.
 
 ## 4. Property configuration model
+
+Every GA4 instance serves exactly one property, so the table below describes that instance's
+single property. A deployment covering several properties runs several instances (§12).
 
 | Field | Source | Rule |
 |---|---|---|
@@ -194,7 +198,7 @@ GA4 rejects incompatible dimension/metric combinations at query time with a gene
 | Layer | Check | Failure it prevents | Cost |
 |---|---|---|---|
 | A — curated rules | Pairs refused before a request is issued, seeded from §6.1 | Known-bad combinations reaching the API | Zero; static, and every entry carries its observation date so the live API can correct it |
-| B — live metadata | Every field must exist in the property's metadata, including custom fields | Typos, renamed fields, and property-specific metrics such as `keyEvents:checkouts` | One metadata read, cached for the process lifetime |
+| B — live metadata | Every field must exist in the property's metadata, including custom fields | Typos, renamed fields, and property-specific metrics such as `keyEvents:checkouts` | One metadata read, cached for 24 h (§9.4) |
 | C — capability probe | Runs §7.4 when ecommerce is requested and capability is `unknown` | A structurally valid query returning an empty table that an agent reports as "zero sales" | One cached probe per 24 h |
 
 ### 6.1 Observed compatibility matrix
@@ -338,7 +342,7 @@ property where a naive `purchaseRevenue` query returns a clean, plausible, wrong
 | Dimensions | Restricted: `unifiedScreenName`, `eventName`, `country`, `deviceCategory`, `platform`, `minutesAgo` and similar `[V-live]` for the first four | Allowlist only |
 | Metrics | `activeUsers`, `eventCount`, and a small set; no custom metrics `[U]` for the full list | Allowlist only |
 | Compatibility | Stricter than standard reports: `eventName` + `activeUsers` rejected `[V-live]` | Realtime rule table, not the standard one |
-| Quota | Separate from standard reporting `[U]` — not inspected in Phase 0 | Treated as scarce; cache 30–60 s |
+| Quota | Separate from standard reporting `[U]` — not inspected in Phase 0 | Treated as scarce; cache 60 s (§9.4) |
 | `(other)` rows | Present: realtime `eventName` returned `(other)` with 2 users `[V-live]` | Flagged in the envelope |
 
 | Exposure | Items | Reason |
@@ -371,7 +375,8 @@ shapes.
 
 ### 9.2 Cost model
 
-The gateway budgets conservatively as `rows × columns × cardinality_factor`.
+The gateway budgets conservatively as `rows × columns × cardinality_factor` `[U]` — the
+coefficients are uncalibrated and the cost function is unpublished.
 
 | Term | Meaning | Control |
 |---|---|---|
@@ -380,7 +385,15 @@ The gateway budgets conservatively as `rows × columns × cardinality_factor`.
 | `cardinality_factor` | High-cardinality fields (`pagePath`, `transactionId`, `itemId`, `sessionSource`) multiply cost | Per-field weight; such fields require a filter or a short range |
 
 The estimate is computed before the call and checked against the remaining daily budget; a
-request exceeding the per-property share is refused with the estimate, not executed.
+request exceeding the per-property share is refused with the estimate. Until calibrated, it is
+a heuristic rather than a control: the hard row and column caps are the enforced limit, and the
+budget check is advisory.
+
+The measurement that would confirm the model: run a fixed report set — the 14 Phase 0 probes,
+one 7-day single-metric report, and one 10,000-row multi-dimensional report — read
+`tokensPerDay.consumed` immediately before and after each, and compare the observed delta with
+the estimate. A stated error bound (for example ±25%) is the exit criterion; until then §9.2
+stays `[U]`.
 
 ### 9.3 Budget, concurrency, and backoff
 
@@ -398,17 +411,29 @@ at 4 — below the observed limit of 10 — with a bounded queue and a fast retr
 
 ### 9.4 Caching
 
-| Report shape | TTL | Rationale |
-|---|---|---|
-| Realtime | 30–60 s | The window is 30 minutes; fresher caching buys nothing |
-| Today / intraday | 5 min | Data still settling |
-| Yesterday and earlier, no filter | 15 min | Stable within the day |
-| Historical, ending ≥ 7 days ago | 24 h | Immutable in practice |
-| Schema, capability probe | Process lifetime; 24 h | Both change rarely |
-| Compatibility failures | Until restart | A 400 today is a 400 tomorrow for the same pair |
+The cache is bounded in scope and in size. The key carries the property (`instance_id`), report
+shape, dimensions, metrics, date range, schema version, and authorization scope hash:
+`m2m:cache:ga4:{instance_id}:{report_shape}:{sha256(JCS(args))}:{schema_version}:{authz_scope_hash}`.
+`args` holds the dimensions, metrics, filters, ordering, and date range; `authz_scope_hash`
+covers the caller's role and grants. Responses are shaped before caching and the instance is
+re-checked on read, so a key collision or a scope change cannot return caller A's result to
+caller B.
 
-Cache keys include property ID, the full request shape, and the property's time zone and
-currency, because the same numeric request means different things across properties.
+| Entry class | TTL | Max entries per property | Cacheable |
+|---|---|---|---|
+| Standard report (`runReport`) | 15 min | 256 | Yes, except a response containing `(other)` rows without a freshness flag |
+| Realtime report (`runRealtimeReport`) | 60 s | 64 | Yes, under the same `(other)` rule |
+| Metadata | 24 h | 1 | Yes |
+| Capability probe | 24 h | 1 | Yes |
+| Compatibility failures | 24 h, LRU | 512 | Yes; validator-miss 400s are rate-limited per subject |
+
+`(other)` rows are a lossy rollup of dimension values the response could not itemise `[U]`, so
+a response containing one is cached only if it carries a freshness flag (`freshness.as_of`);
+otherwise it is recomputed. A cache hit always returns that flag and its age. Every cache is
+LRU-bounded at its per-property maximum: a new key evicts the least recently used entry rather
+than growing the process, and eviction in one property does not affect another. Time zone and
+currency are property-level and therefore constant per instance; they live in the value
+envelope, not the key.
 
 ### 9.5 When quota is exhausted
 
@@ -471,21 +496,31 @@ The gateway *routes* the question instead: a request needing event-level data re
 `requires_bigquery_export` with the reason and a pointer, rather than a plausible-looking
 aggregate that answers a different question.
 
-## 12. Multi-property and instance model
+## 12. Property grant and instance model
+
+**The property is the tenancy boundary.** Every GA4 instance serves exactly one property, and
+the instance ID is the property ID and therefore the property boundary. A deployment with
+several properties runs several instances, one credential per instance by default; a grant on
+one instance never authorizes another. This gives "instance" one meaning across this design and
+the threat model, and makes the property a first-class authorization dimension rather than a
+list inside a shared deployment.
 
 | Concept | Definition | Isolation |
 |---|---|---|
-| Instance | One deployment with one credential set and one property list | Process boundary; separate config, cache, audit log |
-| Property | One property ID within an instance | Namespaced cache keys, per-property budget and semaphore, per-property capability |
-| Tool surface | Generated per property, or takes a validated selector | A tool bound to one property cannot be repointed by argument injection |
+| Instance | One property and one credential binding (its own service account by default) | Process boundary; separate config, cache, audit log, budget |
+| Property | The one property ID an instance is bound to; equal to the instance ID | The authorization, cache, and audit boundary |
+| Tool surface | Generated per instance | A tool bound to one instance cannot be repointed by argument injection |
 
 | Rule | Implementation |
 |---|---|
-| Property ID is validated | A first-class argument checked against the configured list, so an unlisted ID is rejected before any API call and a prompt-injected ID cannot exfiltrate another tenant's analytics |
-| Isolation is per property | Capability profiles, budgets, caches, and semaphores are per property; a noisy property cannot exhaust another's tokens, and one without ecommerce cannot share a description that promises revenue |
+| Property is a grant | Permissions are rows `(role, tool, instance_id)`, and `instance_id` is the property. The policy engine resolves the grant before the module runs; a body property or instance that disagrees with the resolved instance is a deny |
+| Per-property credentials (default) | One service account per property, viewer on that property only, mounted as the instance's credential. A bug or leaked key is then confined to one property's analytics `[U]` — Google documents property-level viewer grants, not exercised in Phase 0 |
+| Shared credential | **Not supported.** Every GA4 instance uses its own service account with viewer on exactly one property. The property allowlist remains a second layer behind the policy-engine instance grant, but no deployment mode relies on it as the only barrier `[U]` |
+| Startup probe | For each configured property (one per instance), call `properties.getMetadata` with that instance's own credential; an inaccessible property fails that instance at startup while the others keep running. The probe proves access, not least privilege: a credential with viewer on more properties than the instance serves still passes `[U]` — verify by probing a property the credential cannot view and asserting 403 |
+| Isolation is per instance | Capability profiles, budgets, caches, and semaphores are per instance; a noisy property cannot exhaust another's tokens, and one without ecommerce cannot share a description that promises revenue |
 | Results are attributed | Every result names its property (display name plus ID), so a multi-property answer cannot be misattributed |
 | No cross-property aggregation | Summing `totalUsers` across properties double-counts people, so v1 declines rather than producing a number that looks authoritative and is not |
-| Permission scoping | The bearer-token layer maps a caller to a set of allowed properties; the GA4 credential is shared, so that allowlist is the only thing between caller A and property B, and the check is logged |
+| Authorization check | Deny by default → role grant → instance grant → capability, with any missing element a deny. The bearer-token layer maps the caller to a set of allowed instances; the policy engine enforces `(role, tool, instance_id)`; the module checks that the request's property equals the instance and that the credential used belongs to that instance. The allowlist is the second of these three layers, not the only thing between caller A and property B; allow and deny are both audited with the instance ID |
 
 ## 13. Security and privacy
 
@@ -494,10 +529,11 @@ aggregate that answers a different question.
 | No PII, no user-level data | Only aggregate dimensions and metrics from §5. No `userId`, `clientId`, `sessionId`, age bracket, gender, or interest dimensions; `transactionId` is capped and flagged as order-grain |
 | Data minimisation | A fixed catalog rather than arbitrary field selection; high-cardinality fields require a filter |
 | Credential handling | Secrets from file or environment, never logged, never echoed in errors or results |
-| Audit log | Timestamp, caller, property ID, dimensions, metrics, filter structure, date range, row count, token cost, outcome |
+| Audit log | Timestamp, caller, property/instance ID, grant checked and allow/deny reason, dimensions, metrics, filter structure, date range, row count, token cost, outcome |
+| Shared-credential residual risk | If an operator opts into one service account across properties, that credential can read every property it is granted `[U]`; the instance grant and property allowlist are compensating controls, not credential-level isolation. The opt-in is logged at startup and accepted per deployment |
 | Log exclusion | Response rows are **not** logged — the trail records that a report ran and how big it was, not what it contained |
 | Error hygiene | Upstream bodies truncated and stripped of request IDs before reaching a caller |
-| Injection surface | Property IDs and field names validated against allowlists; no free-form field name reaches the API |
+| Injection surface | Instance IDs and field names validated against allowlists; no free-form field name or property selector reaches the API |
 
 Omitting result data is deliberate: a trail storing every row becomes a second, less-governed
 copy of the analytics data. The query shape answers "who asked what, when, and did it succeed".
@@ -542,7 +578,7 @@ is a heuristic that produces both false rejections and false acceptances.
 | # | Question | Why it matters | How to resolve |
 |---|---|---|---|
 | Q1 | Does `keepEmptyRows=true` change compatibility or only the row set? | Decides whether an empty result means "no data" or "filtered out" | Run the funnel query with and without it on a sparse property |
-| Q2 | What is the exact token cost function? | §9.2 is an estimate | Diff `tokensPerDay.consumed` across known shapes |
+| Q2 | What is the exact token cost function? | §9.2 is an `[U]` estimate, not a control | Diff `tokensPerDay.consumed` across the fixed report set in §9.2 and state the error bound |
 | Q3 | Is realtime quota separate, and what are its limits? | §8 assumes scarcity | Call `runRealtimeReport` with `returnPropertyQuota` |
 | Q4 | How much does D-1 revise over 48 h here? | §10 is `[U]` | Snapshot the same range daily for a week and diff |
 | Q5 | Do `itemId` + session *dimensions* fail like session *metrics*? | §6.2 has an `[U]` row | One probe, recorded in evidence |

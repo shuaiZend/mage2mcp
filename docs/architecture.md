@@ -113,6 +113,7 @@ internal/magento  internal/cloudflare  internal/ga4  internal/unified
 | `internal/ga4` | GA4 Data API client, report builder, compatibility validator, property capabilities | `core` only |
 | `internal/unified` | Cross-source models, joins, metric semantics, SKU mapping | `core` + module **public service interfaces** |
 | `internal/jobs` | Asynq task definitions, enqueue/dequeue, retry policy | `core`, module services (as task handlers) |
+| `internal/logs` | R2/ClickHouse ingestion and request-level queries for Logpush data | `core`, object storage and ClickHouse drivers |
 | `internal/admin` | Human-only approval surface for confirmations, read-only status | `core`, `security` |
 | `internal/storage` | PostgreSQL repositories, migrations runner, Redis adapters | `core` |
 | `internal/observability` | Structured logging, metrics, health, tracing | `core` |
@@ -235,7 +236,12 @@ datasources:
           mode: "integration_token"
           token: "${MAGENTO_US_TOKEN}"
   cloudflare:
-    enabled: false
+    enabled: true
+    instances:
+      - id: "zone-us"
+        account_id: "${CLOUDFLARE_ACCOUNT_ID}"
+        zone_id: "${CLOUDFLARE_ZONE_ID}"
+        credential_profile: "analytics"
   ga4:
     enabled: true
     instances:
@@ -343,7 +349,6 @@ No change to Magento, Cloudflare, or GA4 code is required.
 
 | Question | Owner | Resolution point |
 |---|---|---|
-| Stateful vs stateless Streamable HTTP sessions for multi-replica deployments | Architect | ADR-0002 follow-up before Phase 1 |
 | ClickHouse deployment model (managed vs self-hosted) | Architect | Phase 3 planning |
 | Whether to expose Prometheus metrics through Access or a private listener | Security | Phase 1 |
 | Multi-tenant (multiple customers per deployment) vs single-tenant | Architect | Post-1.0; schema reserves `tenant_id` |

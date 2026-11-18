@@ -1,7 +1,15 @@
 {
   // markdownlint-cli2 configuration for mage2mcp documentation.
   "globs": ["**/*.md"],
-  "ignores": ["node_modules/**", ".git/**", "CHANGELOG.md", ".github/PULL_REQUEST_TEMPLATE.md"],
+  "ignores": [
+    "node_modules/**",
+    ".git/**",
+    "CHANGELOG.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    // Review records are historical evidence and are preserved verbatim.
+    "docs/reviews/*-review.md",
+    "docs/reviews/*-findings.md"
+  ],
   "config": {
     "default": true,
     "MD013": false,

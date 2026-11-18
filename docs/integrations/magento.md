@@ -47,10 +47,82 @@ hours minus 5 minutes of skew, and never persists passwords, logs tokens, or use
 
 ### 2.2 Least privilege
 
-Integration ACL is a tree chosen in **System > Extensions > Integrations > Available APIs** `[V-docs]` ([authentication](https://developer.adobe.com/commerce/webapi/get-started/authentication/)). Default
-role: `Magento_Catalog::products` (products, configurable, media, websites, tier prices), `Magento_Catalog::sets`, `Magento_Catalog::categories`, `Magento_InventoryApi::source`, `Magento_InventoryApi::source_items` `[U]`, `Magento_Sales::sales`, `Magento_Backend::store` `[U]`.
-Read-only deployments use the same role minus write resources; a local capability allowlist prevents an
-over-broad upstream role from being abused.
+**The tool surface is not the security boundary; the credential is.** A tool allowlist decides what the gateway
+*calls*; it does not bound what the integration credential *can do* if the gateway, a dependency, or a leaked
+secret is used outside the registry. The ACL is therefore part of the deployment contract and is verified at
+startup.
+
+Integration ACL is a tree chosen in **System > Extensions > Integrations > Available APIs** `[V-docs]` ([authentication](https://developer.adobe.com/commerce/webapi/get-started/authentication/)). Resource IDs below come from the 2.4.9 `acl.xml` files and from the `<resources>` element of the `webapi.xml` route that consumes them; `Magento\Framework\Acl` extends `Laminas\Permissions\Acl\Acl`, which inherits an allow from a parent resource to its children, so granting a parent grants every descendant `[V-docs]` ([Catalog acl.xml](https://github.com/magento/magento2/blob/2.4.9/app/code/Magento/Catalog/etc/acl.xml), [Backend acl.xml](https://github.com/magento/magento2/blob/2.4.9/app/code/Magento/Backend/etc/acl.xml), [Sales acl.xml](https://github.com/magento/magento2/blob/2.4.9/app/code/Magento/Sales/etc/acl.xml), [InventoryApi acl.xml](https://github.com/magento/inventory/blob/1.2.2/InventoryApi/etc/acl.xml)).
+
+**Read-only manifest.** It contains only resources that no core 2.4.9 REST write route consumes. Catalog, source-item and
+sales-document reads are absent because their resources also gate writes (see the write manifest), so those read
+tools are unavailable in this mode; store codes are resolved from storefront GraphQL (`availableStores`,
+`storeConfig`), which needs no admin ACL `[V-docs]`.
+
+| Capability | Resource ID | Routes that consume it | Status |
+|---|---|---|---|
+| Orders, order items, order comments (read) | `Magento_Sales::actions_view` | `GET /V1/orders`, `/V1/orders/{id}`, `/V1/orders/items`, `/V1/orders/{id}/comments` | `[V-docs]` read-only |
+| Transactions (read) | `Magento_Sales::transactions_fetch` | `GET /V1/transactions[/{id}]` | `[V-docs]` read-only |
+| Stocks (read) | `Magento_InventoryApi::stock` | `GET /V1/inventory/stocks[/{stockId}]` | `[V-docs]` read-only |
+| Salable quantity, resolver (read) | `Magento_InventorySalesApi::stock` | `GET /V1/inventory/get-product-salable-quantity/...`, `/is-product-salable/...`, `/stock-resolver/...` | `[V-docs]` read-only |
+| Store codes and storefront verification | none (storefront GraphQL) | `availableStores`, `storeConfig`, `products` | `[V-docs]` |
+
+**Write-enabled manifest.** Least privilege for the full tool set: every row is required by an enabled tool,
+and resources for disabled tool groups are removed rather than left granted.
+
+| Capability | Resource ID | Routes that consume it | Status |
+|---|---|---|---|
+| Products, websites, configurable options/children/variation, bulk MSI assign/transfer | `Magento_Catalog::products` | `POST/PUT/DELETE /V1/products...`, `/V1/products/{sku}/websites`, `/V1/configurable-products/...`, `/V1/inventory/bulk-product-source-*` | `[V-docs]` |
+| Attributes and options | `Magento_Catalog::attributes_attributes` | `/V1/products/attributes...`, `/{code}/options...`, `GET /V1/products/media/types/{set}` | `[V-docs]` |
+| Attribute sets, groups, membership | `Magento_Catalog::sets` | `/V1/products/attribute-sets...` | `[V-docs]` |
+| Categories and category products | `Magento_Catalog::categories` | `/V1/categories...`, `/V1/categories/{id}/products...` | `[V-docs]` |
+| Media, tier/base/special/cost prices, links, custom options | `Magento_Catalog::catalog` | `/V1/products/{sku}/media...`, `/V1/products/tier-prices*`, `/base-prices`, `/special-price`, `/cost`, `/{sku}/links`, `/V1/products/options` | `[V-docs]` |
+| MSI sources and source items | `Magento_InventoryApi::source` | `GET /V1/inventory/sources`, `GET/POST /V1/inventory/source-items`, `/source-items-delete` | `[V-docs]` |
+| Source create/update | `Magento_InventoryApi::source_edit` | `POST/PUT /V1/inventory/sources[/{code}]` | `[V-docs]` |
+| Stock-source links | `Magento_InventoryApi::stock_source_link` | `GET/POST /V1/inventory/stock-source-links`, `/stock-source-links-delete` | `[V-docs]` |
+| Stocks create/update/delete (only if stock tools are enabled) | `Magento_InventoryApi::stock_edit`, `Magento_InventoryApi::stock_delete` | `POST/PUT /V1/inventory/stocks`, `DELETE /V1/inventory/stocks/{id}` | `[V-docs]` |
+| Salable quantity, resolver (read) | `Magento_InventorySalesApi::stock` | `GET /V1/inventory/get-product-salable-quantity/...`, `/is-product-salable/...`, `/stock-resolver/...` | `[V-docs]` |
+| Order reads for verification | `Magento_Sales::actions_view` | `GET /V1/orders...` | `[V-docs]` |
+| Store, website and group ids | `Magento_Backend::store` | `GET /V1/store/storeViews`, `/storeGroups`, `/websites`, `/storeConfigs` | `[V-docs]` (residual, below) |
+
+`Magento_Catalog::catalog` is the parent of the four catalog children, so granting it also grants
+`Magento_Catalog::products`, including `DELETE /V1/products/{sku}`. Media and price writes cannot be granted
+without product delete, which is why write mode is inherently destructive and why every write is confirmation-gated
+(section 14). The old `Magento_InventoryApi::source_items` id does not exist in 1.2.2: source-item reads and writes
+are both `Magento_InventoryApi::source`.
+
+Not granted in either manifest: `Magento_Config::config` and its section children (`Magento_Catalog::config_catalog`,
+`Magento_Sales::config_sales`, …) — store configuration is out of scope and core 2.4.9 has no REST write route for
+it; `Magento_Sales::sales_invoice`, `Magento_Sales::shipment`, `Magento_Sales::sales_creditmemo` — they gate
+capture/refund/create as well as reads, so those read tools stay disabled unless the operator explicitly grants the
+resources and accepts the extra write capability; `Magento_Catalog::catalog_inventory` — legacy stock path, only
+with the legacy tools.
+
+**Startup credential probe.** After the schema fetch and before any tool is advertised, the gateway probes the
+credential once per instance (again after a 401 re-mint or credential rotation), with a 10 s budget and no retry on
+5xx. A denial is HTTP 401 or 403 carrying `The consumer isn't authorized to access <resource>`: 2.4.9 maps the ACL
+`AuthorizationException` to 401 in `Magento\Framework\Webapi\ErrorProcessor::getHttpCodeForLocalizedException`
+`[V-docs]`, so the finding's 403 is the right semantics but not the literal status on every build; a proxy or
+extension may surface 403. Both are accepted, and the message must name the probed resource.
+
+A probe whose route is absent from the instance schema is skipped and recorded, never treated as a failure, because capability detection has already removed the tools that needed it. The probe is read-only in effect. ACL is checked in `Magento\Webapi\Controller\Rest\RequestValidator::validate()`
+before the service and its input parameters are resolved `[V-docs]`, so a denied request never parses a body or
+reaches a repository; every probe body is deliberately invalid (`type_id: __mage2mcp_probe__`, empty payloads) and
+targets the reserved SKU `__mage2mcp_probe__`, which is read first — a denial already proves the catalog ACL is
+absent, a 404 allows the write probe, and a 200 aborts as `probe_sku_conflict` rather than risk a write. Even a
+wrongly authorized call therefore fails validation instead of creating, updating, or deleting anything.
+
+| Mode | Probe | Pass | Fail |
+|---|---|---|---|
+| `read_only` | `PUT /V1/products/__mage2mcp_probe__` (needs `Magento_Catalog::products`) | denial naming that resource | any other status → instance disabled: `credential_scope_exceeded: read-only mode requires Magento_Catalog::products to be absent; probe was authorized (status 404)` |
+| `read_only` | `POST /V1/inventory/source-items` with `{"sourceItems":[]}` (needs `Magento_InventoryApi::source`) | denial | any 2xx/4xx → `credential_scope_exceeded` for source-item writes |
+| `write` | one invalid-body write route per required resource: `PUT /V1/products/__mage2mcp_probe__`, `POST /V1/products/attributes`, `POST /V1/products/attribute-sets`, `POST /V1/categories`, `POST /V1/products/__mage2mcp_probe__/media`, `POST /V1/inventory/source-items`, `POST /V1/inventory/sources`, `POST /V1/inventory/stock-source-links`, and `POST /V1/inventory/stocks` when stock tools are enabled | non-denial (400 or 404) | denial → instance disabled: `credential_scope_insufficient: Magento_Catalog::catalog missing (media probe denied)` |
+
+Two resources are reported but cannot be probed. `Magento_Backend::store` has no REST write route in 2.4.9 (only
+`GET /V1/store/*`), yet it is the `ADMIN_RESOURCE` of the admin store-view/website/group controllers, so a write
+instance that resolves stores can also change them in the admin UI; `Magento_Config::config` has no core REST route
+at all. Both are recorded as `acl_unverifiable` in the startup report and must be confirmed in the integration's
+Available APIs tree (probe U10). `[U]`
 
 ### 2.3 Store code
 
@@ -263,7 +335,7 @@ describe). Rollback never touches pre-existing objects.
 
 | Rule | Why it matters | Enforcement point | Error surfaced to the agent |
 |---|---|---|---|
-| SKU `[A-Za-z0-9._-]{1,64}`, unique | Global uniqueness; late failure wastes writes | Pre-flight before any write | `validation_failed: sku already exists (PHONE-01-BLK-128)` |
+| SKU `^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`, unique | Global uniqueness; late failure wastes writes | Pre-flight before any write | `validation_failed: sku already exists (PHONE-01-BLK-128)` |
 | Configurable attribute select-like and global | Options cannot be created otherwise | Schema cache | `validation_failed: 'color' is frontend_input 'text'` |
 | Option value exists | Dangling values break the storefront | Schema cache | `validation_failed: value_index 99 not in 'color' (valid: 12, 13)` |
 | Child covers every option | Incomplete combinations cannot be selected | Matrix expansion | `validation_failed: PHONE-01-BLK-128 missing 'storage'` |
@@ -273,6 +345,8 @@ describe). Rollback never touches pre-existing objects.
 | Quantity non-negative; source exists | A bad value or code rejects the batch | Tool schema, `GET /V1/inventory/sources` | `not_found: source 'wh2' does not exist` |
 | Store code valid | A typo writes to the wrong scope | `GET /V1/store/storeViews` | `invalid_argument: unknown store code 'en_us' (valid: default, en, de)` |
 | Media MIME allowed and matching bytes | Magento validates both | Gateway pre-check | `validation_failed: image/webp not allowed (jpg, jpeg, gif, png)` |
+| Import format on the allowlist and expansion within cap | A zip, XLSX, or gzip payload can expand past memory and skip the CSV validator | Format policy (section 9), caps applied after decompression | `unsupported_format: gzip_disabled`; `validation_failed: decompressed_size_exceeded (64 MiB)` |
+| No macros or external links in a workbook | Macros sit outside the CSV/JSON validator | XLSX converter rejects macro parts, ignores external links | `validation_failed: macros_present` |
 | Category exists | Assignment fails late otherwise | `GET /V1/categories/{id}` | `not_found: category 42 does not exist` |
 | Destructive call confirmed | Deletes are irreversible | Tool layer | `confirmation_required` with an opaque `confirmation_id`; approval by a different human identity |
 | Storefront verification passes | HTTP 200 is not correctness | Final lifecycle state | `validation_failed: variant PHONE-01-BLK-256 absent from storefront query` |
@@ -343,13 +417,41 @@ Pipeline: `normalize → validate → preview → confirm → execute → status
 
 | Stage | Behaviour | Failure handling |
 |---|---|---|
-| Normalize | CSV, JSON, or Excel to the canonical row model; headers mapped to attribute codes via the schema cache, never positionally | Unmapped header → `validation_failed` naming it |
+| Normalize | CSV, JSON, or XLSX (bounded converter, below) to the canonical row model; headers mapped to attribute codes via the schema cache, never positionally | Unmapped header → `validation_failed` naming it; `unsupported_format` before parsing |
 | Validate | Section 6 plus cross-row checks: duplicate SKUs, parent/child references, option values, website and category ids | Report all errors, not the first |
 | Preview | Diff of creates, updates, deletes, unchanged, and per-row warnings | Blocks execution until confirmed |
 | Confirm | Confirmation token bound to the preview hash | Stale token → `conflict` |
 | Execute | Chunked writes through the same tools as single operations, or `/V1/import/*` when eligible | Per-chunk checkpoint |
 | Status | `/V1/bulk/{bulkUuid}/status`, `/detailed-status`, `/operation-status/{status}` | Unknown status → `upstream_unavailable` |
 | Report | Row-level result: sku, action, status, error code, upstream message | Produced even on abort |
+
+**Format policy.** One allowlist covers every upload path, including the base64 `csvData` of `/V1/import/csv`.
+Limits are enforced **after** decompression, never before: the declared size, `Content-Length`, and the base64
+length are not trusted, and each stage decodes through a streaming reader with a hard byte counter that aborts at
+the cap instead of buffering. `[V-docs]` for the Magento contract, `[U]` for the converter bounds (probe U11).
+
+| Input | Accepted | Bound (post-decompression) | Rejection |
+|---|---|---|---|
+| CSV, UTF-8 (`text/csv`) | yes | 8 MiB, 64 columns, 32 KiB per field, 5,000 rows | `validation_failed: payload_too_large`, `too_many_columns`, `too_many_rows` |
+| JSON (`application/json`) | yes | 8 MiB, same row and field caps, validated against the REST payload schema | `validation_failed: ...`, `invalid_argument: ...` |
+| XLSX (`.xlsx`, OOXML) | only through the bounded converter | 64 MiB decompressed across all zip entries, ≤10,000 entries, shared strings ≤1,000,000 entries and ≤32 MiB, macros rejected, external links ignored | `validation_failed: decompressed_size_exceeded (64 MiB)`, `zip_entry_limit`, `shared_strings_limit`, `macros_present` |
+| `.xlsm`, `.xls`, any macro-enabled or OLE2 container | no | — | `unsupported_format: macros_present` or `unsupported_format` |
+| gzip-compressed CSV | no by default; only when the operator sets `import.allow_gzip` | the same 8 MiB cap applied after inflate | `unsupported_format: gzip_disabled` (default) |
+| zip, tar, or any other archive | no | — | `unsupported_format` |
+
+The XLSX converter reads only `xl/workbook.xml`, `xl/sharedStrings.xml`, and `xl/worksheets/*.xml`; it never
+resolves `externalLinks` relationships, rejects any part with a macro content type or a `vbaProject.bin`, and parses
+XML with DTDs and external entities disabled, so entity-expansion bombs fail before the row reader runs. It emits
+the same canonical row model as CSV, so every section 6 rule and every cross-row check applies unchanged. Outbound
+`csvData` is sent uncompressed; the gateway never forwards a caller-supplied gzip stream.
+
+The threat model's §5.8 wording ("bounded, not removed") now matches this policy; the earlier
+entirely") overstates the position: XLSX stays behind the converter, so the correct claim is **bounded, not
+claim that the surface was removed** is superseded (F-06). The cases are blocking in the T-23/§5.8 matrix:
+`test/security/upload_test.go::TestXLSXZipBomb` (a 1 MiB workbook whose sheet XML expands past 64 MiB is rejected
+at the cap with `decompressed_size_exceeded`), `TestXLSXMacroWorkbook` (an `.xlsm` carrying `vbaProject.bin` is
+rejected with `macros_present`), and `TestGzipCSVBomb` (gzip disabled → `unsupported_format: gzip_disabled`;
+enabled → the 8 MiB post-inflate cap holds).
 
 **Import endpoints.** `POST /V1/import/csv` and `/V1/import/json` exist in the 2.4.9 admin schema, but
 the Import API page carries the Adobe Commerce "exclusive feature" banner and Open Source's `ImportExport` module ships no
@@ -421,7 +523,7 @@ and business rules, 404 covers both unknown routes and missing entities, 500 cov
 | `NoSuchEntityException` | 404 | `The product that was requested doesn't exist.` | `not_found` | Echoes the requested SKU |
 | Unknown route | 404 | `Request does not match any route.` | `not_found` | Endpoint unsupported here; run capability check |
 | Missing or expired token | 401 | `The consumer isn't authorized to access %resources.` | `permission_denied` | Re-authentication required |
-| Insufficient ACL | 403 | `The consumer isn't authorized to access %resources.` | `permission_denied` | Names the missing ACL resource when known |
+| Insufficient ACL | 401 (403 via proxy) | `The consumer isn't authorized to access %resources.` | `permission_denied` | Same message as an expired token; the startup probe (2.2) records the denied resource server-side |
 | `AlreadyExistsException` | 400/409 | `The product with the "%1" SKU already exists.` | `conflict` | SKU conflict with existing entity id |
 | Duplicate URL key | 400 | `URL key for specified store already exists.` | `conflict` | Suggests a different `url_key` |
 | Concurrent edit | 400 | `The order ... cannot be ...` | `conflict` | Refresh and retry |
@@ -484,7 +586,10 @@ write.
 | Control | Requirement |
 |---|---|
 | Token storage | Memory or OS keyring; never in logs, errors, audit rows, or tool output; config references an env var or file path, never a committed literal |
-| Least privilege | One integration per environment limited to section 2.2; read-only credential for analytics-only deployments |
+| Least privilege | One integration per environment, restricted to the manifest for its mode (section 2.2). The credential, not the tool surface, is the boundary: the startup probe disables a read-only instance whose credential holds a write resource and a write instance missing a required one; `Magento_Backend::store` and `Magento_Config::config` are `acl_unverifiable` and must be checked in the integration's Available APIs |
+| Read-only deployments | Read-only manifest only; catalog, source-item and sales-document reads require the write manifest because 2.4.9 grants no read-only resource for them, and an instance with those resources is never described as read-only |
+| Store configuration | `Magento_Config::config` and its section children are never granted; core 2.4.9 has no REST write route for store config, and store-view administration remains the residual of `Magento_Backend::store` (section 2.2) |
+| Import formats | CSV and JSON; XLSX only through the bounded converter (64 MiB decompressed, 10,000 entries, shared-strings cap, macros rejected, external links ignored); gzip CSV off unless enabled; every cap after decompression; the bomb and macro cases are blocking tests (section 9, T-23/§5.8) |
 | Admin credentials | Disabled by default; used once to mint a token, never persisted |
 | Credential logging | Method, path, status, duration, body hash only; `Authorization`, cookies, `Set-Cookie` redacted at the transport layer |
 | Write confirmation | `delete`, `replace`, and bulk deletes require the two-step confirmation protocol (ADR-0014): opaque `confirmation_id`, approval by a different human identity, parameter-hash binding, single use. No `confirm` boolean exists |
@@ -505,6 +610,9 @@ Threat-model detail belongs in `docs/security/`; this is the Magento-specific su
 | Import endpoints | 2026-11-18 | Import API page and Open Source `ImportExport` module | Commerce-only | `[V-docs]` |
 | Auth and token lifetimes | 2026-11-18 | Token-based authentication page | Confirmed | `[V-docs]` |
 | Async route registration | 2026-11-18 | `webapi_async.xml` @ 2.4.9 | Two core routes | `[V-docs]` |
+| ACL manifests | 2026-11-19 | 2.4.9 `acl.xml` files and `webapi.xml` route resources | Matches section 2.2 | `[V-docs]` |
+| ACL denial status and probe safety | 2026-11-19 | `RequestValidator.php`, `ErrorProcessor.php` @ 2.4.9 | Denial is 401 before body parsing; probe accepts 401/403 | `[V-docs]` |
+| Format policy | 2026-11-19 | Threat model §5.8 and Import API page | Bounded converter, post-decompression caps; §5.8 wording to be reconciled | `[U]` |
 | Live behaviour of any endpoint | — | No instance available | Not run | `[U]` |
 
 The probe suite that closes the `[U]` items is in [docs/evidence/magento.md](../evidence/magento.md). No live verification was possible in this session because
@@ -522,8 +630,10 @@ against a staging instance before the module is described as working.
 | U5 | ~~Is `PUT /async/V1/products/{sku}` registered?~~ Resolved: not registered in 2.4.9 (F26) | `GET /rest/default/async/schema` for other installs | Closed |
 | U6 | Default `pageSize` per endpoint when omitted | `GET /V1/products` without `pageSize` | No |
 | U7 | Delay between source-item write and GraphQL `stock_status`, with and without consumers | Timed staging probe | Yes for the inventory budget |
-| U8 | Exact ACL resource ids for MSI source items and store config | Integration ACL tree | No |
+| U8 | ~~Exact ACL resource ids for MSI source items and store config~~ Resolved: source items are `Magento_InventoryApi::source`; store config reads are `Magento_Backend::store` (section 2.2) | Integration ACL tree | Closed |
 | U9 | Does 2.4.9 return 409 or 400 for a duplicate SKU? | Duplicate create probe | No |
+| U10 | Can store-view write scope be detected over REST? | No REST write route is gated by `Magento_Backend::store`; compare the integration's Available APIs tree with section 2.2 at startup review | No (residual, reported as `acl_unverifiable`) |
+| U11 | XLSX converter peak memory and shared-strings ratio on real workbooks | Generate workbooks up to the 64 MiB cap, measure RSS and abort behaviour | No |
 
 **Decision record.** [ADR-0003](../adr/0003-magento-client-design.md) records: REST-only writes with GraphQL as
 read verification; the configurable lifecycle as a persisted, resumable state machine with per-transition

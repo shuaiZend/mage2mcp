@@ -34,9 +34,12 @@ Use **Streamable HTTP** through `mcp.NewStreamableHTTPHandler`.
 - Protocol versions 2025-11-25 through 2026-07-28, negotiated by the SDK.
 - Stateful sessions by default, with `Mcp-Session-Id` bound to the authenticated
   identity so a session cannot be hijacked.
-- Session idle timeout configured; sessions are not persisted to disk.
-- Multi-replica deployments must use sticky routing (Cloudflare load balancing
-  by session cookie/header) or enable stateless mode.
+- Session state is stored in Redis under `m2m:session:{session_id}` with an idle
+  TTL (default 30 minutes), so a restart does not orphan sessions and replicas do
+  not require sticky routing. The store holds session metadata only, never
+  conversation content.
+- Multi-replica deployments share the Redis session store; sticky routing is not
+  required. Stateless mode remains available for deployments that prefer it.
 - Stateless mode is a documented deployment option, not the default.
 
 ## Rationale
@@ -57,8 +60,10 @@ operators will prefer simple horizontal scaling over server-initiated messages.
 
 ### Negative
 
-- Stateful mode requires sticky routing; documented in deployment docs.
-- In-memory sessions are lost on restart; clients must reinitialize.
+- Redis becomes part of the MCP availability path; a Redis outage ends sessions
+  and clients must reinitialize.
+- Session data is operationally sensitive and must be protected like other
+  ephemeral state.
 
 ### Security impact
 

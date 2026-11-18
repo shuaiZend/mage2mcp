@@ -34,9 +34,11 @@ Adopt option 3.
   idempotency records. The server never writes configuration back to the database. Migrations run via
   `golang-migrate`, forward-only with tested rollback notes.
 - **Redis 7+** for Asynq queues, rate-limit counters, idempotency reservations, and
-  short-lived response caches. Durable idempotency records live in PostgreSQL: Redis
-  provides the fast `SET NX` reservation, PostgreSQL provides the ledger that survives
-  a Redis flush.
+  short-lived response caches. Durable idempotency records live in PostgreSQL:
+  Redis provides the fast `SET NX` reservation, PostgreSQL provides the single
+  authoritative ledger that survives a Redis flush. There is exactly one ledger;
+  `jobs.idempotency_key` is a convenience index into it, not a second source of
+  truth.
 - **Explicitly excluded:** raw Cloudflare logs (ClickHouse/R2), secrets
   (environment or secret manager), and agent conversation content.
 

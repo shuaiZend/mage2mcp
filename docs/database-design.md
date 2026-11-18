@@ -200,7 +200,7 @@ CREATE UNIQUE INDEX users_email_uq ON users (email) WHERE email IS NOT NULL;
 
 CREATE TABLE roles (
     name        text        PRIMARY KEY,
-    rank        smallint    NOT NULL,
+    rank        smallint    NOT NULL,   -- display ordering only; never used for authorization
     description text        NOT NULL,
     is_builtin  boolean     NOT NULL DEFAULT false,
     created_at  timestamptz NOT NULL DEFAULT now(),
@@ -262,7 +262,7 @@ CREATE TABLE instance_credentials (
     CONSTRAINT instance_credentials_fp_len CHECK (secret_fingerprint IS NULL OR octet_length(secret_fingerprint) = 32)
 );
 CREATE UNIQUE INDEX instance_credentials_active_uq
-    ON instance_credentials (instance_id, kind) WHERE status <> 'revoked';
+    ON instance_credentials (instance_id, kind) WHERE status = 'active';
 
 CREATE TABLE role_assignments (
     id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -289,19 +289,20 @@ CREATE TABLE tool_permissions (
     instance_id text        NULL REFERENCES datasource_instances(id) ON DELETE CASCADE,
     binding_id  text        NULL REFERENCES instance_bindings(id) ON DELETE CASCADE,
     effect      text        NOT NULL DEFAULT 'allow' CHECK (effect IN ('allow','deny')),
-    scope       text        NOT NULL CHECK (scope IN ('read','write','destructive','admin')),
+    scope       text        NOT NULL CHECK (scope IN ('read','write','destructive','admin','approve','pii')),
     requires_confirmation boolean NOT NULL DEFAULT false,
     requires_pii_grant    boolean NOT NULL DEFAULT false,
     updated_at  timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT tool_permissions_pattern_chk CHECK (
-        (scope_kind = 'tool' AND tool_pattern ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,3}$')
+        (scope_kind = 'tool' AND tool_pattern ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,3}(:[a-z][a-z0-9_]*)?$')
      OR (scope_kind = 'capability_prefix' AND tool_pattern ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,2}$')),
     CONSTRAINT tool_permissions_no_wildcard CHECK (position('*' in tool_pattern) = 0),
     CONSTRAINT tool_permissions_confirm_chk CHECK (requires_confirmation = false OR scope IN ('write','destructive')),
     CONSTRAINT tool_permissions_scope_one CHECK (NOT (instance_id IS NOT NULL AND binding_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX tool_permissions_uq
-    ON tool_permissions (role_name, tool_pattern, instance_id) NULLS NOT DISTINCT;
+    ON tool_permissions (role_name, tool_pattern, instance_id, binding_id) NULLS NOT DISTINCT;
+-- A binding grant and a global grant are distinct rows: binding_id participates in the key.
 ```
 
 `NULLS NOT DISTINCT` (PG 15+) makes a global row (`instance_id IS NULL`) impossible to
@@ -320,7 +321,7 @@ CREATE TABLE jobs (
     tool           text        NOT NULL,
     kind           text        NOT NULL CHECK (kind ~ '^[a-z][a-z0-9_]{2,63}$'),
     state          text        NOT NULL DEFAULT 'queued'
-                               CHECK (state IN ('queued','running','cancelling','succeeded','failed','canceled')),
+                               CHECK (state IN ('queued','running','canceling','succeeded','failed','canceled')),
     queue          text        NOT NULL CHECK (queue IN ('critical','default','import','report','maintenance')),
     priority       smallint    NOT NULL DEFAULT 0,   -- higher runs sooner
     payload        jsonb       NOT NULL,             -- typed request; never a secret
@@ -329,10 +330,11 @@ CREATE TABLE jobs (
     subject_hash   bytea       NOT NULL,
     request_id     text        NULL,
     attempt_count  smallint    NOT NULL DEFAULT 0,
-    max_attempts   smallint    NOT NULL DEFAULT 3,
+    max_attempts   smallint    NOT NULL DEFAULT 1,  -- retries are opt-in and gated on Retryable + idempotency (ADR-0015)
     last_error_code text       NULL,
     result         jsonb       NULL,
     result_sha256  bytea       NULL,
+    result_ref     text        NULL,   -- object key for results larger than the inline cap
     scheduled_at   timestamptz NOT NULL DEFAULT now(),
     lease_expires_at timestamptz NULL,
     started_at     timestamptz NULL,
@@ -342,6 +344,7 @@ CREATE TABLE jobs (
     updated_at     timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT jobs_payload_size CHECK (octet_length(payload::text) <= 65536),
     CONSTRAINT jobs_result_size CHECK (result IS NULL OR octet_length(result::text) <= 8192),
+    CONSTRAINT jobs_result_ref_chk CHECK (result IS NULL OR result_ref IS NULL),
     CONSTRAINT jobs_hash_len CHECK (octet_length(payload_sha256) = 32
         AND (result_sha256 IS NULL OR octet_length(result_sha256) = 32)),
     CONSTRAINT jobs_attempt_bounds CHECK (max_attempts BETWEEN 1 AND 10
@@ -356,8 +359,9 @@ CREATE TABLE jobs (
      OR (module = 'platform' AND instance_id IS NULL AND binding_id IS NULL)
      OR (module IN ('magento','cloudflare','ga4') AND instance_id IS NOT NULL AND binding_id IS NULL))
 );
-CREATE UNIQUE INDEX jobs_idempotency_uq ON jobs (instance_id, subject_hash, tool, idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX jobs_idempotency_uq
+    ON jobs (instance_id, binding_id, subject_hash, tool, idempotency_key)
+    NULLS NOT DISTINCT WHERE idempotency_key IS NOT NULL;
 CREATE INDEX jobs_recovery_idx ON jobs (queue, priority DESC, scheduled_at) WHERE state = 'queued';
 CREATE INDEX jobs_lease_idx ON jobs (lease_expires_at) WHERE state = 'running';
 CREATE INDEX jobs_instance_created_idx ON jobs (instance_id, created_at DESC);
@@ -432,7 +436,8 @@ CREATE TABLE import_items (
     batch_id     uuid        NOT NULL REFERENCES import_batches(id) ON DELETE CASCADE,
     row_number   integer     NOT NULL CHECK (row_number >= 1),
     operation    text        NOT NULL CHECK (operation IN ('create','update','delete','noop')),
-    sku          text        NOT NULL,
+    item_key     text        NOT NULL,   -- SKU for product/price/inventory, category id for category, path for media
+    key_kind     text        NOT NULL DEFAULT 'sku' CHECK (key_kind IN ('sku','category_id','media_path')),
     status       text        NOT NULL DEFAULT 'pending'
                              CHECK (status IN ('pending','succeeded','failed','skipped')),
     error_code   text        NULL,
@@ -442,7 +447,7 @@ CREATE TABLE import_items (
     duration_ms  integer     NULL CHECK (duration_ms >= 0),
     processed_at timestamptz NULL,
     CONSTRAINT import_items_uq UNIQUE (batch_id, row_number),
-    CONSTRAINT import_items_sku_len CHECK (length(sku) BETWEEN 1 AND 64),
+    CONSTRAINT import_items_key_len CHECK (length(item_key) BETWEEN 1 AND 512),
     CONSTRAINT import_items_msg_len CHECK (error_message IS NULL OR length(error_message) <= 512),
     CONSTRAINT import_items_status_time CHECK ((status = 'pending') = (processed_at IS NULL))
 );
@@ -490,7 +495,6 @@ CREATE INDEX sku_mappings_review_idx ON sku_mappings (instance_id, created_at DE
 CREATE TABLE confirmation_tokens (
     id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     token_hash     bytea       NOT NULL,  -- SHA-256 of the confirmation_id given to the client
-    nonce_hash     bytea       NOT NULL,  -- SHA-256 of the nonce; the nonce is never stored
     tool           text        NOT NULL,
     instance_id    text        NULL REFERENCES datasource_instances(id) ON DELETE CASCADE,
     binding_id     text        NULL REFERENCES instance_bindings(id) ON DELETE CASCADE,
@@ -506,9 +510,8 @@ CREATE TABLE confirmation_tokens (
     consumed_at    timestamptz NULL,
     created_at     timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT confirmation_tokens_token_uq UNIQUE (token_hash),
-    CONSTRAINT confirmation_tokens_nonce_uq UNIQUE (nonce_hash),
     CONSTRAINT confirmation_tokens_hash_len CHECK (octet_length(token_hash) = 32
-        AND octet_length(nonce_hash) = 32 AND octet_length(params_hash) = 32
+        AND octet_length(params_hash) = 32
         AND octet_length(requester_hash) = 32
         AND (approver_hash IS NULL OR octet_length(approver_hash) = 32)),
     CONSTRAINT confirmation_tokens_ttl CHECK (expires_at > created_at
@@ -548,6 +551,46 @@ CREATE TABLE idempotency_keys (
 CREATE INDEX idempotency_keys_expiry_idx ON idempotency_keys (expires_at);
 ```
 
+#### 000004a — ingest manifest
+
+The manifest is the evidence that a raw-log window was delivered and not rewritten. It
+is bound into the signed audit checkpoint (threat model §5.16, T-37).
+
+```sql
+CREATE TABLE ingest_manifest (
+    id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    zone_alias   text        NOT NULL,
+    bucket       text        NOT NULL,
+    object_key   text        NOT NULL,
+    etag         text        NOT NULL,
+    record_count bigint      NOT NULL CHECK (record_count >= 0),
+    digest       bytea       NOT NULL,   -- SHA-256 over the canonical object manifest
+    ingested_at  timestamptz NOT NULL DEFAULT now(),
+    checkpoint_seq bigint    NULL,       -- audit checkpoint that covers this batch
+    CONSTRAINT ingest_manifest_key_uq UNIQUE (bucket, object_key, etag)
+);
+CREATE INDEX ingest_manifest_zone_time_idx ON ingest_manifest (zone_alias, ingested_at DESC);
+```
+
+#### 000005a — role capabilities
+
+Non-tool permissions cannot be expressed as a tool pattern, so they live in their own
+table. This is where approval authority and PII access are granted.
+
+```sql
+CREATE TABLE role_capabilities (
+    role_name   text        NOT NULL REFERENCES roles(name) ON DELETE CASCADE,
+    capability  text        NOT NULL CHECK (capability IN ('confirmation:approve','pii:read','audit:export')),
+    granted_by  bytea       NULL,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (role_name, capability)
+);
+```
+
+`confirmation:approve` is the only authority that can approve a pending confirmation;
+`pii:read` gates unmasked client IPs; `audit:export` gates the audit export path. The
+approval CLI resolves its authority from this table, not from `roles.rank`.
+
 #### 000006 — audit events
 
 ```sql
@@ -572,6 +615,9 @@ CREATE TABLE audit_events (
     tool_schema_version text   NULL,
     params_hash    bytea       NULL,
     params_summary jsonb       NULL,
+    phase          text        NOT NULL CHECK (phase IN ('intent','outcome')),
+    state          text        NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','succeeded','failed','denied','outcome_unknown','degraded')),
+    intent_id      uuid        NULL,       -- links an outcome row to its intent row
     decision       text        NOT NULL CHECK (decision IN ('allow','deny','confirmation_required','error')),
     rule_id        text        NULL,
     risk_class     text        NULL CHECK (risk_class IN ('read','write','destructive','admin')),
@@ -638,14 +684,17 @@ tenant through every unique index now would obscure the single-tenant invariant 
 
 ### 5.2 Audit partitioning, chain, and retention
 
-- Monthly range partitions on `occurred_at`, named `audit_events_YYYY_MM`, created two months
-  ahead by an idempotent `maintenance` job.
+- Monthly range partitions on `occurred_at`, named `audit_events_YYYY_MM`, **pre-created 12–24
+  months ahead in migrations** by the migration role. The runtime role has no DDL and no
+  `CREATE` privilege; a missing partition fails writes closed. Extending the range is a
+  migration performed at least 90 days before the last partition, with an alert at 60 days.
 - Retention is detach-then-drop: `DETACH PARTITION ... CONCURRENTLY` then `DROP TABLE`, each as
   its own statement because `DETACH ... CONCURRENTLY` cannot run in a transaction block.
-  Optional Parquet export to R2 first, recorded as a `maintenance` job, not an audit row.
-- **Caveat:** partitioning is introduced when volume justifies it (§10), not on day one. A
-  single table is simpler and faster for the first year of a small deployment; §8.4 rehearses
-  the conversion.
+  Export to the external sink (or Parquet in R2) first, then record the archive digest in a
+  signed checkpoint, then drop. A drop without a recorded checkpoint fails the maintenance run.
+- Partitioning is present from the **first migration**, not introduced later: the fail-closed
+  property and the retention test both depend on a missing partition failing the insert.
+  §8.4 documents the migration path for deployments that started unpartitioned before 1.0.
 - The chain is **per chain, not global**. `chain_id` names a writer (`server-1`); each writer
   takes a session advisory lock on `hashtext(chain_id)` at startup, reads the head
   (`ORDER BY seq DESC LIMIT 1`), and continues from it. Serializing one writer costs about one
@@ -710,8 +759,11 @@ retry policy, in one place, surviving a Redis flush.
   `import_batches_counts` makes drift fail loudly.
 - `strategy` and `allowed_error_count` mirror Magento's `validation-stop-on-errors` /
   `validation-skip-errors` and `allowedErrorCount` (F11); `declared_rows <= 5000` matches the
-  import cap in the threat model (§5.10). Resume is `Start` with the same `payload_sha256`; the
-  frozen `ImportService` has no resume method (§13, Q6).
+  import cap in the threat model (§5.10). Resume uses `ImportService.Resume(ctx, instanceID,
+  batchID)`. A `paused` batch is non-terminal and therefore still occupies
+  `import_batches_payload_uq`: an identical payload cannot start a second batch until the paused
+  one is resumed or canceled. If the artifact has expired, the batch must be canceled before a
+  new submission; it is never resumed by re-upload.
 
 ### 5.6 SKU mapping
 
@@ -741,18 +793,21 @@ retry policy, in one place, surviving a Redis flush.
 - Canonical parameter hash: RFC 8785 (JCS) canonical JSON of the arguments, then SHA-256, in
   `params_hash`. Any parameter change yields a different hash and the write fails with
   `confirmation_param_mismatch`.
-- Binding: `tool`, `instance_id`, `params_hash`, `requester_hash`, `scope`, and expiry are
-  covered by the HMAC that produces `confirmation_id`. The client receives the ID; the database
-  stores only `token_hash = SHA-256(confirmation_id)`, so a database read yields no usable token.
-- Nonce: random 128-bit, carried inside the signed token, stored only as `nonce_hash`. Redis
-  holds `m2m:confirm:{nonce_hash}` with a 300-second TTL and `SET NX` for the fast path. The
-  durable single-use gate is `UPDATE confirmation_tokens SET state='consumed', consumed_at=now()
-  WHERE id=$1 AND state='approved' AND expires_at > now()`; zero rows means `confirmation_used`
-  or `confirmation_expired`. Redis is an optimization: a flush must never enable a replay.
-- TTL 300 s by default, hard-capped at 900 s, matching the `expires_in_seconds: 900` the tool
-  catalog advertises. Self-approval is blocked twice: `approver_hash <> requester_hash` in the
-  table, and the service check that the approver's role rank is at least `operator`. Service
-  identities cannot mint confirmations for their own requests (AB-6).
+- Identity: `confirmation_id` is an opaque UUIDv7. The requester receives the ID; the database
+  stores `token_hash = SHA-256(confirmation_id)`, so a database read yields no usable token.
+  There is no nonce and no HMAC: approval is recorded by the separate human approval surface
+  (ADR-0014), not by a secret carried in the ID.
+- Binding: `tool`, `instance_id` or `binding_id`, `params_hash`, `requester_hash`, `scope`, and
+  expiry. Approval writes `approver_hash` and `approved_at`; the table rejects an approved or
+  consumed row without an approver.
+- Single use is enforced by compare-and-set: `UPDATE confirmation_tokens SET state='consumed',
+  consumed_at=now() WHERE id=$1 AND state='approved' AND expires_at > now()`; zero rows means
+  `confirmation_used` or `confirmation_expired`. Redis is an optimization and is not part of the
+  correctness argument.
+- TTL 300 s by default, hard-capped at 900 s. Self-approval is blocked by
+  `approver_hash <> requester_hash` and by the explicit `confirmation:approve` permission; role
+  rank is cosmetic and never consulted. Service identities cannot mint confirmations for their
+  own requests (AB-6).
 
 ### 5.8 Tool permissions
 
@@ -761,8 +816,10 @@ retry policy, in one place, surviving a Redis flush.
 - Scope `(role_name, tool_pattern, instance_id)`; `instance_id IS NULL` means all instances. An
   instance-scoped row grants within the caller's instance scope, and the token audience
   intersection still applies, so a database grant can never widen the route-derived scope.
-- Resolution order, first level with any row decides: (1) exact tool and instance, (2) exact tool
-  and global, (3) capability prefix and instance, (4) capability prefix and global. Within a level
+- Resolution order, first level with any row decides: (1) exact tool and binding, (2) exact tool
+  and instance, (3) exact tool and global, (4) capability prefix and binding, (5) capability prefix
+  and instance, (6) capability prefix and global. A unified tool resolves against its binding; a
+  binding grant never widens to its members. Within a level
   `deny` beats `allow`. Deterministic, explainable in one sentence, testable as a 4 × N × 3
   matrix.
 - Wildcards are `scope_kind='capability_prefix'` naming a real namespace (`magento.product`),
@@ -979,7 +1036,7 @@ Asynq, with ACLs `~m2m:*` and `~asynq:*`.
 | `m2m:idem:{instance}:{subject_hash}:{tool}:{key}` | string | 24 h | In-flight idempotency reservation | `DEL` on completion; PostgreSQL ledger remains |
 | `m2m:confirm:{nonce_hash}` | string | 300 s | Single-use nonce fast path | `DEL` on use; the DB CAS is authoritative |
 | `m2m:lock:{instance}:{entity_type}:{id}` | string (owner token) | 30 s | Advisory per-entity write serialization | `DEL` by owner token only |
-| `m2m:token:{sha256_jwt}` | string | remaining `exp` | Access token replay cache | TTL only |
+| `m2m:replay:{sha256_jwt}:{session_id}` | string | min(10 min, remaining `exp`) | Access token replay detection | TTL only |
 | `m2m:jwks:{sha256_issuer}` | string (JSON) | 10 min | JWKS cache | TTL; forced refresh at most once per 60 s on unknown `kid` |
 | `m2m:job:{job_id}:status` | string (JSON) | 2 s | Coalesces job-status polling | TTL only |
 | `m2m:dedupe:{session_id}:{tool}:{params_hash}` | string | 60 s | Identical-call loop suppression (AB-1) | TTL only |

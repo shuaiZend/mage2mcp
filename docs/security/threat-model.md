@@ -5,23 +5,23 @@
 | Field | Value |
 |---|---|
 | Document | Threat model for the mage2mcp MCP gateway |
-| Version | 1.0 |
-| Date | 2026-11-18 |
+| Version | 1.1 |
+| Date | 2026-11-19 |
 | Owner | Application security architect (maintainer on duty) |
-| Status | Draft for external security review |
+| Status | Revised after independent security and architecture review |
 | Review cadence | Full re-review every 6 months and at every minor release; mandatory re-review on any change to authentication, authorization, egress policy, the tool registry, or the audit schema |
 | Baseline | [Phase 0 research baseline](../development/research-baseline.md) (facts F1–F24) |
 | Related | [SECURITY.md](../../SECURITY.md); architecture decisions are recorded in `docs/adr/` |
 
-**Scope.** The gateway process and everything it owns: the Streamable HTTP transport and session handling, Cloudflare Access JWT verification, the tool registry and RBAC policy engine, the high-risk operation confirmation flow, module adapters for Magento 2 REST/GraphQL, Cloudflare GraphQL Analytics and Logpush-derived data, GA4 Data API, the job runner, the PostgreSQL and Redis data plane, the audit trail, egress control, and the build and release pipeline that produces the binary and container image.
+**Scope.** The gateway process and everything it owns: the Streamable HTTP transport and session handling, Cloudflare Access JWT and service-token assertion verification, the tool registry and RBAC policy engine, the high-risk operation confirmation flow and its human approval surface, module adapters for Magento 2 REST/GraphQL, Cloudflare GraphQL Analytics and Logpush-derived data, GA4 Data API, the job runner, the PostgreSQL and Redis data plane, the raw-log path (Logpush → R2 → loader → ClickHouse) and the credentials that reach it, the audit trail and its archive sink, egress control, and the build and release pipeline that produces the binary and container image.
 
-**Out of scope.** The security of Magento itself, the Cloudflare edge and Access service, the customer's IdP, Google's API infrastructure, the agent runtime and the language model that drives it, the operator's network, and the storefront. This document states what the gateway assumes about each of those and what it does when the assumption fails.
+**Out of scope.** The security of Magento itself, the Cloudflare edge and Access service, the customer's IdP, Google's API infrastructure, the agent runtime and the language model that drives it, the operator's network, and the storefront. The R2 and ClickHouse *services* are out of scope, but the operator's buckets, tables, credentials, and the loader that writes them are in scope (§5.16). This document states what the gateway assumes about each out-of-scope system and what it does when the assumption fails.
 
 **Reporting a vulnerability.** Do not open a public issue. Follow [SECURITY.md](../../SECURITY.md): private GitHub security advisory, acknowledgement within 3 business days, triage decision within 10 business days. Reporters may request credit in the advisory. A threat that this document missed is itself a valid report.
 
 ### Architectural assumptions to confirm
 
-These are design positions this model depends on. Each is an open question for the architecture review; if one changes, the affected sections must be re-reviewed.
+These are design positions this model depends on. Each is either decided in this revision or remains an open question for the architecture review; if one changes, the affected sections must be re-reviewed.
 
 | ID | Assumption | Affects |
 |---|---|---|
@@ -35,6 +35,8 @@ These are design positions this model depends on. Each is an open question for t
 | A8 | The gateway does not persist customer PII; it passes it through and stores only counts and hashes | §3 |
 | A9 | Tools are statically registered at build time; no runtime tool loading or plugin ABI | §5.1 |
 | A10 | The agent client is untrusted and may be fully attacker-controlled | §5.1, §7 |
+| A11 | Machine identities use Cloudflare Access service tokens: Access validates the client-id/secret pair at the edge and forwards only a signed `Cf-Access-Jwt-Assertion`; the gateway never reads the pair | §5.5, §6.1 |
+| A12 | The R2 bucket and ClickHouse table that hold raw request logs belong to the deployment's data plane and are in scope, even though the R2 and ClickHouse services themselves are not | TB-8, §5.16 |
 
 ## 2. System model
 
@@ -48,9 +50,12 @@ These are design positions this model depends on. Each is an open question for t
 | Customer and order data (names, emails, addresses, order lines) | Restricted | Upstream only; transit through gateway | Privacy breach, regulatory exposure, reputational damage |
 | Analytics data (sessions, acquisition, revenue aggregates, WAF events) | Confidential | Upstream, Redis cache | Commercial intelligence loss, competitive harm |
 | Write capability on Magento (products, MSI inventory, media, import) | Critical capability | Tool registry + Magento | Catalog corruption, price manipulation, storefront defacement, inventory fraud |
-| Audit trail | Confidential, integrity-critical | PostgreSQL, optional WORM sink | Loss of non-repudiation; an attacker operates without evidence |
+| Audit trail | Confidential, integrity-critical | PostgreSQL, external WORM sink (required for regulated deployments) | Loss of non-repudiation; an attacker operates without evidence |
+| Audit archive and signed checkpoints | Confidential, integrity-critical | Object-lock bucket or SIEM, offline media | Loss of the only tamper-evident copy of the trail; a forged checkpoint |
+| Raw HTTP request logs (IP, path, user agent, ray ID, WAF action) | Restricted | R2 archive, ClickHouse `raw_logs_http`, ingest manifest in PostgreSQL | Re-identification of visitors, exposure of internal paths and attack surface, contractual breach |
+| R2 S3-compatible credential and ClickHouse credentials | Restricted | Secret store, process memory | Read or delete of the raw-log archive; query access to every zone's logs |
 | Agent session identity (subject, role, instance grants, session ID) | Restricted | JWT claims, Redis session record | Confused deputy, cross-tenant access, privilege escalation |
-| Confirmation nonces and idempotency ledger | Confidential, integrity-critical | Redis, PostgreSQL | Replay of high-risk operations, duplicate writes |
+| Confirmation records (opaque IDs, approver hashes) and idempotency ledger | Confidential, integrity-critical | PostgreSQL, Redis fast path | Replay of high-risk operations, duplicate writes |
 | Tool schemas and descriptions | Public | Binary, `tools/list` response | Model behaviour manipulation, capability discovery by an attacker |
 
 ### 2.2 Actors
@@ -81,9 +86,12 @@ flowchart LR
     C["HTTP transport<br/>+ session"]
     D["Tool registry<br/>+ RBAC"]
     E["Module services<br/>magento / cf / ga4"]
+    W["Worker / log loader"]
   end
   subgraph Z4["Data plane"]
     G["PostgreSQL / Redis"]
+    I["R2 raw-log archive<br/>+ ClickHouse"]
+    J["Audit sink<br/>object lock / SIEM"]
     H["Config / secrets<br/>+ CI"]
   end
   subgraph Z5["Vendor"]
@@ -95,6 +103,8 @@ flowchart LR
   D -->|"TB-4"| E
   E -->|"TB-5"| F
   C -->|"TB-6"| G
+  W -->|"TB-8"| I
+  C -->|"TB-9"| J
   H -->|"TB-7"| C
 ```
 
@@ -103,23 +113,26 @@ flowchart LR
 | TB-1 | Agent client ↔ Cloudflare Access | Identity assertion, credentials, tool requests | IdP authentication, MFA/posture policy, Access application policy, edge rate limiting |
 | TB-2 | Cloudflare Access ↔ gateway | `Cf-Access-Jwt-Assertion`, client IP headers, request body | JWT signature and claim verification, origin lockdown, header allowlist |
 | TB-3 | Transport/session ↔ request pipeline | Session ID, JSON-RPC envelope, tool arguments | Session validation, JSON Schema validation, size and depth limits, canonicalisation |
-| TB-4 | Request pipeline ↔ registry/RBAC | Subject, role, instance, tool name, arguments | Default-deny policy decision, per-instance grants, confirmation gate |
+| TB-4 | Request pipeline ↔ registry/RBAC | Subject, role, instance or binding, tool name, arguments | Default-deny policy decision, per-instance and per-binding grants, confirmation gate |
 | TB-5 | Module services ↔ upstream APIs | Credentials, query parameters, responses | Egress allowlist, DNS pinning, response limits, typed decoding, provenance tagging |
 | TB-6 | Gateway ↔ PostgreSQL/Redis | Jobs, cache entries, rate-limit counters, audit records | Per-instance key namespacing, least-privilege DB roles, hash-chained audit |
 | TB-7 | Gateway ↔ operator config/secrets/CI | Secrets, instance definitions, policy, build artifacts | Secret references, redaction, dependency and workflow pinning, SBOM |
+| TB-8 | Log loader/worker ↔ R2 and ClickHouse | Raw log objects, query results, S3 and ClickHouse credentials | Per-zone bucket and prefix, object lock and versioning, read-only query role, fixed query templates bounded by zone and time, TLS |
+| TB-9 | Audit writer ↔ audit sink | Signed checkpoints, archived partitions, archive digests | Object-lock or immutable SIEM retention, write-only credential, signature verification on export, digest bound into the next checkpoint |
 
 ### 2.4 Request path (the thing being defended)
 
-1. Agent sends `POST /mcp` with `Cf-Access-Jwt-Assertion` (or service-token headers) and a JSON-RPC `tools/call`.
+1. Agent sends `POST /mcp` with a `Cf-Access-Jwt-Assertion` and a JSON-RPC `tools/call`.
 2. Edge terminates TLS, enforces Access policy, and forwards to the origin with Cloudflare headers.
-3. Gateway rejects the request unless it arrived from a Cloudflare address range and carries exactly one assertion header.
-4. JWT verifier checks algorithm, key, signature, `iss`, `aud`, `exp`, `nbf`, `iat`, and token size, producing `Subject{ID, Email, Groups, InstanceAudience}`.
+3. Gateway rejects the request unless it arrived from a Cloudflare address range and carries exactly one assertion header; `CF-Access-Client-Id`/`CF-Access-Client-Secret` are on the header denylist and are never read (§6.1).
+4. JWT verifier checks algorithm, key, signature, `iss`, `aud`, `exp`, `nbf`, `iat`, and token size, producing `Subject{ID, Email, Groups, IdentityClass, InstanceAudience}`.
 5. Session middleware validates `Mcp-Session-Id` and binds it to the subject.
 6. JSON-RPC decoding enforces size, depth, duplicate-key, and Unicode rules; the SDK's JSON Schema 2020-12 validation runs against the registered tool schema (F2).
-7. RBAC resolves `(subject, role, instance, tool)` to allow or deny and attaches the required permission and risk class.
-8. For risk class `write` or `destructive`, the confirmation gate verifies a single-use nonce bound to a hash of the canonical arguments.
-9. The module adapter builds the upstream request through the egress client and decodes the response into typed structs.
-10. The response is redacted by classification, wrapped with provenance, and returned; an audit record is appended before the response is written.
+7. RBAC resolves `(subject, role, instance or binding, tool)` to allow or deny and attaches the required permission and risk class.
+8. For risk class `write` or `destructive`, the confirmation gate verifies an approved, unexpired, single-use `confirmation_id` bound to a hash of the canonical arguments (§6.3).
+9. The audit writer appends an intent row (`decision=allow`, `phase=intent`, `state=pending`) and returns its `intent_id`; if the row cannot be written, the call is not executed (write and destructive fail closed, reads continue with a warning — §6.6).
+10. The module adapter builds the upstream request through the egress client and decodes the response into typed structs.
+11. The terminal audit row (`phase=outcome`, `state=succeeded|failed`, `intent_id`) is appended, the response is redacted by classification and wrapped with provenance, and returned.
 
 ## 3. Data classification
 
@@ -127,8 +140,8 @@ flowchart LR
 |---|---|---|
 | Public | Safe to disclose to anyone | Tool names and schemas, version string, module list, public catalog data |
 | Internal | Harmless in isolation, useful to an attacker in aggregate | Instance inventory, configuration shape, job metadata, tool-call counts, error-code distributions |
-| Confidential | Commercial harm if disclosed; no direct individual harm | Aggregate traffic and revenue, acquisition breakdowns, WAF rule sets, inventory levels, margin, Logpush-derived request metadata |
-| Restricted | Individual harm, contractual, or regulatory exposure; also all credentials | Customer name, email, phone, street address, order contents, IP addresses tied to a person, JWTs, Magento tokens, GA4 service-account keys, audit signing keys |
+| Confidential | Commercial harm if disclosed; no direct individual harm | Aggregate traffic and revenue, acquisition breakdowns, WAF rule sets, inventory levels, margin, Logpush-derived aggregates |
+| Restricted | Individual harm, contractual, or regulatory exposure; also all credentials | Customer name, email, phone, street address, order contents, IP addresses tied to a person, raw request logs, JWTs, Magento tokens, GA4 service-account keys, R2 and ClickHouse credentials, audit signing keys |
 
 Rules per class:
 
@@ -137,9 +150,11 @@ Rules per class:
 | Public | Full | Indefinite | Yes, all roles |
 | Internal | Structured fields; no free-form bodies | 90 days | Yes, all roles |
 | Confidential | Counts, hashes, and field names only; never values | Aggregates 13 months; raw cached values 15 minutes in Redis | Yes, role `viewer` and above, scoped to granted instances, row-capped |
-| Restricted | Never logged; only subject identifier hash, record count, and operation outcome | Not persisted by the gateway (0 days); upstream retention governs | Only role `analyst` and above with the `pii:read` grant; field-level redaction by default; never in bulk exports |
+| Restricted | Never in gateway logs; only subject identifier hash, record count, and operation outcome | Not persisted in PostgreSQL (0 days); raw request logs are the one exception and live only in R2 and ClickHouse under the retention in §5.16; upstream retention governs the rest | Only role `analyst` and above with the `pii:read` grant; field-level redaction by default; never in bulk exports |
 
-Never agent-visible under any role: credentials and tokens, audit signing keys, other tenants' identifiers, confirmation nonces belonging to another subject, raw upstream error bodies, and stack traces. Redaction happens in `internal/redact` at the module boundary before the response envelope is constructed, not in prompt text, because prompt-level instructions are not an enforcement mechanism.
+Never agent-visible under any role: credentials and tokens, audit signing keys, other tenants' identifiers, confirmation records belonging to another subject, raw upstream error bodies, and stack traces. Redaction happens in `internal/redact` at the module boundary before the response envelope is constructed, not in prompt text, because prompt-level instructions are not an enforcement mechanism.
+
+**Raw request logs.** Logpush records are Restricted and live only in R2 and ClickHouse, never in PostgreSQL. ClickHouse keeps 30 days hot; the R2 archive keeps 90 days by default and at most 12 months, deleted by a bucket lifecycle rule after the archive digest has been recorded in a signed checkpoint (§6.6). Only the `cloudflare.logs.*` tools reach them, through fixed templates bounded by zone and time range; IP columns are keyed-hashed at query time unless the caller holds `pii:read`; results are row-capped and never exported in bulk. Ingest metadata (manifest) is Internal.
 
 Restricted fields are masked by default (`a***@d***.com`, address reduced to city and country, phone to last two digits). Unmasking requires a tool flagged `pii:read`, an `analyst` or higher role, and an explicit per-request `pii_unmask: true` argument that is recorded in the audit record.
 
@@ -151,9 +166,9 @@ Severity combines impact and likelihood. **Impact**: Critical = cross-tenant res
 
 | Threat | STRIDE | Attack scenario | Impact | Likelihood | Mitigation | Detection | Test case |
 |---|---|---|---|---|---|---|---|
-| T-01 | Spoofing | Stolen service token or Access session cookie replayed from an attacker host; the token is a bearer credential with no device binding | High | Medium | Access session duration ≤ 8 h; IdP MFA and device posture required for human roles; service tokens per agent, rotated ≤ 90 days, mapped to a dedicated low-privilege role | Audit `sub` seen from a new ASN or country; Access authentication logs correlated with gateway audit | Replay a captured service token from a second host after rotation: expect 401 and an audit deny |
+| T-01 | Spoofing | A stolen Access assertion or session cookie is replayed from an attacker host; the assertion is a bearer credential with no device binding, and the gateway never sees the service-token secret that would let it bind the token to a host | High | Medium | Access validates service-token pairs at the edge and mints the assertion (§6.1); human sessions ≤ 8 h with IdP MFA and device posture; one service token per agent deployment, rotated ≤ 90 days, mapped to a dedicated low-privilege role; replay is detected per §6.1 | Audit `sub` seen from a new ASN or country, or a token used under multiple sessions from different networks (`token_replay_suspected`); Access authentication logs correlated with gateway audit | Replay a captured assertion from a second host: after rotation the edge mints nothing (401); before rotation the request is audited and alerted as `token_replay_suspected` (R-2) and the session is bound to the subject hash |
 | T-02 | Tampering | Local proxy or TLS-stripping middlebox rewrites tool arguments in flight | High | Low | TLS 1.2+ only, HSTS preload, no plaintext listener, Tunnel or authenticated origin pull so the origin certificate chain is not attacker-selectable | TLS version and cipher anomalies in edge logs; confirmation-hash mismatch audit events | TLS 1.0/1.1 handshake refused; MITM proxy certificate rejected by client and gateway |
-| T-03 | Repudiation | Operator denies having triggered a destructive inventory transfer | Medium | Low | Audit record binds subject, confirmation nonce, canonical argument hash, and upstream response hash; nonce is single-use | Audit hash-chain verification job; confirmation ledger reconciliation | Delete one audit row in a test database: chain verification fails and names the sequence number |
+| T-03 | Repudiation | Operator denies having triggered a destructive inventory transfer | Medium | Low | Audit rows bind subject, confirmation ID, canonical argument hash, and upstream response hash; the confirmation is single-use | Audit hash-chain verification job; confirmation ledger reconciliation | Delete one audit row in a test database: chain verification fails and names the sequence number |
 | T-04 | Information disclosure | Error page or redirect reflects the subject email or group list | Low | Low | Gateway error envelope carries a fixed code set and a request ID only; claims are never interpolated into responses or `Location` headers | Response-body scanner in CI over all error paths | Fuzz every handler error path; assert no `@`, no group name, no claim value in the body |
 | T-05 | Denial of service | Volumetric flood against the Access application or the origin | Medium | High | Edge WAF rate limiting, gateway concurrency cap (default 64 in-flight), per-subject token bucket, request body cap before JSON parse | Edge 429/503 rate, `http_requests_total{code}` on the gateway, saturation alert at 80 % of the concurrency cap | Load test at 10× expected RPS: 429 with `Retry-After`, p99 latency within SLO, no 5xx |
 
@@ -161,7 +176,7 @@ Severity combines impact and likelihood. **Impact**: Critical = cross-tenant res
 
 | Threat | STRIDE | Attack scenario | Impact | Likelihood | Mitigation | Detection | Test case |
 |---|---|---|---|---|---|---|---|
-| T-06 | Spoofing | Origin is reachable directly and accepts requests with no assertion, or with a self-signed JWT | Critical | Low | Origin accepts only Cloudflare ranges, verified at startup against the published list; Tunnel preferred; missing assertion is 401 before routing | Connection from a non-Cloudflare source triggers a critical alert; startup fails if the origin binds a public interface without Tunnel | Connect to the origin IP directly with a forged token: connection refused or 401, alert fired |
+| T-06 | Spoofing | Origin is reachable directly and accepts requests with no assertion, or with a self-signed JWT | Critical | Low | Origin accepts only Cloudflare ranges, verified at startup against the published list; Tunnel preferred; missing assertion is 401 before routing; the gateway refuses to start unless it can prove Access is in front (Tunnel-only bind or authenticated origin pull), except with `--dev-insecure-origin`, which binds loopback, disables writes, and reports `insecure_origin` in `/healthz` | Connection from a non-Cloudflare source triggers a critical alert; startup fails with `origin_not_locked` on a public bind without Tunnel | Start with a public bind and no Tunnel: startup fails; with the dev flag: loopback only, writes disabled, warning logged and shown in `/healthz`; direct connect with a forged token: 401 and alert |
 | T-07 | Tampering | Duplicate `Cf-Access-Jwt-Assertion` headers, `X-Forwarded-For` spoofing, or hop-by-hop header smuggling to desynchronise the verifier and the router | High | Medium | Exactly one assertion header required, else 400; `X-Forwarded-For` ignored entirely, `CF-Connecting-IP` used only after the Cloudflare-range check; explicit header allowlist copied into the request context | Request-validation reject counter by reason; alert on any non-zero `duplicate_assertion` | Send two assertion headers and a spoofed `CF-Connecting-IP`: 400, rate-limit key still resolves to the real subject |
 | T-08 | Information disclosure | `kid` is used to build a JWKS URL, so the attacker points the verifier at a key set they control | Critical | Low | `kid` is only a lookup key inside the cached JWKS fetched from the configured team domain; never concatenated into a URL; unknown `kid` triggers one rate-limited refetch | Alert when refetch rate exceeds 1 per minute or when the JWKS key set changes | Forge a token with `kid` containing `../../attacker` or a full URL: rejected, no outbound request made |
 | T-09 | Elevation of privilege | Token issued for instance A's Access application is presented to instance B's endpoint | High | Medium | One Access application (and therefore one `aud`) per instance; verifier compares `aud` against the instance resolved from the route; no default instance | Audit `aud_mismatch` denies; alert on any occurrence | Token with `aud` of instance A sent to instance B: 401 and audit deny naming both instances |
@@ -195,7 +210,7 @@ Severity combines impact and likelihood. **Impact**: Critical = cross-tenant res
 | T-22 | Spoofing | DNS or BGP manipulation points the Magento hostname at an attacker who serves a valid certificate for a lookalike domain | High | Low | Hostname allowlist per instance; certificate chain and hostname verified by Go's TLS stack; DNS resolved once, IP pinned for the connection, `ServerName` set explicitly; no `InsecureSkipVerify` anywhere, enforced by a lint rule | TLS verification failure counter; unexpected resolved-IP alert when the IP differs from the recorded baseline | Point the hostname at a test server with a self-signed certificate: request fails, no data sent |
 | T-23 | Tampering | Upstream returns malformed or attacker-shaped JSON, an HTML error page, or a truncated body that decodes into zero values | High | Medium | Typed decoding into structs; required fields validated; trailing data rejected; content-type allowlist (`application/json`, `application/graphql-response+json`); 8 MiB response cap via `io.LimitReader`; HTML detected and mapped to `upstream_protocol_error` | `upstream_decode_error` counter by module; alert on content-type mismatch | Mock upstream returns HTML 200 and truncated JSON: typed error, no partial result returned to the agent |
 | T-24 | Information disclosure | Prompt injection: product names, WAF log fields, or GA4 dimension values contain instructions that the model obeys | Critical | High | Capability separation (no tool both reads untrusted content and performs a write); write tools require human confirmation; untrusted strings neutralised and wrapped with provenance; see §5.1 | Audit flags responses containing untrusted content; sequence rule alerts on read-restricted → write within one session | Injection corpus in `testdata/injection/` executed end-to-end: no write tool call succeeds without confirmation |
-| T-25 | Denial of service | Expensive queries exhaust GA4 tokens (200 000/day, F20) or the Cloudflare GraphQL budget (300 per 5 min, F16), degrading human users of the same property | Medium | High | Per-tool cost estimates, per-subject daily budget, deployment-level reserve (25 % of the GA4 daily quota), query-shape allowlist, 10-concurrent GA4 semaphore, Cloudflare cap of 60 queries per 5 min | Token-consumption gauge per instance; alert at 70 % of budget; 429 with `Retry-After` | Replay a worst-case query 100 times: budget exhausted at the configured cap, subsequent calls 429, human traffic unaffected |
+| T-25 | Denial of service | Expensive queries exhaust GA4 tokens (200 000/day, F20) or the Cloudflare GraphQL budget (300 per 5 min, F16), degrading human users of the same property | Medium | High | Per-tool cost estimates, per-subject daily budget, deployment-level reserve (25 % of the GA4 daily quota), query-shape allowlist, 10-concurrent GA4 semaphore, Cloudflare cap of 150 queries per 5 min (half of the 300 allowance, F16) | Token-consumption gauge per instance; alert at 70 % of budget; 429 with `Retry-After` | Replay a worst-case query 100 times: budget exhausted at the configured cap, subsequent calls 429, human traffic unaffected |
 | T-26 | Elevation of privilege | SSRF: an agent supplies a URL that the gateway fetches, reaching the metadata service or an internal admin panel | Critical | Medium | No generic HTTP tool; the only URL-accepting tool is media import, restricted to a per-instance hostname allowlist; link-local, loopback, and RFC1918 blocked unless explicitly allowlisted; redirects refused across hosts; DNS pinning; see §5.7 | Blocked-egress counter with the attempted host; alert on any metadata-IP attempt | SSRF corpus: `169.254.169.254`, `[::1]`, `127.0.0.1.nip.io`, decimal and octal IP forms, `file://`, redirect chains — all rejected |
 
 ### TB-6 Gateway ↔ PostgreSQL/Redis
@@ -205,7 +220,7 @@ Severity combines impact and likelihood. **Impact**: Critical = cross-tenant res
 | T-27 | Information disclosure | Cache key collision or a key that omits the instance returns tenant A's cached response to tenant B | Critical | Medium | Key format `m2m:cache:{instance_or_binding}:{tool}:{sha256(canonical_args)}:{schema_version}:{authz_scope_hash}`; authorization scope (role, grants, row-cap, PII mode) is part of the key, and restricted fields (client IP) are stored as keyed hashes or not cached at all; instance is a mandatory struct field, not an optional prefix; cache values carry the instance and the key is re-checked on read | Cache hit-rate anomaly per instance; assertion in a debug build that value instance equals key instance | Property test over 10 000 random (instance, args) pairs asserting no cross-instance key equality |
 | T-28 | Tampering | Agent forges a job status, or resumes a cancelled job by writing to the job row | High | Low | Job state machine with an explicit transition table; clients never set status; every job read is scoped by instance and subject; cancel is terminal and checked before each upstream call | Audit `illegal_transition`; alert on any occurrence | Attempt every illegal transition: rejected with `illegal_transition`, state unchanged, audited |
 | T-29 | Spoofing | Stolen database or Redis credentials allow lateral movement and reading other tenants' jobs and audit records | High | Low | Separate least-privilege roles: gateway (DML on its tables), audit writer (INSERT only), migration (DDL, not used at runtime); TLS to both stores; credentials rotated ≤ 90 days; Redis ACL per key prefix | Auth-failure and new-source-IP alerts from the database; `pg_stat_activity` review | Connect with the audit writer role and attempt `UPDATE audit_event`: permission denied |
-| T-30 | Repudiation | Insider or compromised process deletes or edits audit rows to erase evidence | High | Low | Append-only table, `REVOKE UPDATE, DELETE` from the runtime role; SHA-256 hash chain over canonical records; Ed25519-signed daily checkpoint exported to an external sink | Daily chain verification; checkpoint signature verification; row-count gap detection | Tamper with one row: the verification job fails and identifies the sequence number; the signed checkpoint proves the original |
+| T-30 | Repudiation | Insider or compromised process deletes or edits audit rows, drops an unarchived partition, suppresses the verification job, or forges a checkpoint | High | Low | Append-only table, `REVOKE UPDATE, DELETE` from the runtime role and no DDL for it; SHA-256 hash chain over canonical records; Ed25519 checkpoint every 24 h signed by the audit writer with a key held in an operator-managed KMS/HSM or offline, never in the database; export to an object-lock sink, required for deployments handling Restricted data; a partition is dropped only after export and after its digest is recorded in a signed checkpoint (§6.6) | Daily chain verification; checkpoint signature verification; archive-vs-checkpoint reconciliation; row-count and partition-gap detection | Tamper with one row: verification fails and names the sequence number; drop an archived partition: verification still passes from the archive digest; drop an unarchived partition: the drop job refuses and verification fails |
 | T-31 | Denial of service | Flood of jobs or cache writes fills Redis and PostgreSQL, taking down all tenants | Medium | Medium | Bounded queues per instance, job TTL and retention, `maxmemory-policy allkeys-lru` for the cache namespace only, separate logical database for jobs, per-subject job cap, admission control returning 429 | Queue depth, memory, and eviction-rate metrics; alert on eviction of non-cache keys | Fill the queue with 10 000 jobs: admission control rejects beyond the cap, cache and audit remain available |
 
 ### TB-7 Gateway ↔ operator config, secrets, and CI
@@ -216,6 +231,13 @@ Severity combines impact and likelihood. **Impact**: Critical = cross-tenant res
 | T-33 | Tampering | Dependency or `go.sum` tampering, a typosquatted module, or a compromised GitHub Action | Critical | Low | `go mod verify` and `git diff --exit-code go.sum` in CI; `GOSUMDB=sum.golang.org` retained even behind a proxy; module-path allowlist review for new dependencies; Actions pinned to commit SHAs; `permissions: contents: read` default; no `pull_request_target` | Dependency-diff bot on every PR; `govulncheck` gate; SBOM diff between releases | Introduce a modified `go.sum` and an unpinned Action: CI fails on both |
 | T-34 | Information disclosure | A crash dump, a `%+v` of a config struct, or a metrics label exposes a token | High | Low | `GOTRACEBACK=crash` disabled, core dumps disabled in the container, no `%+v` on config types (lint rule), metrics labels limited to role, instance, tool, and status class | Panic handler logs a redacted stack; container runtime core-dump policy check | Force a panic in a config-loading path: output contains no secret, no email, no token |
 | T-35 | Repudiation | A release includes an unreviewed dependency and nobody can prove who introduced it | Medium | Low | Signed commits, protected tags, SLSA-style provenance attestation for the image, SBOM attached to the release, `go version -m` recorded | Provenance verification on release; SBOM diff review | Verify the release attestation and SBOM; a rebuild from the tagged commit reproduces the module list |
+
+### TB-8 Log loader/worker ↔ R2 and ClickHouse
+
+| Threat | STRIDE | Attack scenario | Impact | Likelihood | Mitigation | Detection | Test case |
+|---|---|---|---|---|---|---|---|
+| T-36 | Information disclosure | An over-broad R2 key, a leaked ClickHouse credential, or a query-tool bug exposes raw request logs for every zone: visitor IPs, paths, user agents, and WAF decisions | High | Medium | Per-zone bucket and prefix; R2 key scoped to one bucket and prefix (read-only loader, write-only exporter); ClickHouse `SELECT` role on `raw_logs_http` only; fixed query templates bounded by zone and time; IPs keyed-hashed unless `pii:read`; row caps and no bulk export | Object-listing alerts outside the expected prefix; query audit per subject and zone; egress volume on the R2 credential | A zone-A credential cannot list or read zone B; a query for a foreign zone or an unbounded window is rejected; 10 000-row result is capped |
+| T-37 | Tampering | An attacker with bucket or table write access deletes or rewrites the log window covering their intrusion, or the loader ingests a poisoned object | High | Low | Object lock (compliance mode) and versioning on the archive prefix; loader records `(bucket, key, etag)` and rejects keys outside the zone prefix; ingest manifest bound into the signed audit checkpoint | Manifest-vs-object digest check; checkpoint reconciliation; alert on a bucket-policy change that disables object lock | Delete or overwrite an object inside the lock window: refused; rewrite an object after ingest: detected by the manifest digest; a policy change that disables object lock alerts |
 
 ## 5. Required threat analyses
 
@@ -234,7 +256,7 @@ Each analysis gives the attack path, the mitigations with their location, and th
 
 **Mitigations.** `internal/registry` — capability separation: no tool both consumes untrusted content and performs a write, so a read cannot chain into a write in one call. `internal/registry/descriptions.go` — descriptions are compiled constants, so `tools/list` cannot carry upstream text (T-21). `internal/confirm` — the write executes only against the exact parameter hash a human approved, so an injected call cannot ride an approval for a different call (§6.3). `internal/redact/untrusted.go` — strip C0/C1 controls, zero-width characters, and bidi overrides (U+202A–U+202E, U+2066–U+2069); cap fields at 512 bytes; wrap values in a fence whose delimiter is a per-response random nonce, so an injected fence cannot close it. `internal/mcp/envelope.go` — every result carries `provenance: {source, trust: "untrusted", retrieved_at}` plus a constant notice; this is advisory to the model and is not counted as an enforcement control. Egress (§5.7) and default masking (§3) bound what a successful injection can reach.
 
-**Proof.** `test/security/injection_test.go` runs a 40-case corpus (direct instruction, role-play, tool-call JSON, base64, RTL override, zero-width, fence escape, cross-tool exfiltration) through a stub model that always complies: no write tool call reaches the module layer without a confirmation minted by a different subject, and no request leaves the allowlisted hosts.
+**Proof.** `tests/security/injection_test.go` runs a 40-case corpus (direct instruction, role-play, tool-call JSON, base64, RTL override, zero-width, fence escape, cross-tool exfiltration) through a stub model that always complies: no write tool call reaches the module layer without a confirmation minted by a different subject, and no request leaves the allowlisted hosts.
 
 ### 5.2 Tool parameter injection
 
@@ -246,7 +268,7 @@ Each analysis gives the attack path, the mitigations with their location, and th
 2. Type confusion (`"pageSize":"1e309"`, `1.0000001` for an integer), prototype-like keys (`__proto__`, `constructor`, `prototype`) aimed at downstream JS or template evaluation, and 200 MB argument objects to exhaust memory before validation.
 3. Unicode confusables and bidi (`а` Cyrillic for `a`, `sku\u202Egnp.exe`), and traversal in SKU or attribute code (`..%2f..%2fV1%2fadmin`), since SKUs may legitimately contain characters that need escaping.
 
-**Mitigations.** `internal/mcp/strictjson.go` — token-level pre-parse scan rejects duplicate keys, keys outside the schema, and the prototype denylist before any struct is populated; `json.Decoder` with `UseNumber`, explicit `int64` conversion, range and precision checks, `NaN`/`Inf` rejection, 1 MiB `http.MaxBytesReader`, 32-level depth cap, 1 000-element array cap. `internal/registry/schema.go` — `additionalProperties: false`, `maxLength`, `maxItems`, `minimum`/`maximum`, and `pattern` on every field; a CI test asserts no tool schema has an unconstrained string or number. `internal/modules/magento/ident.go` — SKU and attribute code must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`; all non-ASCII is rejected before URL construction. Path building escapes each segment and then asserts the result still starts with `/V1/` and contains no `..` or `%2e` after one decode. Identifiers are never normalised on any write path or authorization decision. The single carve-out is SKU mapping: a stored, normalized key may *propose* a GA4 itemId to Magento SKU mapping at confidence below 1.0, and a human or explicit configuration must confirm it before it is used.
+**Mitigations.** `internal/mcp/strictjson.go` — token-level pre-parse scan rejects duplicate keys, keys outside the schema, and the prototype denylist before any struct is populated; `json.Decoder` with `UseNumber`, explicit `int64` conversion, range and precision checks, `NaN`/`Inf` rejection, 1 MiB `http.MaxBytesReader`, 32-level depth cap, 1 000-element array cap. `internal/registry/schema.go` — `additionalProperties: false`, `maxLength`, `maxItems`, `minimum`/`maximum`, and `pattern` on every field; a CI test asserts no tool schema has an unconstrained string or number. `internal/modules/magento/ident.go` — SKU and attribute code must match `^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$` (the single grammar shared by the JSON Schema and the Go validator); all non-ASCII is rejected before URL construction. Path building escapes each segment and then asserts the result still starts with `/V1/` and contains no `..` or `%2e` after one decode. Identifiers are never normalised on any write path or authorization decision. The single carve-out is SKU mapping: a stored, normalized key may *propose* a GA4 itemId to Magento SKU mapping at confidence below 1.0, and a human or explicit configuration must confirm it before it is used.
 
 **Proof.** `internal/mcp/strictjson_fuzz_test.go` (Go fuzz, 10-minute CI budget) plus a 60-case table test asserting a stable error code per case; `internal/modules/magento/ident_test.go` rejects 40 traversal and confusable inputs; a 200 MB body is rejected at 413 before allocation.
 
@@ -263,7 +285,7 @@ Each analysis gives the attack path, the mitigations with their location, and th
 
 **Mitigations.** `internal/auth/roles.go` — `role = map[verifiedSubject][idpGroup]` from operator config, cached and reloaded on change; unknown group means no role; no role is read from the body or from `custom` claims. `internal/httpx/route.go` — instance derives from route and `aud`; a disagreeing body `instance` is a deny; `Subject.Grants` is a set intersected by `Decide`. `internal/registry/registry.go` — `Register` panics on a missing permission or risk class, `Decide` denies unknown tools, and a CI test asserts a mapping for all four roles. `internal/config/instance.go` — per-instance credential references; the egress layer asserts the outbound host belongs to the instance being served. Write tools are absent unless the operator enables the write profile at startup, which is an audited config event.
 
-**Proof.** `internal/rbac/matrix_test.go` is a full role × tool × instance matrix (4 roles × N tools × 3 instances) with an expected decision per cell; `test/security/priv_esc_test.go` attempts body-injected roles, foreign instances, and direct calls to unmapped tools, asserting 403 with the documented code each time.
+**Proof.** `internal/rbac/matrix_test.go` is a full role × tool × instance matrix (4 roles × N tools × 3 instances) with an expected decision per cell; `tests/security/priv_esc_test.go` attempts body-injected roles, foreign instances, and direct calls to unmapped tools, asserting 403 with the documented code each time.
 
 ### 5.4 Multi-tenant data leakage
 
@@ -278,7 +300,7 @@ Each analysis gives the attack path, the mitigations with their location, and th
 
 **Mitigations.** `internal/cache/keys.go` — `m2m:cache:{instance_or_binding}:{tool}:{sha256(JCS(args))}:{schema_version}:{authz_scope_hash}`; responses are shaped before caching and never shared across authorization scopes; `instance` is a required field of the key struct and the value is re-checked on read. `internal/modules/magento/client.go` — client and credential live in an instance-scoped struct; there is no process-global upstream client. `internal/store/query.go` — the builder refuses to emit a statement against a tenant table without an `instance_id` predicate, enforced by a test over every repository method. `internal/httpx/errors.go` — upstream bodies never reach the agent; errors map to `{code, message, request_id}` from a fixed table, with detail logged at debug and redacted. Cross-instance lookups return 404, not 403, so IDs cannot be probed.
 
-**Proof.** Property test over 10 000 (instance, args) pairs asserting key uniqueness per instance; `test/security/tenant_isolation_test.go` runs the full tool surface as tenant A against tenant B fixtures and asserts 404/403 with no B data in any response body or header.
+**Proof.** Property test over 10 000 (instance, args) pairs asserting key uniqueness per instance; `tests/security/tenant_isolation_test.go` runs the full tool surface as tenant A against tenant B fixtures and asserts 404/403 with no B data in any response body or header.
 
 ### 5.5 JWT forgery
 
@@ -291,9 +313,9 @@ Each analysis gives the attack path, the mitigations with their location, and th
 3. `kid` injection (a URL or path fragment the verifier fetches) or JWKS poisoning (following a redirect, or trusting `jku`/`x5u`).
 4. Audience mismatch (a token for another Access application or team accepted because only the signature is checked), unbounded clock skew, and replay within the token lifetime after theft.
 
-**Mitigations.** `internal/auth/jwt.go`, behind the SDK's `auth.TokenVerifier` (F2): a single allowlisted algorithm asserted at startup against the JWKS, with `none` and HMAC rejected before signature verification; `kid` used only as a lookup key, never in a URL; JWKS fetched from the configured team domain over TLS with redirects disabled and a 3 s timeout, ignoring `jku`/`x5u`/`jwk`; exact `iss`, `aud` equal to the instance's Access application audience, required `exp`, `nbf`/`iat` honoured with at most 60 s skew, `exp - iat` ≤ 24 h, 8 KiB token cap; token hash held in Redis for the remaining lifetime when above 60 s; exactly one assertion header, and the raw header never logged.
+**Mitigations.** `internal/auth/jwt.go`, behind the SDK's `auth.TokenVerifier` (F2): an allowlist of `RS256` and `ES256` asserted at startup against the JWKS key types, with `none` and HMAC rejected before signature verification; `kid` used only as a lookup key, never in a URL; JWKS fetched from the configured team domain over TLS with redirects disabled and a 3 s timeout, ignoring `jku`/`x5u`/`jwk`; exact `iss`, `aud` equal to the instance's Access application audience, required `exp`, `nbf`/`iat` honoured with at most 60 s skew, `exp - iat` ≤ 24 h, 8 KiB token cap; exactly one assertion header, and the raw header never logged. Replay is detected on the `(token hash, session id)` pair defined in §6.1, not by single-use rejection.
 
-**Proof.** `internal/auth/jwt_test.go` is a table of 30 forged tokens (none, HS256 with the public key, wrong `kid`, `kid` as URL, wrong `iss`, wrong `aud`, expired by 61 s, `nbf` + 10 min, 9 KiB token, duplicate headers), each yielding 401 with the expected reason code; `test/security/jwks_test.go` runs a malicious JWKS server that redirects and rotates keys mid-test.
+**Proof.** `internal/auth/jwt_test.go` is a table of 30 forged tokens (none, HS256 with the public key, wrong `kid`, `kid` as URL, wrong `iss`, wrong `aud`, expired by 61 s, `nbf` + 10 min, 9 KiB token, duplicate headers), each yielding 401 with the expected reason code; `tests/security/jwks_test.go` runs a malicious JWKS server that redirects and rotates keys mid-test.
 
 ### 5.6 Token leakage
 
@@ -322,7 +344,7 @@ Each analysis gives the attack path, the mitigations with their location, and th
 
 **Mitigations.** `internal/egress/allowlist.go` — no tool accepts a URL in v0.x; media import takes bytes, not a URL. Outbound hosts come only from validated instance configuration and module constants. An empty allowlist disables the affected instance rather than defaulting to open. `internal/egress/ipguard.go` — reject loopback, link-local (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`), unspecified, multicast, and RFC1918 unless the instance explicitly allowlists a private CIDR, normalising 4-in-6 before the check. `internal/egress/dial.go` — resolve once, validate every address, then dial the validated IP with `tls.Config.ServerName` set to the hostname, so a second resolution cannot change the target. Redirects are refused across hosts and capped at 3 hops for same-host; port 443 only, no userinfo. Instance base URLs are validated at startup with the same policy, so a metadata address fails startup. Every other module builds its URL from constants plus escaped parameters.
 
-**Proof.** `test/security/ssrf_test.go` runs a 50-URL corpus against the media-import tool and a local "metadata" listener: zero connections reach the listener; a DNS-rebinding harness with a TTL-0 resolver proves the connection goes to the validated IP; `internal/egress/ipguard_test.go` covers the 4-in-6 and integer-encoding cases.
+**Proof.** `tests/security/ssrf_test.go` runs a 50-URL corpus against every tool that accepts a string, plus instance base-URL configuration and a local "metadata" listener: no tool accepts a URL, and zero connections reach the listener; a DNS-rebinding harness with a TTL-0 resolver proves the connection goes to the validated IP; `internal/egress/ipguard_test.go` covers the 4-in-6 and integer-encoding cases.
 
 ### 5.8 File upload attacks
 
@@ -335,9 +357,9 @@ Each analysis gives the attack path, the mitigations with their location, and th
 3. Formula injection: an exported customer name starting `=`, `+`, `-`, or `@` executes `=HYPERLINK(...)` or DDE when the analyst opens the file in Excel.
 4. Filename traversal (`../../app/etc/env.php`), content-type spoofing (`text/csv` that is PHP or HTML), or a zip/XLSX with a bomb or macro.
 
-**Mitigations.** `internal/modules/magento/import.go` — strict base64 (no whitespace, no URL-safe alphabet), `io.LimitReader` at 8 MiB after decode, reject on any length mismatch; CSV with a fixed field count, 64-column cap, 32 KiB field cap, 5 000-row cap; JSON import validated against the same schema as REST payloads. Format allowlist is `text/csv` and `application/json` only — zip, xlsx, and xls are rejected as `unsupported_format` in v1, which removes the bomb and macro surface entirely. `internal/redact/csv.go` — export cells beginning `=`, `+`, `-`, `@`, tab, or CR are prefixed with `'`, protecting the analyst's spreadsheet. Filenames are never used as paths: the upstream name is a UUID plus the validated extension, and the client name is stored as metadata only after stripping `/`, `\`, `..`, NUL, control characters, and Windows reserved names. `http.DetectContentType` must agree with the declared type and extension; a mismatch is a reject, not a coercion. Import requires `operator` plus a confirmation whose binding includes the payload hash.
+**Mitigations.** `internal/modules/magento/import.go` — strict base64 (no whitespace, no URL-safe alphabet), `io.LimitReader` at 8 MiB after decode, reject on any length mismatch; CSV with a fixed field count, 64-column cap, 32 KiB field cap, 5 000-row cap; JSON import validated against the same schema as REST payloads. Format allowlist is `text/csv`, `application/json`, and `.xlsx` through a bounded converter (64 MiB decompressed, 10 000 zip entries, shared-strings cap, macros rejected, external links ignored, DTDs and entities disabled); `.xls`/OLE2 and generic zip archives are rejected as `unsupported_format`. gzip CSV is rejected unless `import.allow_gzip` is set, and then the same post-inflation cap applies. The surface is **bounded, not removed**. `internal/redact/csv.go` — export cells beginning `=`, `+`, `-`, `@`, tab, or CR are prefixed with `'`, protecting the analyst's spreadsheet. Filenames are never used as paths: the upstream name is a UUID plus the validated extension, and the client name is stored as metadata only after stripping `/`, `\`, `..`, NUL, control characters, and Windows reserved names. `http.DetectContentType` must agree with the declared type and extension; a mismatch is a reject, not a coercion. Import requires `operator` plus a confirmation whose binding includes the payload hash.
 
-**Proof.** `test/security/upload_test.go` covers a zip bomb, a 2 GB base64 stream, a 100 000-column CSV, traversal filenames, `text/csv` containing `<?php`, and a formula-injection export round-trip, each asserting a specific rejection code or a neutralised cell; a fuzz target on the CSV row reader runs with a 10-minute budget.
+**Proof.** `tests/security/upload_test.go` covers a zip bomb, an XLSX macro workbook, a gzip bomb, a 2 GB base64 stream, a 100 000-column CSV, traversal filenames, `text/csv` containing `<?php`, and a formula-injection export round-trip, each asserting a specific rejection code or a neutralised cell; a fuzz target on the CSV row reader runs with a 10-minute budget.
 
 ### 5.9 Malicious images
 
@@ -351,7 +373,7 @@ Each analysis gives the attack path, the mitigations with their location, and th
 
 **Mitigations.** `internal/media/image.go` — `image.DecodeConfig` before decode, rejecting above 40 MP or 10 MiB and capping decoded bytes at 160 MiB; format allowlist of JPEG, PNG, WebP, GIF with **SVG rejected in v1** and documented as such, because Magento permits SVG upload and it is an XSS vector. Decode and re-encode to a canonical form, which removes EXIF, ICC profiles, trailing polyglot payloads, and comments, while the SHA-256 of the original bytes goes into the audit record. Magic bytes must agree with declared type and extension. The gateway never serves image bytes back to the agent, returning metadata and the Magento media URL instead. Decoding uses the standard library plus `golang.org/x/image`, pinned, with `govulncheck` in CI.
 
-**Proof.** `test/security/image_test.go` with a 40 001 × 40 001 PNG header, a GIF/PHP polyglot, an SVG with a script, a JPEG with GPS EXIF, and a truncated JPEG: each is rejected or re-encoded with EXIF absent, asserted by parsing the output; a fuzz target covers decode-and-re-encode.
+**Proof.** `tests/security/image_test.go` with a 40 001 × 40 001 PNG header, a GIF/PHP polyglot, an SVG with a script, a JPEG with GPS EXIF, and a truncated JPEG: each is rejected or re-encoded with EXIF absent, asserted by parsing the output; a fuzz target covers decode-and-re-encode.
 
 ### 5.10 API abuse
 
@@ -364,9 +386,9 @@ Each analysis gives the attack path, the mitigations with their location, and th
 3. Magento: `inventory/bulk-product-source-transfer` with 50 000 items, or `pageSize=100000` deep pagination; a nested GraphQL query if raw GraphQL were ever accepted.
 4. Amplification: one import call that starts a long job which the agent then polls in a tight loop.
 
-**Mitigations.** `internal/modules/{ga4,cloudflare}/query.go` — no raw query passthrough (A4): queries are parameterised templates over enumerated dimensions and metrics, which removes the cost-attack surface rather than pricing it. `internal/quota/cost.go` — each template carries a static token estimate and a request exceeding the caller's remaining budget is rejected before the upstream call. `internal/quota/budget.go` — per-subject and per-instance daily budgets, a 25 % deployment reserve for humans, and a Cloudflare cap of 60 queries per 5 min against the 300 allowance. A GA4 semaphore of 4 against the 10-request limit prevents monopolising the property. Caps: `pageSize` ≤ 200, 5 000 rows per call, 100 items per bulk operation, 5 000 import rows; larger work requires a job with operator approval. Job status has a 2 s minimum poll interval and returns cached status without an upstream call.
+**Mitigations.** `internal/modules/{ga4,cloudflare}/query.go` — no raw query passthrough (A4): queries are parameterised templates over enumerated dimensions and metrics, which removes the cost-attack surface rather than pricing it. `internal/quota/cost.go` — each template carries a static token estimate and a request exceeding the caller's remaining budget is rejected before the upstream call. `internal/quota/budget.go` — per-subject and per-instance daily budgets, a 25 % deployment reserve for humans, and a Cloudflare cap of 150 queries per 5 min against the 300 allowance (the stricter of the configured and documented limits wins). A GA4 semaphore of 4 against the 10-request limit prevents monopolising the property. Caps: `pageSize` ≤ 200, 5 000 rows per call, 100 items per bulk operation, 5 000 import rows; larger work requires a job with operator approval. Job status has a 2 s minimum poll interval and returns cached status without an upstream call.
 
-**Proof.** `test/security/quota_test.go` replays worst-case templates to exhaustion and asserts 429 with `Retry-After` at the cap, an untouched human reserve, and no upstream call after exhaustion; a load test with 50 concurrent agents asserts the GA4 semaphore never exceeds 4.
+**Proof.** `tests/security/quota_test.go` replays worst-case templates to exhaustion and asserts 429 with `Retry-After` at the cap, an untouched human reserve, and no upstream call after exhaustion; a load test with 50 concurrent agents asserts the GA4 semaphore never exceeds 4.
 
 ### 5.11 Rate limit bypass
 
@@ -380,7 +402,7 @@ Each analysis gives the attack path, the mitigations with their location, and th
 
 **Mitigations.** `internal/ratelimit/window.go` — key on the verified subject, not the IP and not the session: `m2m:ratelimit:{instance}:{subject_hash}:{class}` in Redis with an atomic Lua sliding window across replicas; subject, instance, and deployment keys are all evaluated and the strictest applies. IP is only a secondary dimension, taken from `CF-Connecting-IP` after the Cloudflare-range check. Session rotation is irrelevant because the counter is bound to the subject. Class limits are configuration, not code: read 60/min burst 20, export 5/min, write 10/min, import 1 per 10 min, admin 5/min. Limiter unavailability fails closed for write and import and fails open with 10 % audit sampling for reads (§8, R-6).
 
-**Proof.** `test/security/ratelimit_test.go`: 1 000 requests with rotating `X-Forwarded-For`, session IDs, and `CF-Connecting-IP` values converge on one counter; a two-process integration test asserts both replicas share one Redis budget.
+**Proof.** `tests/security/ratelimit_test.go`: 1 000 requests with rotating `X-Forwarded-For`, session IDs, and `CF-Connecting-IP` values converge on one counter; a two-process integration test asserts both replicas share one Redis budget.
 
 ### 5.12 Task duplication and replay
 
@@ -392,9 +414,9 @@ Each analysis gives the attack path, the mitigations with their location, and th
 2. The same `confirmation_id` is submitted twice, performing the write twice; the same CSV is submitted twice, doubling inventory adjustments.
 3. SSE resume re-delivers a result the client already acted on; two agents race on the same SKU.
 
-**Mitigations.** `internal/jobs/idempotency.go` — every write tool accepts an optional `idempotency_key` (UUIDv4, validated), scoped to `(instance, subject, tool)`, stored in PostgreSQL with a unique index and 24 h TTL; a replay returns the stored result with `replayed: true`. `internal/jobs/ledger.go` — a fingerprint of `(instance, tool, sha256(JCS(args)))` is recorded for every write, and an identical fingerprint inside 10 minutes without an idempotency key is rejected as a suspected duplicate. `internal/confirm/store.go` — `SETNX` on the nonce, 300 s TTL, deleted on use, second submission `confirmation_used`. After a create, the module reads the entity back and compares the written fields; a mismatch marks the job `suspect` and raises an audit alert. Event IDs are monotonic per session and signed, so a resume only replays unacknowledged events. A 30 s Redis lock on `{instance}:{entity_type}:{id}` serialises concurrent writes to one object.
+**Mitigations.** `internal/jobs/idempotency.go` — every write tool accepts an optional `idempotency_key` (UUIDv4, validated), scoped to `(instance, subject, tool)`, stored in PostgreSQL with a unique index and 24 h TTL; a replay returns the stored result with `replayed: true`. `internal/jobs/ledger.go` — a fingerprint of `(instance, tool, sha256(JCS(args)))` is recorded for every write, and an identical fingerprint inside 10 minutes without an idempotency key is rejected as a suspected duplicate. `internal/confirm/store.go` — `sha256(confirmation_id)` keys a `confirmation_tokens` row; consumption is a compare-and-set from `approved` to `consumed` guarded by the parameter hash, the identity, and `expires_at`, and a second submission returns `confirmation_used` (§6.3). After a create, the module reads the entity back and compares the written fields; a mismatch marks the job `suspect` and raises an audit alert. Event IDs are monotonic per session and signed, so a resume only replays unacknowledged events. A 30 s Redis lock on `{instance}:{entity_type}:{id}` serialises concurrent writes to one object.
 
-**Proof.** `test/security/replay_test.go`: same request twice with one key (one effect, second response `replayed`), same confirmation twice (`confirmation_used`), same CSV twice (row count unchanged), two concurrent creates for one SKU (one wins, one 409), all under the race detector.
+**Proof.** `tests/security/replay_test.go`: same request twice with one key (one effect, second response `replayed`), same confirmation twice (`confirmation_used`), same CSV twice (row count unchanged), two concurrent creates for one SKU (one wins, one 409), all under the race detector.
 
 ### 5.13 Task state tampering
 
@@ -408,7 +430,7 @@ Each analysis gives the attack path, the mitigations with their location, and th
 
 **Mitigations.** `internal/jobs/state.go` — explicit transition table (`queued → running → {succeeded, failed, canceled}`, `running → canceling → canceled`); any other transition is rejected and status is never client-writable. `internal/jobs/store.go` — every query includes `instance_id` and, for non-admin roles, `subject_hash`; a foreign job returns 404. Cancellation is cooperative, re-read from the database (not a cache) before each upstream call and between batches. Each result row stores a payload hash and the audit sequence number of its terminal transition; a mismatch is flagged. The runtime role has no `DELETE` on job rows; transitions are applied with a compare-and-set `UPDATE` guarded by the transition table and an optional trigger, so a stale writer cannot overwrite a terminal state.
 
-**Proof.** `test/security/job_state_test.go`: exhaustive illegal-transition matrix, cross-tenant job read, cancel-then-resume, and forged result hash, each asserting rejection and an audit record.
+**Proof.** `tests/security/job_state_test.go`: exhaustive illegal-transition matrix, cross-tenant job read, cancel-then-resume, and forged result hash, each asserting rejection and an audit record.
 
 ### 5.14 Untrusted third-party API responses
 
@@ -423,7 +445,7 @@ Each analysis gives the attack path, the mitigations with their location, and th
 
 **Mitigations.** `internal/upstream/response.go` — only 2xx with an allowlisted content type is decoded, 3xx is never followed for API calls, and 4xx/5xx map to a closed error set carrying only the status class. Limits: 8 MiB `io.LimitReader`, 32-level depth, 1 000-element arrays, duplicate-key and trailing-data rejection. Typed decoding treats a missing required field as an error, ignores unknown fields but counts them as schema drift, and maps `<!DOCTYPE`, `<html`, or `<?xml` to `upstream_protocol_error` with the body discarded and never logged. `internal/log/sanitize.go` — all string attributes are JSON-encoded with control characters escaped, and upstream bodies are logged at no level, only their hash and length. Upstream-derived strings carry `trust: untrusted` into the envelope (§5.1).
 
-**Proof.** `test/security/upstream_test.go` with a mock returning HTML 200, a 40 MB body, 10 000-deep JSON, duplicate keys, and embedded newlines: each yields a typed error, no body in the response, and a single-line structured log entry.
+**Proof.** `tests/security/upstream_test.go` with a mock returning HTML 200, a 40 MB body, 10 000-deep JSON, duplicate keys, and embedded newlines: each yields a typed error, no body in the response, and a single-line structured log entry.
 
 ### 5.15 Dependency supply chain attacks
 
@@ -440,6 +462,21 @@ Each analysis gives the attack path, the mitigations with their location, and th
 
 **Proof.** CI negative tests: an unlisted module fails the allowlist job, a modified `go.sum` fails verification, an Action referenced by tag fails the policy job, and a release without an SBOM fails publication; a quarterly exercise submits a typosquat PR to confirm reviewers catch it.
 
+### 5.16 Raw-log stores (R2 and ClickHouse)
+
+**Severity: High.** The raw request log is the largest concentration of Restricted data in the deployment and sits outside PostgreSQL's controls: an R2 bucket, a ClickHouse table, and the credentials that reach them. Related: T-36, T-37, TB-8.
+
+**Attack path**
+
+1. The R2 S3-compatible credential leaks through a log line, a CI artifact, or an over-broad token, and the attacker lists and downloads every archived object: visitor IPs, paths, user agents, ray IDs, and WAF decisions for every zone.
+2. A ClickHouse credential, or a query-tool bug, lets a caller read another zone's rows or run an unbounded query that returns raw IPs to an agent.
+3. An attacker with write access to the bucket or table deletes or rewrites the objects covering their intrusion, so the archive contradicts the audit trail and the analytics answers.
+4. The loader trusts a poisoned object — a crafted key or a rewritten file — and ingests attacker-shaped rows that later feed a "no attacks" answer.
+
+**Mitigations.** `internal/logs` — one bucket and prefix per zone, no cross-zone listing; object lock (compliance mode) and versioning on the archive prefix, so an object cannot be overwritten or deleted inside the retention window; the loader records `(bucket, key, etag)` in the ingest manifest and rejects an object whose key is outside the zone prefix. Credentials: an R2 key scoped to the one bucket and prefix, read-only for the loader and write-only for the audit exporter, never the Cloudflare API token; a ClickHouse role with `SELECT` on `raw_logs_http` only for query tools and `INSERT` only for the loader. Queries come from fixed templates bounded by zone and time range (no caller SQL); IP columns are keyed-hashed at query time unless the caller holds `pii:read`; results are row-capped and never exported in bulk. TLS to both stores, credentials rotated ≤ 90 days. The ingest manifest is bound into the signed audit checkpoint, so a deleted or rewritten log window is detectable against the chain.
+
+**Proof.** `tests/security/rawlog_test.go`: a credential scoped to zone A cannot list or read zone B; an object outside the prefix is quarantined; a delete or overwrite inside the object-lock window fails; a ClickHouse query for a foreign zone or an out-of-range window is rejected; a 10 000-row query is capped; an object rewritten after ingest is detected by the manifest digest; a bucket-policy change that disables object lock raises an alert.
+
 ## 6. Control design summary
 
 ### 6.1 Authentication
@@ -449,7 +486,7 @@ Cloudflare Access issues the JWT; the gateway is the relying party. Verification
 | Check | Rule | Failure |
 |---|---|---|
 | Ingress | Request must arrive from a Cloudflare address range; origin not publicly routable (A2) | 401 `origin_untrusted`, critical alert |
-| Header | Exactly one `Cf-Access-Jwt-Assertion`; service tokens use `CF-Access-Client-Id`/`CF-Access-Client-Secret` and are converted to a subject by the same verifier | 400 `duplicate_assertion` |
+| Header | Exactly one `Cf-Access-Jwt-Assertion`; `CF-Access-Client-Id`/`CF-Access-Client-Secret` are never read by the gateway and are dropped by the header allowlist | 400 `duplicate_assertion` / 401 `missing_assertion` |
 | Size | ≤ 8 KiB before parsing | 401 `token_too_large` |
 | Algorithm | Single allowlisted algorithm, asserted against the JWKS at startup; `none` and HMAC rejected | 401 `alg_not_allowed` |
 | Key | `kid` lookup in the cached JWKS only; no URL from `kid`; no `jku`/`x5u`/`jwk` | 401 `unknown_kid` |
@@ -458,14 +495,30 @@ Cloudflare Access issues the JWT; the gateway is the relying party. Verification
 | Audience | Equals the Access application audience of the instance resolved from the route (A1) | 401 `bad_audience` |
 | Time | `exp` required and in the future; `nbf` and `iat` honoured with ≤ 60 s skew; `exp - iat` ≤ 24 h | 401 `token_expired` / `token_not_yet_valid` |
 | Type | Expected credential kind (`app` for service tokens, `org` for humans) `[U]` values to confirm against a live token | 401 `bad_type` |
-| Replay | Token hash in Redis for the remaining lifetime when > 60 s | 401 `token_replayed` |
-| Identity | `sub` and `email` mapped to a role through the configured group map; unmapped means no role | 403 `no_role` |
+| Replay | The pair `(sha256(assertion), session id)` is recorded in Redis for 10 minutes or the remaining `exp`, whichever is shorter; a repeated pair is allowed, including concurrent requests. A token hash seen under multiple sessions from different ASNs or countries, or under more than 4 sessions in the window, is audited `token_replay_suspected` | No rejection on replay alone; audit and alert. A session presented with a different subject is 404 (T-11) |
+| Identity | `sub` and `email` mapped to a role through the configured group map; an unmapped `sub` has no role | 403 `no_role` |
 
 JWKS caching: 10-minute TTL, single-flight refresh, at most one refresh per 60 s on unknown `kid`, negative cache 30 s, stale-while-error up to 1 hour, 3 s fetch timeout, redirects disabled. The team domain and audience are startup configuration, never request-derived.
 
+#### Service-token identities
+
+Access is the only component that validates a service token. The client sends `CF-Access-Client-Id`/`CF-Access-Client-Secret` to the edge; Access validates the pair against the service token configured for the instance's Access application and forwards the request with a signed `Cf-Access-Jwt-Assertion`. The gateway accepts only the assertion: the pair is on the header denylist and is never parsed, stored, compared, or logged. The gateway therefore holds no service-token secret and has no secret-comparison path with its own timing, storage, or rotation bugs (F-03).
+
+| Property | Rule |
+|---|---|
+| `sub` | The Access service-token client ID (the `CF-Access-Client-Id` value), recorded as the service identity; `common_name` is kept for operator display |
+| `aud` | The audience of the instance's Access application; compared with the instance resolved from the route, exactly as for a human (T-09) |
+| Identity class | `service`, from the `type` claim; a service identity never inherits a human role and can never be mapped to `admin` |
+| Instance scope | From the route and `aud`, intersected with the configured grants of that service identity; no request field can widen it |
+| Mapping | `sub` must match a `service_identities` entry in operator configuration (role plus instance or binding grants). An unmapped `sub` is 403 `no_role`; a mapped one gets exactly its configured role |
+| Rotation | An Access-side operation: a new client secret is issued and the old one disabled at the edge. The gateway needs no restart and holds no state to rotate |
+| Revocation | Disabling the service token at the edge stops assertion issuance on the next request; no gateway cache extends it |
+
+**Origin lockdown.** The gateway refuses to start unless it can establish that Access is in front of it: the listener is bound only to a Cloudflare Tunnel socket, or the origin requires authenticated origin pull. It exits with `origin_not_locked` otherwise. The single exception is `--dev-insecure-origin`, which requires a loopback bind, disables the write profile, logs a startup warning, and reports `insecure_origin: true` in `/healthz`; the flag is rejected when any write tool is enabled or when `MAGE2MCP_ENV=production`.
+
 ### 6.2 Authorization
 
-Default deny. `rbac.Decide(subject, instance, tool) → (Decision, RuleID, error)` is the only authorization entry point, and the dispatcher hands the handler a `Decision` token rather than a bare context, so a handler cannot run without a decision.
+Default deny. `rbac.Decide(subject, scope, tool) → (Decision, RuleID, error)` is the only authorization entry point, where `scope` is an instance or a binding (ADR-0014), and the dispatcher hands the handler a `Decision` token rather than a bare context, so a handler cannot run without a decision.
 
 | Capability | viewer | analyst | operator | admin |
 |---|---|---|---|---|
@@ -480,24 +533,29 @@ Default deny. `rbac.Decide(subject, instance, tool) → (Decision, RuleID, error
 | Job read (own) | yes | yes | yes | yes |
 | Job read (instance-wide) | no | no | yes | yes |
 | Instance and role configuration | no | no | no | yes |
-| Approve another subject's confirmation | no | no | yes | yes |
+| Approve another subject's confirmation (`confirmation:approve`) | no | no | yes | yes |
 
 Instance scope is intersected with the token `aud`; admin does not gain data-read rights (separation of duties); an admin cannot approve their own operation; write capability requires the write profile enabled at startup, itself an audited config event.
 
+`roles.rank` is display ordering only. It is never read by `rbac.Decide`, by the confirmation gate, or by any other authorization path, so renumbering a role for UI reasons cannot change who may approve. Approval authority is the explicit `confirmation:approve` permission (AR-26); a unit test changes every rank and asserts that every decision is unchanged.
+
 ### 6.3 High-risk operation confirmation
 
-Two-step, content-bound, single use, and requiring a different human.
+Two-step, content-bound, single use, and requiring a different human, as decided in [ADR-0014](../adr/0014-confirmation-approval-and-bindings.md). The requester never receives an approval secret.
 
-1. The write tool returns `confirmation_required` with `confirmation_id = base64url(HMAC-SHA256(K_confirm, JCS({v, tool, instance, params_hash, requester, exp, nonce})))[:32]` and a human-readable diff of the intended effect.
-2. A human with role ≥ `operator` and a **different** `sub` calls `platform.confirm`; the gateway recomputes the HMAC, checks `exp` (300 s), checks the requester differs, and `SETNX` the nonce in Redis.
-3. The requester re-submits with the ID; the gateway recomputes the parameter hash over the actual arguments and compares it with the approved hash, returning `confirmation_param_mismatch` on any difference.
-4. The nonce is deleted on use, a repeat is `confirmation_used`, and both request and execution are audited with the confirmation ID, parameter hash, approver, and upstream response hash.
+1. The write tool is called without a confirmation. The gateway validates the parameters, computes `params_hash = SHA-256(JCS(args))`, and stores a `confirmation_tokens` row keyed by `sha256(confirmation_id)` with `(requester_hash, tool, instance_id or binding_id, params_hash, expires_at, state='pending')`. It returns `confirmation_required` with the opaque `confirmation_id` (UUIDv7) and a summary of the validated parameters, and never marks the request approved.
+2. A human opens the approval surface: the `mage2mcp-admin` CLI or a human-only Access-protected endpoint, never an MCP tool reached through the agent. The surface lists pending confirmations with the summary and hash. Approval requires the `confirmation:approve` permission, an unexpired request, a matching hash, and `approver_hash <> requester_hash`.
+3. The approver approves or rejects; the row moves to `approved`, or to `revoked` when rejected, recording `approver_hash` and the decision time.
+4. The requester re-submits the same parameters with `confirmation_id`. The gateway verifies state, hash, identity, tool, instance or binding, TTL (default 300 s, hard cap 900 s), and single use, then consumes the row in one compare-and-set and executes.
+5. Consumption and rejection are audited with both identities, the parameter hash, and the upstream response hash.
 
-Service-token agents cannot mint confirmations for their own requests, which is what makes the human step real rather than ceremonial. Canonical JSON is RFC 8785 (JCS), so the hash is stable across languages and versions.
+Outstanding pending confirmations are capped per subject and per instance (default 5) so the approval surface cannot be flooded. If the approval surface is unavailable, destructive operations fail closed. Service-token agents cannot approve; an approval is valid only for the exact parameter hash, so an injected call cannot ride a human approval for a different call (§5.1). Canonical JSON is RFC 8785 (JCS), so the hash is stable across languages and versions.
 
 ### 6.4 Secret management
 
 Secrets are referenced as `secret://<name>` in instance config and resolved at startup by `internal/secret`, from the platform secret manager (via workload identity), a mounted file with mode 0400 owned by the runtime user, or environment variables (the weakest option, flagged by a startup warning). No secret is written to a config file, a log, a metric label, or an MCP response. Values live in a type that redacts itself in every formatting path, and rotation re-resolves on SIGHUP with an overlap window. Magento integration credentials are per instance and ACL-scoped to the minimum resources the enabled tools require; OAuth 1.0a consumer secrets and bearer tokens are both treated as secrets; Adobe IMS clients (F12) use the refresh flow with a 60 s pre-expiry refresh and a single-flight lock.
+
+The inventory also holds the R2 S3-compatible access key and secret (scoped to one archive bucket and prefix: read-only for the loader, write-only for the audit exporter) and the ClickHouse credential (a read-only role for query tools and an insert-only role for the loader). Neither is the Cloudflare API token, both are per deployment, and both rotate ≤ 90 days. The audit signing key is not in this inventory: it is held in the operator's KMS/HSM or offline and is never loaded by the database (§6.6).
 
 ### 6.5 Egress control
 
@@ -505,11 +563,19 @@ All outbound traffic goes through `internal/egress`, the only package allowed to
 
 ### 6.6 Audit logging
 
-Recorded for every tool call: `event_id` (UUIDv7), `ts` (RFC3339Nano, UTC), `request_id`, `session_id`, `subject_hash` (SHA-256 of `sub` with a server pepper), `role`, `instance`, `tool`, `tool_schema_version`, `params_hash` (JCS + SHA-256), `params_summary` (allowlisted non-restricted fields only), `decision` and `rule_id`, `confirmation_id`, `risk_class`, `upstream_status_class`, `response_bytes`, `response_hash`, `error_code`, `duration_ms`, `prev_hash`, `entry_hash`.
+Recorded for every tool call: `event_id` (UUIDv7), `ts` (RFC3339Nano, UTC), `request_id`, `session_id`, `subject_hash` (SHA-256 of `sub` with a server pepper), `identity_class`, `role`, `instance` or `binding`, `tool`, `tool_schema_version`, `params_hash` (JCS + SHA-256), `params_summary` (allowlisted non-restricted fields only), `decision` and `rule_id`, `phase` (`intent` or `outcome`), `state` (`pending`, `succeeded`, `failed`, `denied`), `intent_id`, `confirmation_id`, `risk_class`, `upstream_status_class`, `response_bytes`, `response_hash`, `error_code`, `duration_ms`, `prev_hash`, `entry_hash`.
 
 Never recorded: any credential or token, the `Cf-Access-Jwt-Assertion` header, cookies, request or response bodies for restricted data, customer identifiers beyond a keyed hash, file contents, image bytes, and free-form upstream error text.
 
-Tamper evidence: `entry_hash = SHA-256(canonical(record) || prev_hash)`; an Ed25519-signed checkpoint every 24 h goes to an external sink; the runtime DB role holds `INSERT` only on `audit_event`; a verification job recomputes the chain hourly and alerts on the first divergence. Without an external sink the deployment is marked "single-node audit" in `/healthz` and R-3 applies.
+**Two-row append protocol (AR-09).** Before any upstream call the writer appends an intent row (`decision=allow`, `phase=intent`, `state=pending`) and only then does the handler run. The terminal row (`phase=outcome`, `state=succeeded|failed`) is appended after execution and references `intent_id`; both rows are immutable and both sit in their writer's hash chain (`prev_hash` is always the previous row in that chain, never a per-request link). A denied call writes a single row with `decision=deny`, `phase=outcome`, `state=denied`, because nothing executes. If the intent row cannot be written, the call is not executed: write and destructive tools fail closed with `internal_error`, reads proceed with a warning (ADR-0012). If the terminal row cannot be written after a successful upstream write, the gateway returns the result with `audit_state=pending` and a correlation ID rather than an error, because an error would invite the duplicate retry AR-09 describes; the pending intent row is the evidence that the write was authorized and may have completed. A crash between the rows leaves a `pending` intent older than the execution timeout, which the recovery job flags as `outcome_unknown`, reconciles by reading the target entity back from upstream (the intent row's `params_summary` carries the entity key), and appends the terminal row. A write therefore cannot succeed without a durable intent row, and a lost terminal row is detectable and repairable rather than invisible.
+
+**Failure policy (ADR-0012).** Fail closed for `write` and `destructive` at the intent row: without a durable intent there is no execution, so no write is performed whose audit record could not be written. After execution the terminal row is a completion record, not the gate; if it cannot be written the operation is reported as it happened (`audit_state=pending`), because reporting a successful upstream write as a failure is what causes the duplicate retry. Reads fail open with a warning: the call proceeds with `audit_state=degraded`, a sampled local record is kept, and the hourly reconciliation reports the gap. Every failed insert is retried from a local write-ahead spool.
+
+**Sink, key custody, and signing.** The external sink is required for any deployment that handles Restricted data or is subject to a regulatory retention regime; without it the deployment is marked `single_node_audit` in `/healthz` and R-3 applies. The sink is an object-lock bucket (R2 or S3) or a SIEM with immutable retention, written with a write-only credential. Checkpoints are Ed25519-signed by the audit writer process, with the private key in an operator-managed KMS/HSM, or offline and loaded only for the daily signing step by the security officer: never in PostgreSQL, never on the gateway host's disk, and never in the same trust domain as the database. The database cannot sign and does not hold the key, so an attacker with database rights cannot forge a checkpoint.
+
+**Retention and partitions (AR-19).** Retention is 365 days by default. Monthly partitions are pre-created 12–24 months ahead by the migration role; the runtime role has no DDL and no `CREATE`. A partition is dropped only after it has been exported to the sink and its archive digest recorded in a signed checkpoint, so a dropped partition stays verifiable and a legitimate retention drop cannot be mistaken for tampering. Extension is a documented manual procedure: a migration adding the next 12 months, run as `mage2mcp_migrate` at least 90 days before the last partition. A startup check and a daily check alert when fewer than 60 days remain. Because there is no `DEFAULT` partition, a missing partition fails the insert, which fails writes closed — the reason the window is 12–24 months and monitored.
+
+Tamper evidence: `entry_hash = SHA-256(canonical(record) || prev_hash)`; an Ed25519-signed checkpoint every 24 h goes to the sink; the runtime DB role holds `INSERT` only on `audit_event`; a verification job recomputes the chain hourly, reconciles archived partitions against their recorded digests, and alerts on the first divergence.
 
 ### 6.7 Rate limiting
 
@@ -522,10 +588,19 @@ Tamper evidence: `entry_hash = SHA-256(canonical(record) || prev_hash)`; an Ed25
 | Subject, admin | `...:admin` | 5/min | 429 |
 | Instance, total | `{instance}:all` | 600/min | 429 |
 | Instance, GA4 tokens | `{instance}:ga4:tokens` | 25 % of 200 000/day reserve (F20) | 429 with reset time |
-| Instance, Cloudflare | `{instance}:cf:queries` | 60 per 5 min against the 300 allowance (F16) | 429 |
+| Instance, Cloudflare | `{instance}:cf:queries` | 150 per 5 min against the 300 allowance (F16); strictest of configured and documented limits wins | 429 |
 | Deployment, concurrency | in-process semaphore | 64 in-flight, 4 GA4 (F20) | 503 with `Retry-After` |
 
 Implementation: Redis Lua sliding window, atomic across replicas; counters survive session rotation because the key is the subject, not the session. Limiter unavailability fails closed for write and import and fails open with sampling for reads (R-6).
+
+### 6.8 Capability registration
+
+`core/datasource.DataSource` exposes `Capabilities(ctx, instanceID) ([]Capability, error)`, so availability is resolved per instance rather than per module: Magento Open Source lacks import, a Cloudflare plan lacks bot fields, and a GA4 property may lack ecommerce. The registry applies one rule (AR-11):
+
+- A tool is registered when at least one enabled instance reports its capability. If no enabled instance reports it, the tool is absent from `tools/list`.
+- A call against an instance that does not report the capability returns `unsupported_capability`, naming the capability and the instance. The error is not retryable and no upstream request is made.
+
+Registering the tool and failing per instance is chosen over per-caller hiding because `tools/list` must be stable and caller-independent (T-21, A9): per-caller visibility would leak the instance inventory, make the tool list depend on the caller's grants, and invalidate the startup hash. The cost is that an agent may see a tool one of its instances cannot use; the typed error says which. Capabilities are re-read on instance reload; a capability lost at runtime removes the tool only when no other instance still reports it, and emits `notifications/tools/list_changed`. `write_profile` is an AND-gate with the RBAC write permission, not an alternative to it.
 
 ## 7. Abuse-case catalog for AI agents
 
@@ -536,7 +611,7 @@ Implementation: Redis Lua sliding window, atomic across replicas; counters survi
 | AB-3 | Cost amplification | Repeated wide GA4 or Cloudflare queries to burn quota or inflate spend | Static cost model, per-subject daily budget, 25 % human reserve, query-shape allowlist (§5.10) | Budget consumption gauge; alert at 70 % |
 | AB-4 | Exfiltration via tool chaining | Read restricted data, then write it somewhere the attacker can read: a product description, an image URL, a WAF rule comment | No tool writes free-form text to an attacker-readable location without confirmation; the media-import host allowlist blocks URL exfiltration; restricted fields are masked by default | Sequence rule: restricted read followed by any write in one session raises an alert |
 | AB-5 | Prompt injection persistence | Injected instructions stored in a product name or order comment, then replayed to a later agent session | Ingress neutralisation, provenance tagging, capability separation, confirmation (§5.1) | Stored-content scanner on write paths; audit flag `untrusted_persisted` |
-| AB-6 | Human-in-the-loop bypass | The agent mints its own confirmation, reuses an approval for different parameters, or gets a benign-looking operation approved and then changes it | Confirmation requires a different human `sub`; the HMAC binds the exact parameter hash; nonce single use; 300 s TTL (§6.3) | `confirmation_param_mismatch` and self-approval attempts are audited and alerted |
+| AB-6 | Human-in-the-loop bypass | The agent mints its own confirmation, reuses an approval for different parameters, or gets a benign-looking operation approved and then changes it | The requester receives an opaque `confirmation_id`, never an approval secret; approval needs a different human `sub` with `confirmation:approve`; the ID is bound to the exact parameter hash; single use; 300 s default / 900 s cap (§6.3) | `confirmation_param_mismatch` and self-approval attempts are audited and alerted |
 | AB-7 | Instruction smuggling through file names | A CSV filename or a SKU encodes instructions the model reads from a listing | Filenames are generated, never used as paths; listing fields are neutralised and length-capped | Rejection counter by reason |
 | AB-8 | Recursive self-invocation | The agent feeds one tool's output into another in a cycle that grows data volume | Response and row caps plus a 50 MiB cumulative byte budget per session | Cumulative bytes per session; alert at 80 % |
 
@@ -545,8 +620,8 @@ Implementation: Redis Lua sliding window, atomic across replicas; counters survi
 | ID | Risk | Why it remains | Rationale for acceptance | Review trigger |
 |---|---|---|---|---|
 | R-1 | Prompt injection can still influence a model that ignores provenance and capability separation | Model behaviour is outside the gateway's control; MCP has no instruction/data boundary | Structural controls remove the write path and the exfiltration path; a successful injection yields read data the caller was already entitled to, at worst | Any new write tool, any new free-form text field returned to agents |
-| R-2 | A stolen Access JWT is usable until it expires; the gateway cannot revoke it | Bearer tokens; revocation lives in Cloudflare Access | Session duration ≤ 8 h, the replay cache, and audit correlation limit the window | Access adds token binding, or the gateway adds proof-of-possession |
-| R-3 | Audit and job data share one PostgreSQL instance, so its compromise loses both | Operational simplicity for a self-hosted open-source project | The hash chain plus daily signed checkpoint detects tampering even if the database is lost; a WORM sink is optional | Any deployment handling regulated data, or a hosted offering |
+| R-2 | A stolen Access JWT is usable until it expires; the gateway cannot revoke it | Bearer tokens; revocation lives in Cloudflare Access | Session duration ≤ 8 h; the replay cache records `(token hash, session id)` and alerts when a token appears under multiple sessions from different ASNs or countries; audit correlation limits the window | Access adds token binding, or the gateway adds proof-of-possession |
+| R-3 | Audit and job data share one PostgreSQL instance, so its compromise loses both | Operational simplicity for a self-hosted open-source project | The hash chain plus the daily signed checkpoint detects tampering even if the database is lost; a sink is required for regulated deployments, and without it the deployment is marked `single_node_audit` | Any deployment handling regulated data, or a hosted offering |
 | R-4 | Agent quota consumption degrades human users of the same GA4 property or Cloudflare account | Quotas are shared at the vendor level (F20, F16) | Budgets and the 25 % reserve bound the damage; the property is shared by design | A production incident where humans are blocked |
 | R-5 | Magento integration credentials are powerful; ACL scoping depends on correct setup | Magento ACL granularity and operator discipline | Documented requirement to use an ACL-scoped integration user; per-instance credentials limit blast radius | Adobe IMS migration (F12) or a Magento ACL change |
 | R-6 | Rate limiting fails open for read tools when Redis is unavailable | Availability of read paths during a cache outage | Read abuse is bounded by upstream quotas and response caps; write and import fail closed | Observed read-path abuse during a Redis outage |
@@ -554,6 +629,7 @@ Implementation: Redis Lua sliding window, atomic across replicas; counters survi
 | R-8 | No reproducible build yet; provenance is attestation-based | Go build reproducibility across toolchains is not guaranteed | SBOM plus signed provenance plus `go version -m` give a verifiable module list | Reproducible builds become practical, or a supply-chain incident occurs |
 | R-9 | An egress allowlist with a wildcard suffix widens SSRF exposure | Operator configuration choice | Startup warns on any wildcard, and the IP policy still blocks metadata and loopback | A wildcard appears in a shipped example config |
 | R-10 | Operators may add a module that accepts SVG or spreadsheets, bypassing the v1 restriction | Extension by operators is out of scope | The core stays on the narrow path; the extension guide repeats the controls | The first third-party module is published |
+| R-11 | The raw-log stores (R2, ClickHouse) are separate services with their own credentials and availability, so the gateway cannot enforce their access control | Logpush is opt-in and the stores are outside the process | Per-zone prefixes, object lock, read-only query roles, and the ingest manifest bound to the audit checkpoint limit exposure and make tampering detectable (§5.16) | Logpush is enabled, or a raw-log tool ships |
 
 ## 9. Security testing plan
 
@@ -582,8 +658,14 @@ Every mitigation maps to a test that fails the Phase 6 gate if the mitigation re
 | T-16, T-29 | CI policy + integration | Config lint on two agents sharing one secret reference; audit-writer role denied `UPDATE audit_event` | Blocking |
 | T-14, T-15, §5.12 | Race | 200 concurrent streams under `-race`; concurrent creates for one SKU; duplicate confirmation | Nightly |
 | T-33, T-35 | CI policy | Unlisted module, edited `go.sum`, Action pinned to a tag, release without an SBOM | Blocking |
+| T-36, T-37, §5.16 | Integration + adversarial | Cross-zone read with a zone-A credential; object delete or overwrite inside object lock; object rewritten after ingest; unbounded or foreign-zone query | Blocking |
+| T-01, T-06, §6.1 | Integration | Public bind without Tunnel refuses startup; `--dev-insecure-origin` binds loopback, disables writes, reports `insecure_origin`; service assertion maps to `sub`/`aud`/role, unmapped `sub` is 403 | Blocking |
+| Replay rule, §6.1 | Integration | 50 concurrent requests with one token and one session all succeed; a token used under a second session from a different ASN is audited and alerted, not rejected | Blocking |
+| T-30, §6.6, AR-19 | Integration | Migrate from empty: partitions exist 24 months ahead; insert beyond the window fails closed; alert at 60 days remaining; dropping an archived partition keeps verification green, an unarchived one is refused | Blocking |
+| AR-11, §6.8 | Unit | Capability matrix per instance; a tool with no capable instance is absent; a call against an incapable instance returns `unsupported_capability` | Blocking |
+| AR-26, §6.2 | Unit | Change every `roles.rank`; every decision unchanged; `confirmation:approve` is the only approval gate | Blocking |
 
-Adversarial tests live in `test/security/` with fixtures in `testdata/`; each test names the threat ID it proves, and a meta-test asserts that every threat ID in this document appears in at least one test name.
+Adversarial tests live in `tests/security/` with fixtures in `testdata/`; each test names the threat ID it proves, and a meta-test asserts that every threat ID in this document appears in at least one test name.
 
 ## 10. References
 
@@ -605,23 +687,22 @@ Adversarial tests live in `test/security/` with fixtures in `testdata/`; each te
 | Repository state | Working tree at commit `6d6560e` | Only the research baseline was present in `docs/` when this review began, hence the assumptions in §1 |
 | MCP security best practices | modelcontextprotocol.io, 2025-11-25 docs | Page exists and covers confused deputy, token passthrough, SSRF, session hijacking, scope minimisation `[V-docs]` |
 | Cloudflare Access JWT validation | developers.cloudflare.com | Page exists `[V-docs]`; the exact claim set and signing algorithm must be re-confirmed against a live token before Phase 6 `[U]` |
+| Service-token assertion claims | developers.cloudflare.com, not a live token | `sub` = client ID, `common_name` = token name, and `aud` = application audience are the documented shape; confirm against a live service-token assertion before Phase 1 `[U]` |
 | GA4 and Cloudflare quota figures | F16, F20 in the baseline | Used verbatim; not independently re-verified for this document |
 
 ## Open questions
 
 1. Is A1 correct — one deployment, many instances — or is the deployment single-tenant with instance routing only for convenience? This changes §5.4 from Critical to High and simplifies T-27.
 2. Does Cloudflare Access issue a distinct audience per application, so per-instance `aud` binding (T-09) is enforceable? Verify against a live token before Phase 6.
-3. Are service tokens the intended machine identity for agents, or will agents authenticate as human users through the IdP? T-16 and §6.3 depend on the answer.
-4. Does the deployment target allow an external audit sink (S3 with object lock, or a SIEM)? If not, R-3 applies to every deployment.
-5. Is a write profile acceptable as a startup flag, or must writes be enabled per instance and per tool?
-6. Should `platform.confirm` be an MCP tool at all, or an out-of-band CLI or HTTP endpoint? The latter is stronger against AB-6 but adds an operator dependency.
+3. Does every deployment target allow an object-lock audit sink? Regulated deployments now require one (§6.6); without it the deployment is marked `single_node_audit` and R-3 applies.
+4. Is a write profile acceptable as a startup flag, or must writes be enabled per instance and per tool?
 
 ## Decision record
 
 | ADR | Decision | Status |
 |---|---|---|
-| ADR-0001 (proposed) | Cloudflare Access is the only authentication mechanism; the gateway is a pure relying party and implements no local login | Pending architecture review |
-| ADR-0002 (proposed) | Capability separation: no tool both consumes untrusted content and performs a write | Pending architecture review |
-| ADR-0003 (proposed) | High-risk operations require confirmation from a different human subject, bound to the canonical parameter hash | Pending architecture review |
-| ADR-0004 (proposed) | Single egress package with per-instance host allowlist and DNS pinning; no generic HTTP tool | Pending architecture review |
-| ADR-0005 (proposed) | Audit trail is append-only with a hash chain and a daily signed checkpoint | Pending architecture review |
+| [ADR-0004](../adr/0004-cloudflare-log-storage.md) | Raw request logs live in R2 and ClickHouse, never PostgreSQL; the R2 bucket and loader are in scope (§5.16) | Accepted |
+| [ADR-0006](../adr/0006-authentication.md) | Cloudflare Access is the only authentication mechanism; the gateway is a pure relying party; human and service identity classes are separate | Accepted |
+| [ADR-0012](../adr/0012-observability-and-audit.md) | Audit is append-only; fail closed for write and destructive tools, fail open with a warning for reads; 365-day default retention | Accepted |
+| [ADR-0014](../adr/0014-confirmation-approval-and-bindings.md) | Confirmation uses an opaque `confirmation_id` approved on a human-only surface, never an approval secret returned to the requester; 300 s default, 900 s cap; bindings authorize unified tools | Accepted |
+| [ADR-0015](../adr/0015-job-enqueue-and-retry.md) | Jobs are enqueued through `core/jobs.Enqueuer`; retry is gated on `Retryable` and the tool's `idempotentHint` | Accepted |
