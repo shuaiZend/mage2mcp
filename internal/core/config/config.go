@@ -248,8 +248,20 @@ func (c Config) Validate() error {
 	}
 	seenBindings := map[string]bool{}
 	instanceIDs := map[string]string{}
-	for _, m := range []Module{c.Modules.Magento, c.Modules.Cloudflare, c.Modules.GA4} {
+	owner := map[string]string{}
+	for name, m := range map[string]Module{
+		"magento": c.Modules.Magento, "cloudflare": c.Modules.Cloudflare, "ga4": c.Modules.GA4,
+	} {
 		for _, inst := range m.Instances {
+			if inst.ID == "" {
+				continue
+			}
+			// Instance ids are global: audit rows, jobs, and bindings refer to
+			// them without a module qualifier, so a duplicate would be ambiguous.
+			if previous, exists := owner[inst.ID]; exists && previous != name {
+				problems = append(problems, fmt.Sprintf("instance id %q is used by both %s and %s", inst.ID, previous, name))
+			}
+			owner[inst.ID] = name
 			instanceIDs[inst.ID] = inst.ID
 		}
 	}

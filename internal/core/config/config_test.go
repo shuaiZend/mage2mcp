@@ -161,3 +161,17 @@ func TestBindingValidation(t *testing.T) {
 		t.Fatal("duplicate binding accepted")
 	}
 }
+
+func TestInstanceIDsMustBeGloballyUnique(t *testing.T) {
+	cfg := Default()
+	cfg.Auth.Enabled = false
+	cfg.Modules.Magento = Module{Enabled: true, Instances: []Instance{{ID: "shared", Credential: "x"}}}
+	cfg.Modules.GA4 = Module{Enabled: true, Instances: []Instance{{ID: "shared", Credential: "x"}}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("cross-module duplicate instance id accepted")
+	}
+	cfg.Modules.GA4.Instances[0].ID = "giztop"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("distinct ids rejected: %v", err)
+	}
+}

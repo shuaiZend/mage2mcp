@@ -83,8 +83,10 @@ bindings:
     ga4: giztop
 ```
 
-Validation: ids are unique; every referenced instance must exist in an enabled
-module; a binding requires both Cloudflare and GA4 to be enabled.
+Validation: instance ids are globally unique across modules (audit rows, jobs, and
+bindings reference them without a module qualifier); binding ids are unique;
+every referenced instance must exist in an enabled module; a binding requires
+both Cloudflare and GA4 to be enabled.
 
 ## Environment-only settings
 
