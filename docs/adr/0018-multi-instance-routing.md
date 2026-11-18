@@ -110,7 +110,8 @@ tests. The pattern is identical across modules.
 | Cloudflare tools resolve `instance`; configuration accepts N zones | Done |
 | Cloudflare resolver (`internal/cloudflare/resolver.go`) with tests | Done |
 | Magento resolver (`internal/magento/resolver.go`) with tests | Done |
-| Magento read tools resolve `instance`; write tools still single-store | Done (read tools) |
+| Magento read tools resolve `instance`; multi-store configuration enabled for reads | Done |
+| Magento write tools resolve `instance` (write guard until then) | Next |
 | Configuration accepts N instances; module READMEs updated | Planned |
 
 ## Follow-up
