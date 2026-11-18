@@ -31,6 +31,7 @@ import (
 	"github.com/shuaiZend/mage2mcp/internal/security/jwt"
 	"github.com/shuaiZend/mage2mcp/internal/security/rbac"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
+	"github.com/shuaiZend/mage2mcp/internal/unified"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -207,6 +208,8 @@ func authorizeFunc(cfg config.Config, policy *rbac.Policy) func(context.Context,
 // Multi-instance routing is not wired yet: a module with more than one instance
 // is a startup error rather than a silently wrong credential choice.
 func registerModules(cfg config.Config, reg *registry.Registry) error {
+	var cloudflareSvc *cloudflare.Service
+	var ga4Svc *ga4.Service
 	if cfg.Modules.Magento.Enabled {
 		if len(cfg.Modules.Magento.Instances) != 1 {
 			return fmt.Errorf("magento: exactly one instance is supported in this release")
@@ -247,7 +250,8 @@ func registerModules(cfg config.Config, reg *registry.Registry) error {
 		if err != nil {
 			return fmt.Errorf("cloudflare %s: %w", inst.ID, err)
 		}
-		if err := cloudflare.Register(reg, cloudflare.NewService(client)); err != nil {
+		cloudflareSvc = cloudflare.NewService(client)
+		if err := cloudflare.Register(reg, cloudflareSvc); err != nil {
 			return err
 		}
 	}
@@ -266,6 +270,7 @@ func registerModules(cfg config.Config, reg *registry.Registry) error {
 		if err != nil {
 			return fmt.Errorf("ga4 %s: %w", inst.ID, err)
 		}
+		ga4Svc = svc
 		if err := ga4.Register(reg, svc); err != nil {
 			return err
 		}
@@ -273,7 +278,61 @@ func registerModules(cfg config.Config, reg *registry.Registry) error {
 			return err
 		}
 	}
+	if len(cfg.Bindings) > 0 {
+		if cloudflareSvc == nil || ga4Svc == nil {
+			return fmt.Errorf("bindings require both cloudflare and ga4 modules to be enabled")
+		}
+		bindings := make([]unified.Binding, 0, len(cfg.Bindings))
+		for _, b := range cfg.Bindings {
+			bindings = append(bindings, unified.Binding{ID: b.ID, Magento: b.Magento, Cloudflare: b.Cloudflare, GA4: b.GA4})
+		}
+		unifiedSvc, err := unified.NewService(bindings,
+			cloudflareTrafficAdapter{svc: cloudflareSvc}, ga4SessionsAdapter{svc: ga4Svc})
+		if err != nil {
+			return err
+		}
+		if err := unified.Register(reg, unifiedSvc); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// cloudflareTrafficAdapter adapts the Cloudflare service to the unified module.
+type cloudflareTrafficAdapter struct{ svc *cloudflare.Service }
+
+func (a cloudflareTrafficAdapter) Traffic(ctx context.Context, _ string, from, to time.Time) (unified.Traffic, error) {
+	rows, err := a.svc.Traffic(ctx, cloudflare.TrafficQuery{Since: from, Until: to, GroupBy: "hostname", Limit: 1000})
+	if err != nil {
+		return unified.Traffic{}, err
+	}
+	out := unified.Traffic{Rows: len(rows)}
+	for _, row := range rows {
+		out.Requests += row.Requests
+		out.CachedRequests += row.CachedRequests
+	}
+	return out, nil
+}
+
+// ga4SessionsAdapter adapts the GA4 service to the unified module.
+type ga4SessionsAdapter struct{ svc *ga4.Service }
+
+func (a ga4SessionsAdapter) Sessions(ctx context.Context, _ string, from, to time.Time) (unified.Sessions, error) {
+	end := to.Add(-time.Second)
+	result, err := a.svc.Traffic(ctx, ga4.TrafficQuery{
+		StartDate: from.Format("2006-01-02"),
+		EndDate:   end.Format("2006-01-02"),
+		Metrics:   []string{"sessions", "totalUsers"},
+	})
+	if err != nil {
+		return unified.Sessions{}, err
+	}
+	return unified.Sessions{
+		Sessions: result.Totals["sessions"],
+		Users:    result.Totals["totalUsers"],
+		TimeZone: result.TimeZone,
+		Sampled:  result.Sampled,
+	}, nil
 }
 
 // magentoSigner parses the credential form. "bearer:<token>" is supported for

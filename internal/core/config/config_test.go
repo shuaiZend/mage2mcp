@@ -132,3 +132,32 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 }
+
+func TestBindingValidation(t *testing.T) {
+	base := func() Config {
+		c := Default()
+		c.Auth.Enabled = false
+		c.Modules.Magento = Module{Enabled: true, Instances: []Instance{{ID: "store-us", Credential: "x"}}}
+		c.Modules.Cloudflare = Module{Enabled: true, Instances: []Instance{{ID: "zone-us", Credential: "x"}}}
+		c.Modules.GA4 = Module{Enabled: true, Instances: []Instance{{ID: "giztop", Credential: "x"}}}
+		return c
+	}
+	valid := base()
+	valid.Bindings = []Binding{{ID: "b1", Magento: "store-us", Cloudflare: "zone-us", GA4: "giztop"}}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid binding rejected: %v", err)
+	}
+	unknown := base()
+	unknown.Bindings = []Binding{{ID: "b1", Magento: "nope", Cloudflare: "zone-us", GA4: "giztop"}}
+	if err := unknown.Validate(); err == nil {
+		t.Fatal("unknown instance accepted")
+	}
+	dup := base()
+	dup.Bindings = []Binding{
+		{ID: "b1", Magento: "store-us", Cloudflare: "zone-us", GA4: "giztop"},
+		{ID: "b1", Magento: "store-us", Cloudflare: "zone-us", GA4: "giztop"},
+	}
+	if err := dup.Validate(); err == nil {
+		t.Fatal("duplicate binding accepted")
+	}
+}
