@@ -88,3 +88,37 @@ func TestMagentoSignerForms(t *testing.T) {
 		t.Fatal("unsupported credential form accepted")
 	}
 }
+
+func TestRegisterModulesBuildsUnifiedTool(t *testing.T) {
+	cfg := config.Default()
+	cfg.Auth.Enabled = false
+	cfg.Modules.Magento = config.Module{Enabled: true, Instances: []config.Instance{{
+		ID: "store-us", Endpoint: "https://shop.example.com", StoreCode: "default", Credential: "bearer:x",
+	}}}
+	cfg.Modules.Cloudflare = config.Module{Enabled: true, Instances: []config.Instance{{
+		ID: "zone-us", ZoneID: "z", AccountID: "a", Credential: "t",
+	}}}
+	cfg.Modules.GA4 = config.Module{Enabled: true, Instances: []config.Instance{{
+		ID: "giztop", PropertyID: "123456", Credential: "ga-token",
+	}}}
+	cfg.Bindings = []config.Binding{{ID: "b1", Magento: "store-us", Cloudflare: "zone-us", GA4: "giztop"}}
+	reg := registry.New()
+	if err := registerModules(cfg, reg); err != nil {
+		t.Fatalf("registerModules: %v", err)
+	}
+	if _, ok := reg.Lookup("unified.traffic.compare"); !ok {
+		t.Fatal("unified.traffic.compare was not registered")
+	}
+}
+
+func TestRegisterModulesRequiresSourcesForBindings(t *testing.T) {
+	cfg := config.Default()
+	cfg.Auth.Enabled = false
+	cfg.Modules.Magento = config.Module{Enabled: true, Instances: []config.Instance{{
+		ID: "store-us", Endpoint: "https://shop.example.com", StoreCode: "default", Credential: "bearer:x",
+	}}}
+	cfg.Bindings = []config.Binding{{ID: "b1", Magento: "store-us", Cloudflare: "zone-us", GA4: "giztop"}}
+	if err := registerModules(cfg, registry.New()); err == nil {
+		t.Fatal("expected missing cloudflare/ga4 to be rejected")
+	}
+}

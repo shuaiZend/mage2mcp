@@ -20,13 +20,22 @@ import (
 
 // Config is the root configuration document.
 type Config struct {
-	Server   Server   `yaml:"server"`
-	Auth     Auth     `yaml:"auth"`
-	Log      Log      `yaml:"log"`
-	Database Database `yaml:"database"`
-	Redis    Redis    `yaml:"redis"`
-	Tools    Tools    `yaml:"tools"`
-	Modules  Modules  `yaml:"datasources"`
+	Server   Server    `yaml:"server"`
+	Auth     Auth      `yaml:"auth"`
+	Log      Log       `yaml:"log"`
+	Database Database  `yaml:"database"`
+	Redis    Redis     `yaml:"redis"`
+	Tools    Tools     `yaml:"tools"`
+	Modules  Modules   `yaml:"datasources"`
+	Bindings []Binding `yaml:"bindings"`
+}
+
+// Binding is a declared Magento/Cloudflare/GA4 triple used by unified tools.
+type Binding struct {
+	ID         string `yaml:"id"`
+	Magento    string `yaml:"magento"`
+	Cloudflare string `yaml:"cloudflare"`
+	GA4        string `yaml:"ga4"`
 }
 
 // Tools controls optional tool surfaces. Writes stay disabled until the
@@ -234,6 +243,32 @@ func (c Config) Validate() error {
 			seen[inst.ID] = true
 			if inst.Credential == "" {
 				problems = append(problems, fmt.Sprintf("%s instance %q has no credential reference", name, inst.ID))
+			}
+		}
+	}
+	seenBindings := map[string]bool{}
+	instanceIDs := map[string]string{}
+	for _, m := range []Module{c.Modules.Magento, c.Modules.Cloudflare, c.Modules.GA4} {
+		for _, inst := range m.Instances {
+			instanceIDs[inst.ID] = inst.ID
+		}
+	}
+	for i, b := range c.Bindings {
+		if b.ID == "" {
+			problems = append(problems, fmt.Sprintf("bindings[%d].id is required", i))
+			continue
+		}
+		if seenBindings[b.ID] {
+			problems = append(problems, fmt.Sprintf("duplicate binding id %q", b.ID))
+		}
+		seenBindings[b.ID] = true
+		for field, id := range map[string]string{"magento": b.Magento, "cloudflare": b.Cloudflare, "ga4": b.GA4} {
+			if id == "" {
+				problems = append(problems, fmt.Sprintf("binding %q: %s instance is required", b.ID, field))
+				continue
+			}
+			if _, ok := instanceIDs[id]; !ok {
+				problems = append(problems, fmt.Sprintf("binding %q references unknown instance %q", b.ID, id))
 			}
 		}
 	}

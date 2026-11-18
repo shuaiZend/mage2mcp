@@ -7,10 +7,10 @@ typed, audited, read-only-by-default tools.
 > **Status: Phase 1 — foundation.**
 > A runnable MCP server exists: Streamable HTTP, Cloudflare Access JWT
 > authentication, RBAC, audit, Prometheus metrics, read-only tools for Magento
-> products, Cloudflare analytics/security, and GA4 traffic/metadata, plus optional
-> PostgreSQL-backed audit and a Redis job worker. Write tools and unified analytics
-> are in progress. There is no release yet, and interfaces may change with an ADR
-> before 1.0.
+> products, Cloudflare analytics/security, GA4 traffic/metadata, and a unified
+> traffic comparison, plus optional PostgreSQL-backed audit and a Redis job worker.
+> Write tools require two-step human approval. There is no release yet, and
+> interfaces may change with an ADR before 1.0.
 
 ## What exists today
 
