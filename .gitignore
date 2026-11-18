@@ -1,0 +1,45 @@
+# Binaries and build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.*
+*.prof
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Node (documentation tooling only)
+node_modules/
+npm-debug.log*
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
+
+# Local data and runtime state
+/data/
+/tmp/
+*.db
+*.sqlite
+*.log
+
+# SBOM and release artifacts
+/sbom/
+/release/
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

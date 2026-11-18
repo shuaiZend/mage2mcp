@@ -1,0 +1,10 @@
+mage2mcp
+Copyright 2026 The mage2mcp Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes software developed by third parties. Third-party
+components and their licenses are recorded in the dependency manifest
+(docs/development/license-policy.md) and in the Software Bill of Materials
+published with each release. The MCP Go SDK (github.com/modelcontextprotocol/go-sdk)
+is licensed under Apache-2.0, with portions that remain under the MIT License.
