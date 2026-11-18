@@ -17,12 +17,15 @@ import (
 const (
 	trafficToolName     = "cloudflare.analytics.traffic"
 	securityToolName    = "cloudflare.security.summary"
+	eventsToolName      = "cloudflare.security.events"
 	trafficTitle        = "Cloudflare traffic analytics"
 	securityTitle       = "Cloudflare security summary"
+	eventsTitle         = "Cloudflare security events"
 	toolTimeout         = 60 * time.Second
 	defaultTrafficLimit = 100
 
 	trafficDescription  = "Read-only. Queries the Cloudflare Analytics GraphQL dataset httpRequests1hGroups for the configured zone and aggregates hourly requests, bytes, and cached bytes by hostname, country, or status. The dataset is pre-aggregated and not adaptively sampled, and the current hour can be incomplete; treat values as estimates. The module never writes to Cloudflare."
+	eventsDescription   = "Read-only. Returns individual Cloudflare Security Events from firewallEventsAdaptive for the configured zone over a window of at most 30 days, newest first, bounded by limit. Results are adaptive-sampled with 31-day retention; client IPs are never returned. The module never writes to Cloudflare."
 	securityDescription = "Read-only. Summarizes Cloudflare Security Events from the GraphQL dataset firewallEventsAdaptiveGroups by action over a window of at most 30 days. Counts are adaptive-sampled event counts, not request counts, with 31-day retention; disclose the sampling when reporting. The module never writes to Cloudflare."
 
 	trafficInputSchemaJSON = `{
@@ -33,6 +36,15 @@ const (
     "until": {"type": "string", "description": "Exclusive window end as an RFC 3339 timestamp in UTC."},
     "group_by": {"type": "string", "enum": ["hostname", "country", "status"], "description": "Dimension to aggregate hourly traffic by."},
     "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100, "description": "Maximum number of aggregate rows to return."}
+  }
+}`
+	eventsInputSchemaJSON = `{
+  "type": "object", "additionalProperties": false, "required": ["instance", "since", "until"],
+  "properties": {
+    "instance": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$", "description": "Configured Cloudflare instance alias; the service is bound to one zone."},
+    "since": {"type": "string", "description": "Inclusive window start as an RFC 3339 timestamp in UTC."},
+    "until": {"type": "string", "description": "Exclusive window end as an RFC 3339 timestamp in UTC."},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100}
   }
 }`
 	securityInputSchemaJSON = `{
@@ -63,6 +75,22 @@ type SecurityInput struct {
 	Instance string `json:"instance"`
 	Since    string `json:"since"`
 	Until    string `json:"until"`
+}
+
+// SecurityEventsInput is the input of cloudflare.security.events.
+type SecurityEventsInput struct {
+	Instance string `json:"instance"`
+	Since    string `json:"since"`
+	Until    string `json:"until"`
+	Limit    int    `json:"limit,omitempty"`
+}
+
+// SecurityEventsOutput is a bounded page of sampled security events.
+type SecurityEventsOutput struct {
+	Events        []SecurityEvent `json:"events"`
+	Sampled       bool            `json:"sampled"`
+	RetentionDays int             `json:"retention_days"`
+	Truncated     bool            `json:"truncated"`
 }
 
 // Quality carries data-quality caveats attached to an analytics result.
@@ -105,6 +133,13 @@ func Register(reg *registry.Registry, svc *Service) error {
 			addReadTool(srv, trafficToolName, trafficTitle, trafficDescription, trafficInputSchemaJSON,
 				func(ctx context.Context, _ *mcp.CallToolRequest, in TrafficInput) (*mcp.CallToolResult, TrafficOutput, error) {
 					return handleTraffic(ctx, svc, in)
+				})
+			return nil
+		}),
+		newReadTool(eventsToolName, eventsTitle, eventsDescription, "cloudflare.security.read", func(srv *mcp.Server) error {
+			addReadTool(srv, eventsToolName, eventsTitle, eventsDescription, eventsInputSchemaJSON,
+				func(ctx context.Context, _ *mcp.CallToolRequest, in SecurityEventsInput) (*mcp.CallToolResult, SecurityEventsOutput, error) {
+					return handleSecurityEvents(ctx, svc, in)
 				})
 			return nil
 		}),
@@ -201,3 +236,20 @@ func parseWindow(op, since, until string) (time.Time, time.Time, error) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+func handleSecurityEvents(ctx context.Context, svc *Service, in SecurityEventsInput) (*mcp.CallToolResult, SecurityEventsOutput, error) {
+	since, until, err := parseWindow(eventsToolName, in.Since, in.Until)
+	if err != nil {
+		return nil, SecurityEventsOutput{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, toolTimeout)
+	defer cancel()
+	page, err := svc.Events(ctx, since, until, in.Limit)
+	if err != nil {
+		return nil, SecurityEventsOutput{}, err
+	}
+	return nil, SecurityEventsOutput{
+		Events: page.Events, Sampled: page.Sampled,
+		RetentionDays: page.RetentionDays, Truncated: page.Truncated,
+	}, nil
+}

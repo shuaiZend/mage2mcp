@@ -196,7 +196,7 @@ today. No capability is design-complete or implemented yet.
 | Magento 2 | GraphQL read-only storefront verification | Planned |
 | Cloudflare | Zone, plan, and dataset inventory (read-only) | Planned |
 | Cloudflare | GraphQL Analytics queries | Implemented (traffic) |
-| Cloudflare | Security Events queries | Implemented (summary) |
+| Cloudflare | Security Events queries | Implemented (summary and events) |
 | Cloudflare | Logpush job inventory and field discovery (opt-in, read-only) | Planned |
 | Cloudflare | Logpush log analysis from a customer-configured destination | Planned |
 | Cloudflare | WAF and bot event inspection (read-only) | Planned |
