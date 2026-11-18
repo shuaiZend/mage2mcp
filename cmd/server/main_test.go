@@ -122,3 +122,19 @@ func TestRegisterModulesRequiresSourcesForBindings(t *testing.T) {
 		t.Fatal("expected missing cloudflare/ga4 to be rejected")
 	}
 }
+
+func TestRegisterModulesSupportsMultipleCloudflareZones(t *testing.T) {
+	cfg := config.Default()
+	cfg.Auth.Enabled = false
+	cfg.Modules.Cloudflare = config.Module{Enabled: true, Instances: []config.Instance{
+		{ID: "zone-a", ZoneID: "za", Credential: "t"},
+		{ID: "zone-b", ZoneID: "zb", Credential: "t"},
+	}}
+	reg := registry.New()
+	if err := registerModules(cfg, reg); err != nil {
+		t.Fatalf("registerModules: %v", err)
+	}
+	if _, ok := reg.Lookup("cloudflare.analytics.traffic"); !ok {
+		t.Fatal("traffic tool not registered")
+	}
+}

@@ -61,9 +61,9 @@ Environment overrides: `MAGE2MCP_REDIS_ADDR`, `MAGE2MCP_REDIS_PASSWORD`.
 
 ## `datasources`
 
-Each module has `enabled` and `instances`. This release supports **one instance
-per module**; more than one is a startup error rather than a silent credential
-choice.
+Each module has `enabled` and `instances`. Cloudflare supports several zones;
+every tool call must then name an `instance`, and an unknown or missing instance
+is rejected. Magento and GA4 still accept one instance each in this release.
 
 | Module | Instance keys |
 |---|---|
