@@ -7,8 +7,10 @@ typed, audited, read-only-by-default tools.
 > **Status: Phase 1 — foundation.**
 > A runnable MCP server exists: Streamable HTTP, Cloudflare Access JWT
 > authentication, RBAC, audit, Prometheus metrics, read-only tools for Magento
-> products, Cloudflare analytics/security, GA4 traffic/metadata, and a unified
-> traffic comparison, plus optional PostgreSQL-backed audit and a Redis job worker.
+> products, Cloudflare analytics/security, GA4 reports and capabilities, and a
+> unified traffic comparison. Multiple Magento stores, Cloudflare zones, and GA4
+> properties can share one gateway, with per-instance authorization and audit;
+> optional PostgreSQL-backed state and a Redis worker complete the deployment.
 > Write tools require two-step human approval. There is no release yet, and
 > interfaces may change with an ADR before 1.0.
 
