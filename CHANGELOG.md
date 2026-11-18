@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Phase 1 foundation: runnable MCP server on the official Go SDK with Streamable
+  HTTP, tool registry enforcing the tool contract, `platform.info` tool, health
+  and readiness endpoints, Prometheus metrics, structured logging with secret
+  redaction, Cloudflare Access JWT verification, default-deny RBAC, append-only
+  audit recorder, YAML configuration with validation, distroless container image,
+  Compose stack, and Makefile targets.
+- Test suite with unit, integration, and race coverage; CI runs formatting, vet,
+  lint, module integrity, tests with race detector, coverage floor, secret
+  scanning, vulnerability scanning, license review, and action pinning.
 - Phase 0 design baseline: architecture, module boundaries, database design,
   MCP tool catalog, unified analytics model, security threat model, integration
   mappings for Magento 2, Cloudflare, and Google Analytics 4.
