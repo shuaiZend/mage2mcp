@@ -239,20 +239,32 @@ func registerModules(cfg config.Config, reg *registry.Registry) error {
 		}
 	}
 	if cfg.Modules.Cloudflare.Enabled {
-		if len(cfg.Modules.Cloudflare.Instances) != 1 {
-			return fmt.Errorf("cloudflare: exactly one instance is supported in this release")
+		services := make(map[string]*cloudflare.Service, len(cfg.Modules.Cloudflare.Instances))
+		for _, inst := range cfg.Modules.Cloudflare.Instances {
+			client, err := cloudflare.NewClient(cloudflare.Config{
+				APIBaseURL: "https://api.cloudflare.com/client/v4",
+				APIToken:   inst.Credential, ZoneID: inst.ZoneID, AccountID: inst.AccountID,
+			})
+			if err != nil {
+				return fmt.Errorf("cloudflare %s: %w", inst.ID, err)
+			}
+			services[inst.ID] = cloudflare.NewService(client)
 		}
-		inst := cfg.Modules.Cloudflare.Instances[0]
-		client, err := cloudflare.NewClient(cloudflare.Config{
-			APIBaseURL: "https://api.cloudflare.com/client/v4",
-			APIToken:   inst.Credential, ZoneID: inst.ZoneID, AccountID: inst.AccountID,
-		})
-		if err != nil {
-			return fmt.Errorf("cloudflare %s: %w", inst.ID, err)
-		}
-		cloudflareSvc = cloudflare.NewService(client)
-		if err := cloudflare.Register(reg, cloudflareSvc); err != nil {
-			return err
+		if len(services) == 1 {
+			for _, svc := range services {
+				cloudflareSvc = svc
+			}
+			if err := cloudflare.Register(reg, cloudflareSvc); err != nil {
+				return err
+			}
+		} else {
+			resolver, err := cloudflare.NewResolver(services)
+			if err != nil {
+				return err
+			}
+			if err := cloudflare.RegisterWithResolver(reg, resolver); err != nil {
+				return err
+			}
 		}
 	}
 	if cfg.Modules.GA4.Enabled {

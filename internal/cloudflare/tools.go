@@ -253,3 +253,53 @@ func handleSecurityEvents(ctx context.Context, svc *Service, in SecurityEventsIn
 		RetentionDays: page.RetentionDays, Truncated: page.Truncated,
 	}, nil
 }
+
+// RegisterWithResolver registers the read-only tools for several zones. Each
+// call resolves its `instance` through the resolver; an unknown or ambiguous
+// instance is a typed tool error (ADR-0018).
+func RegisterWithResolver(reg *registry.Registry, resolver *Resolver) error {
+	if reg == nil || resolver == nil {
+		return errors.New("cloudflare: registry and resolver are required")
+	}
+	tools := []registry.Tool{
+		newReadTool(trafficToolName, trafficTitle, trafficDescription, "cloudflare.analytics.read", func(srv *mcp.Server) error {
+			addReadTool(srv, trafficToolName, trafficTitle, trafficDescription, trafficInputSchemaJSON,
+				func(ctx context.Context, _ *mcp.CallToolRequest, in TrafficInput) (*mcp.CallToolResult, TrafficOutput, error) {
+					svc, err := resolver.Resolve(in.Instance)
+					if err != nil {
+						return nil, TrafficOutput{}, err
+					}
+					return handleTraffic(ctx, svc, in)
+				})
+			return nil
+		}),
+		newReadTool(eventsToolName, eventsTitle, eventsDescription, "cloudflare.security.read", func(srv *mcp.Server) error {
+			addReadTool(srv, eventsToolName, eventsTitle, eventsDescription, eventsInputSchemaJSON,
+				func(ctx context.Context, _ *mcp.CallToolRequest, in SecurityEventsInput) (*mcp.CallToolResult, SecurityEventsOutput, error) {
+					svc, err := resolver.Resolve(in.Instance)
+					if err != nil {
+						return nil, SecurityEventsOutput{}, err
+					}
+					return handleSecurityEvents(ctx, svc, in)
+				})
+			return nil
+		}),
+		newReadTool(securityToolName, securityTitle, securityDescription, "cloudflare.security.read", func(srv *mcp.Server) error {
+			addReadTool(srv, securityToolName, securityTitle, securityDescription, securityInputSchemaJSON,
+				func(ctx context.Context, _ *mcp.CallToolRequest, in SecurityInput) (*mcp.CallToolResult, SecurityOutput, error) {
+					svc, err := resolver.Resolve(in.Instance)
+					if err != nil {
+						return nil, SecurityOutput{}, err
+					}
+					return handleSecurity(ctx, svc, in)
+				})
+			return nil
+		}),
+	}
+	for _, tool := range tools {
+		if err := reg.Register(tool); err != nil {
+			return err
+		}
+	}
+	return nil
+}
