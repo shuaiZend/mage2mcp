@@ -168,11 +168,14 @@ Three reviewers who authored none of the reviewed documents returned:
 
 | Review | Findings | Verdict | Blocking items |
 |---|---|---|---|
-| Architecture | 5 Critical, 16 High, 13 Medium, 4 Low | Block | AR-01, AR-02, AR-03, AR-04, AR-05 |
-| Security | 4 Critical, 11 High | Block | F-01 to F-15 |
+| Architecture | 5 Critical, 16 High, 13 Medium, 4 Low | Block (not re-reviewed) | AR-01 to AR-05 |
+| Security | final pass: 0 Critical, 10 High, 20 Medium, 3 Low | Approve with changes | F-01 to F-10 are Phase 1 gate conditions |
 | Documentation | 0 Critical, 8 High, 21 Medium, 4 Low | Approve with changes | D-01 to D-08 |
 
-The Critical findings were real design defects, not prose issues:
+The architecture review's five Critical findings, and the four Critical findings in
+the security reviewer's first pass, were real design defects, not prose issues. They
+were fixed during the review round; the security reviewer re-reviewed the updated
+tree and moved to "Approve with changes".
 
 - **Confirmation had no approver.** The nonce was returned to the requester and no
   component could mint an approval. Fixed by ADR-0014: an opaque `confirmation_id`,
@@ -194,11 +197,12 @@ The Critical findings were real design defects, not prose issues:
 - **The cache key ignored authorization context.** Authorization scope is now part of
   the key; restricted fields are hashed or not cached.
 
-Remaining High findings are tracked for the Phase 1 remediation round: service-token
-verification path, replay-window definition, per-property GA4 grants, XLSX/gzip
-decompression limits, R2/ClickHouse in the threat-model scope, audit key custody,
-SHA-pinned actions, and release provenance. They are design changes with named
-owners, not open questions.
+Remaining High findings are Phase 1 gate conditions: Magento ACL manifest and a
+startup scope probe, service-token verification path, token replay binding, per-property
+GA4 grants, XLSX/gzip decompression limits, R2/ClickHouse in the threat-model scope,
+audit key custody, SHA-pinned actions, and release provenance. The architecture
+review's High findings (AR-06 to AR-21) also remain open; the Criticals were fixed but
+the architecture reviewer has not re-reviewed the updated contracts.
 
 **This means Phase 0 is not approved as-is.** The correct next step is a short
 remediation round that closes the remaining High findings and re-runs the security
