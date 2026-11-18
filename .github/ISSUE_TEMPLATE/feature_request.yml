@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a capability or integration
+title: "feat: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can an AI agent not do today, and why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed capability
+      description: Describe the tool(s), inputs, outputs, and which module owns it.
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: Owning module
+      options:
+        - Magento 2
+        - Cloudflare
+        - Google Analytics 4
+        - Unified analytics
+        - MCP gateway / tools
+        - Security
+        - New data source
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: semantics
+    attributes:
+      label: Data semantics and permissions
+      description: |
+        For analytics features, state the metric definition, time zone, currency,
+        and known source limitations. For write features, state the risk level and
+        whether human confirmation is required.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This can be implemented with official vendor APIs (no Magento plugin, no direct database access).
+          required: true
+        - label: I have read the architecture and module boundary documents.
+          required: false

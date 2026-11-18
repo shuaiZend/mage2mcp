@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a defect in mage2mcp
+title: "bug: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, tokens, customer data, or full upstream
+        response bodies. Security vulnerabilities must be reported privately
+        via Security Advisories, not here.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Release tag, image digest, or commit SHA.
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: Affected module
+      options:
+        - Magento 2
+        - Cloudflare
+        - Google Analytics 4
+        - Unified analytics
+        - MCP gateway / tools
+        - Authentication / RBAC
+        - Import pipeline
+        - Deployment / configuration
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Include the tool name and a redacted request if relevant.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact tokens, hostnames, customer data, and IP addresses.
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have removed all credentials and personal data from this report.
+          required: true
+        - label: This is not a security vulnerability (those go to Security Advisories).
+          required: true

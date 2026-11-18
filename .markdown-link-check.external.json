@@ -1,0 +1,11 @@
+{
+  "ignorePatterns": [
+    { "pattern": "^https?://(www\\.)?(developers\\.google\\.com|googleapis\\.com|.*\\.googleapis\\.com)" },
+    { "pattern": "^https?://(www\\.)?linkedin\\.com" },
+    { "pattern": "^mailto:" }
+  ],
+  "retryOn429": true,
+  "retryCount": 3,
+  "timeout": "30s",
+  "aliveStatusCodes": [200, 206, 301, 302, 403, 429]
+}
