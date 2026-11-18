@@ -21,6 +21,18 @@ log:
   level: "info"
   format: "json"
 
+# Optional PostgreSQL state store. Without it, audit is in memory and lost on
+# restart (development only).
+database:
+  url: "${MAGE2MCP_DATABASE_URL}"
+  max_conns: 10
+
+# Optional job queue used by the worker.
+redis:
+  addr: "${MAGE2MCP_REDIS_ADDR}"
+  password: "${MAGE2MCP_REDIS_PASSWORD}"
+  db: 0
+
 datasources:
   magento:
     enabled: false

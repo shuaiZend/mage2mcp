@@ -6,10 +6,11 @@ typed, audited, read-only-by-default tools.
 
 > **Status: Phase 1 — foundation.**
 > A runnable MCP server exists: Streamable HTTP, Cloudflare Access JWT
-> authentication, RBAC, audit, Prometheus metrics, and read-only tools for Magento
-> products, Cloudflare analytics/security, and GA4 traffic/metadata. Write tools,
-> unified analytics, and durable storage are in progress. There is no release yet,
-> and interfaces may change with an ADR before 1.0.
+> authentication, RBAC, audit, Prometheus metrics, read-only tools for Magento
+> products, Cloudflare analytics/security, and GA4 traffic/metadata, plus optional
+> PostgreSQL-backed audit and a Redis job worker. Write tools and unified analytics
+> are in progress. There is no release yet, and interfaces may change with an ADR
+> before 1.0.
 
 ## What exists today
 
@@ -18,7 +19,7 @@ typed, audited, read-only-by-default tools.
 | Design documents | Complete Phase 0 baseline in [`docs/`](docs/) |
 | Research baseline | [`docs/development/research-baseline.md`](docs/development/research-baseline.md) |
 | Source code | Phase 1 foundation: MCP server, auth, RBAC, audit, metrics, config, Docker |
-| Tests and CI | Unit, integration, race, lint, security, and supply-chain gates on every PR |
+| Tests and CI | Unit, integration (PostgreSQL service), race, lint, security, and supply-chain gates on every PR |
 | Releases and container images | Not published yet; the release workflow is in place |
 | License and community documents | [Apache-2.0](LICENSE), [NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md) |
 

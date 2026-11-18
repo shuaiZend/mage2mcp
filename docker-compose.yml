@@ -38,6 +38,9 @@ services:
       MAGE2MCP_AUTH_ISSUER: ${MAGE2MCP_AUTH_ISSUER:?set MAGE2MCP_AUTH_ISSUER}
       MAGE2MCP_AUTH_AUDIENCE: ${MAGE2MCP_AUTH_AUDIENCE:?set MAGE2MCP_AUTH_AUDIENCE}
       MAGE2MCP_AUTH_JWKS_URL: ${MAGE2MCP_AUTH_JWKS_URL:?set MAGE2MCP_AUTH_JWKS_URL}
+      MAGE2MCP_DATABASE_URL: "postgres://mage2mcp:${POSTGRES_PASSWORD}@postgres:5432/mage2mcp?sslmode=disable"
+      MAGE2MCP_REDIS_ADDR: "redis:6379"
+      MAGE2MCP_REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
     volumes:
       - ./config.yaml:/etc/mage2mcp/config.yaml:ro
     depends_on:
@@ -53,6 +56,28 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  worker:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    entrypoint: ["/usr/local/bin/mage2mcp-worker"]
+    command: ["-config", "/etc/mage2mcp/config.yaml"]
+    environment:
+      MAGE2MCP_DATABASE_URL: "postgres://mage2mcp:${POSTGRES_PASSWORD}@postgres:5432/mage2mcp?sslmode=disable"
+      MAGE2MCP_REDIS_ADDR: "redis:6379"
+      MAGE2MCP_REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes:
+      - ./config.yaml:/etc/mage2mcp/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   postgres-data:

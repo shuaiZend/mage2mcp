@@ -10,6 +10,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -19,10 +20,26 @@ import (
 
 // Config is the root configuration document.
 type Config struct {
-	Server  Server  `yaml:"server"`
-	Auth    Auth    `yaml:"auth"`
-	Log     Log     `yaml:"log"`
-	Modules Modules `yaml:"datasources"`
+	Server   Server   `yaml:"server"`
+	Auth     Auth     `yaml:"auth"`
+	Log      Log      `yaml:"log"`
+	Database Database `yaml:"database"`
+	Redis    Redis    `yaml:"redis"`
+	Modules  Modules  `yaml:"datasources"`
+}
+
+// Database configures the optional PostgreSQL store. An empty URL keeps the
+// gateway on in-memory audit and job state (development only).
+type Database struct {
+	URL      string `yaml:"url"`
+	MaxConns int32  `yaml:"max_conns"`
+}
+
+// Redis configures the optional job queue.
+type Redis struct {
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
 }
 
 // Server holds listener settings.
@@ -79,8 +96,9 @@ func Default() Config {
 			ShutdownGrace: 10 * time.Second,
 			MaxBodyBytes:  1 << 20,
 		},
-		Auth: Auth{Enabled: true},
-		Log:  Log{Level: "info", Format: "json"},
+		Auth:     Auth{Enabled: true},
+		Log:      Log{Level: "info", Format: "json"},
+		Database: Database{MaxConns: 10},
 	}
 }
 
@@ -124,6 +142,15 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("MAGE2MCP_LOG_LEVEL"); v != "" {
 		c.Log.Level = v
 	}
+	if v := os.Getenv("MAGE2MCP_DATABASE_URL"); v != "" {
+		c.Database.URL = v
+	}
+	if v := os.Getenv("MAGE2MCP_REDIS_ADDR"); v != "" {
+		c.Redis.Addr = v
+	}
+	if v := os.Getenv("MAGE2MCP_REDIS_PASSWORD"); v != "" {
+		c.Redis.Password = v
+	}
 }
 
 // Validate rejects an unsafe or incomplete configuration.
@@ -158,6 +185,22 @@ func (c Config) Validate() error {
 	case "json", "text":
 	default:
 		problems = append(problems, "log.format must be json or text")
+	}
+	if c.Database.URL != "" {
+		if !strings.HasPrefix(c.Database.URL, "postgres://") && !strings.HasPrefix(c.Database.URL, "postgresql://") {
+			problems = append(problems, "database.url must be a postgres:// or postgresql:// URL")
+		}
+		if c.Database.MaxConns <= 0 {
+			problems = append(problems, "database.max_conns must be positive")
+		}
+	}
+	if c.Redis.Addr != "" {
+		if _, _, err := net.SplitHostPort(c.Redis.Addr); err != nil {
+			problems = append(problems, "redis.addr must be host:port")
+		}
+		if c.Redis.DB < 0 {
+			problems = append(problems, "redis.db must not be negative")
+		}
 	}
 	for name, m := range map[string]Module{
 		"magento": c.Modules.Magento, "cloudflare": c.Modules.Cloudflare, "ga4": c.Modules.GA4,
