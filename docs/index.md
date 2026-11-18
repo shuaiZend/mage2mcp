@@ -58,6 +58,15 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Reviews](reviews/phase-0-report.md) | Phase 0 report and independent review records |
 | [Research baseline](development/research-baseline.md) | Verified facts and sources |
 
+## Module guides
+
+| Module | Scope |
+|---|---|
+| [Magento](../internal/magento/README.md) | REST client, product/configurable/inventory/import |
+| [Cloudflare](../internal/cloudflare/README.md) | Traffic, security summary and events |
+| [GA4](../internal/ga4/README.md) | Reports, metadata, capabilities, realtime |
+| [Unified](../internal/unified/README.md) | Cross-source comparison semantics |
+
 ## Operations
 
 | Document | Scope |
