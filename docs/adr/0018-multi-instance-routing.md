@@ -1,6 +1,6 @@
 # ADR-0018: Multi-instance routing and per-instance authorization
 
-- **Status:** Proposed
+- **Status:** Accepted (implementation in progress)
 - **Date:** 2026-11-19
 - **Deciders:** maintainer, Architect
 - **Supersedes:** the single-instance limitation documented in the module READMEs
@@ -98,9 +98,19 @@ then call", enforced by tests.
 Low per module: one resolver type, one wiring change, and a table of resolution
 tests. The pattern is identical across modules.
 
+## Implementation progress
+
+| Step | Status |
+|---|---|
+| GA4 resolver (`internal/ga4/resolver.go`) with single-instance fast path and tests | Done |
+| GA4 tools resolve `instance` through the resolver; instance enters RBAC and audit | Next |
+| Cloudflare resolver | Planned |
+| Magento resolver | Planned |
+| Configuration accepts N instances; module READMEs updated | Planned |
+
 ## Follow-up
 
-- Phase 2: GA4 resolver and tests; then Cloudflare; then Magento.
+- Phase 2: wire the GA4 resolver into the tool handlers and pass the instance to RBAC and audit; then Cloudflare; then Magento.
 - Phase 2: extend the RBAC policy and audit schema to carry the instance.
 - Phase 2: allow N instances in configuration validation, keeping the
   single-instance fast path.
