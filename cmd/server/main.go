@@ -210,16 +210,16 @@ func ga4TokenSource(credential string) (ga4.TokenSource, error) {
 
 // authorizeFunc returns nil when authentication is disabled (loopback-only
 // development), so the dev quickstart can call tools without an identity.
-func authorizeFunc(cfg config.Config, policy *rbac.Policy) func(context.Context, string) error {
+func authorizeFunc(cfg config.Config, policy *rbac.Policy) func(context.Context, string, string) error {
 	if !cfg.Auth.Enabled {
 		return nil
 	}
-	return func(ctx context.Context, tool string) error {
+	return func(ctx context.Context, tool, instance string) error {
 		id, ok := auth.IdentityFromContext(ctx)
 		if !ok {
 			return errs.New(errs.CodeUnauthenticated, "no verified identity")
 		}
-		return policy.Authorize(id, tool, "", rbac.ScopeRead)
+		return policy.Authorize(id, tool, instance, rbac.ScopeRead)
 	}
 }
 

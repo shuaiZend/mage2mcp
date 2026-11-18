@@ -155,7 +155,7 @@ func TestAuthorizationDeniesToolCall(t *testing.T) {
 	reg := mustRegistry(t)
 	srv, err := NewMCP(Options{
 		Version: "test", Registry: reg,
-		Authorize: func(context.Context, string) error {
+		Authorize: func(context.Context, string, string) error {
 			return errs.New(errs.CodePermissionDenied, "denied by test")
 		},
 	})
@@ -324,5 +324,37 @@ func TestConfirmationFlowThroughHTTP(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatal("replay must be rejected")
+	}
+}
+
+func TestAuthorizationReceivesInstance(t *testing.T) {
+	reg := mustRegistry(t)
+	var gotInstance string
+	srv, err := NewMCP(Options{
+		Version: "test", Registry: reg,
+		Authorize: func(_ context.Context, _, instance string) error {
+			gotInstance = instance
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(Handler(srv, Options{Registry: reg}))
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	if _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "platform.info",
+		Arguments: map[string]any{"instance": "zone-b"}}); err != nil {
+		t.Fatal(err)
+	}
+	if gotInstance != "zone-b" {
+		t.Fatalf("authorizer instance = %q, want zone-b", gotInstance)
 	}
 }
