@@ -75,6 +75,7 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Backup and restore](operations/backup-restore.md) | What to back up, restore checklist, retention |
 | [Upgrade](operations/upgrade.md) | Versioning, procedure, rollback, compatibility |
 | [Monitoring](operations/monitoring.md) | Health, metrics, logs, audit queries, alerts |
+| [Release checklist](release-checklist.md) | Pre-tag checks, publishing, signature verification, rollback |
 
 ## Decision records
 
