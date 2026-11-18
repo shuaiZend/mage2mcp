@@ -24,6 +24,7 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Module boundaries](module-boundaries.md) | Ownership, dependency rules, Go contracts |
 | [MCP tool catalog](mcp-tools.md) | Tool naming, schemas, permissions, catalog |
 | [MCP conformance](mcp-conformance.md) | Best-practice matrix and the tests that prove it |
+| [Implemented tools](implemented-tools.md) | The tools registered in code today |
 | [Database design](database-design.md) | Schema, indexes, retention, migrations |
 | [Unified analytics](unified-analytics.md) | Cross-source metric semantics and join rules |
 | [Development plan](development-plan.md) | Phases, exit criteria, traceability matrix |
