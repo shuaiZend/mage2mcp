@@ -55,6 +55,7 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Testing strategy](development/testing-strategy.md) | Test layers, coverage targets, environments |
 | [License policy](development/license-policy.md) | License choice, dependency matrix, SBOM |
 | [Risk register](development/risk-register.md) | Open risks and mitigations |
+| [Handoff](development/handoff.md) | Current state, next steps, known limitations |
 | [Reviews](reviews/phase-0-report.md) | Phase 0 report and independent review records |
 | [Research baseline](development/research-baseline.md) | Verified facts and sources |
 
