@@ -140,6 +140,7 @@ runs bounded batches synchronously;
 | Product batch read (`products.get`) | 50 SKUs per call |
 | Bulk update (`products.bulk_update`) | 50 SKUs per call, one PUT each |
 | Bulk links (`product.links.bulk`) | 50 targets per call, one add/remove each |
+| Bulk attribute options (`attributes.options.bulk_create`) | 50 labels per call, one create each |
 | Order search (`order.search`) | `limit` 1-100, cursor for the next page |
 | Sales/order summary | 1000 orders scanned per window; truncation is reported |
 | Tier prices | 50 tiers per SKU per call |

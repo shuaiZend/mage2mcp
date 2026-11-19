@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
@@ -292,4 +293,64 @@ func (s *Service) DeleteAttributeOption(ctx context.Context, attributeCode strin
 	path := "/products/attributes/" + url.PathEscape(attributeCode) + "/options/" + strconv.Itoa(optionID)
 	_, err := s.client.do(ctx, http.MethodDelete, path, nil, nil)
 	return err
+}
+
+const maxBulkOptions = 50
+
+// OptionBulkRow is one option's outcome in a bulk create.
+type OptionBulkRow struct {
+	Label  string `json:"label"`
+	Value  string `json:"value,omitempty"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// OptionBulkResult reports a partial-success option creation.
+type OptionBulkResult struct {
+	Total   int             `json:"total"`
+	Created int             `json:"created"`
+	Failed  int             `json:"failed"`
+	Rows    []OptionBulkRow `json:"rows"`
+}
+
+// BulkCreateAttributeOptions adds up to 50 options to one attribute. Each label
+// is a separate call; failures are reported per row and earlier options stay.
+func (s *Service) BulkCreateAttributeOptions(ctx context.Context, attributeCode string, labels []string) (*OptionBulkResult, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento catalog service is not configured")
+	}
+	if !attributeCodeRE.MatchString(attributeCode) {
+		return nil, invalidf("attribute code must match %s", attributeCodeRE.String())
+	}
+	if len(labels) == 0 {
+		return nil, invalidf("at least one option label is required")
+	}
+	if len(labels) > maxBulkOptions {
+		return nil, invalidf("at most %d option labels are allowed per call", maxBulkOptions)
+	}
+	seen := make(map[string]struct{}, len(labels))
+	result := &OptionBulkResult{Total: len(labels), Rows: make([]OptionBulkRow, 0, len(labels))}
+	for _, label := range labels {
+		key := strings.ToUpper(strings.TrimSpace(label))
+		if key == "" {
+			return nil, invalidf("option labels must not be empty")
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		row := OptionBulkRow{Label: label}
+		option, err := s.CreateAttributeOption(ctx, attributeCode, label)
+		if err != nil {
+			row.Status = "failed"
+			row.Error = importErrorMessage(err)
+			result.Failed++
+		} else {
+			row.Status = "created"
+			row.Value = option.Value
+			result.Created++
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	return result, nil
 }

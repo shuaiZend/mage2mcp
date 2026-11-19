@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.attributes.options.bulk_create` (confirmation-gated): adds up to 50
+  option labels to one attribute with a per-label partial-success report and
+  duplicate skipping.
+
+### Added
+
 - `magento.product.links.bulk` (confirmation-gated): add or remove one link
   type (related, upsell, crosssell) for up to 50 targets, one call each, with a
   per-target partial-success report.
