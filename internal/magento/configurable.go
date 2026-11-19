@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -293,18 +294,30 @@ func validateConfigurableInput(in CreateConfigurableInput) error {
 		return invalidf("configurable product supports at most %d children", maxConfigurableChildren)
 	}
 	codes := make(map[string]struct{}, len(in.Variants))
+	allowed := make(map[string]map[string]struct{}, len(in.Variants))
 	for _, variant := range in.Variants {
 		codes[variant.Code] = struct{}{}
+		values := make(map[string]struct{}, len(variant.Values))
+		for _, value := range variant.Values {
+			values[strconv.Itoa(value.ValueIndex)] = struct{}{}
+		}
+		allowed[variant.Code] = values
 	}
 	seen := map[string]struct{}{in.Parent.SKU: {}}
+	combinations := make(map[string]string, len(in.Children))
 	for _, child := range in.Children {
-		if err := validateChildProduct(child, codes); err != nil {
+		if err := validateChildProduct(child, codes, allowed); err != nil {
 			return err
 		}
 		if _, duplicate := seen[child.SKU]; duplicate {
 			return invalidf("child sku %q is duplicated", child.SKU)
 		}
 		seen[child.SKU] = struct{}{}
+		combination := variantCombination(child, codes)
+		if previous, duplicate := combinations[combination]; duplicate {
+			return invalidf("children %q and %q carry the same variant values", previous, child.SKU)
+		}
+		combinations[combination] = child.SKU
 	}
 	return nil
 }
@@ -358,7 +371,7 @@ func validateVariantAttribute(attribute VariantAttribute) error {
 	return nil
 }
 
-func validateChildProduct(child ChildProduct, codes map[string]struct{}) error {
+func validateChildProduct(child ChildProduct, codes map[string]struct{}, allowed map[string]map[string]struct{}) error {
 	if err := validateSKU(child.SKU); err != nil {
 		return err
 	}
@@ -374,11 +387,34 @@ func validateChildProduct(child ChildProduct, codes map[string]struct{}) error {
 		return err
 	}
 	for code := range codes {
-		if strings.TrimSpace(child.Attributes[code]) == "" {
+		value := strings.TrimSpace(child.Attributes[code])
+		if value == "" {
 			return invalidf("child %q must carry a value for variant attribute %q", child.SKU, code)
+		}
+		if _, ok := allowed[code][value]; !ok {
+			return invalidf("child %q value %q for variant attribute %q is not one of the declared value_index values",
+				child.SKU, value, code)
 		}
 	}
 	return nil
+}
+
+// variantCombination builds a stable key of a child's variant values so two
+// children cannot describe the same variant.
+func variantCombination(child ChildProduct, codes map[string]struct{}) string {
+	names := make([]string, 0, len(codes))
+	for code := range codes {
+		names = append(names, code)
+	}
+	sort.Strings(names)
+	var builder strings.Builder
+	for _, code := range names {
+		builder.WriteString(code)
+		builder.WriteByte('=')
+		builder.WriteString(strings.TrimSpace(child.Attributes[code]))
+		builder.WriteByte(';')
+	}
+	return builder.String()
 }
 
 func optionValues(attribute VariantAttribute) []configurableOptionValue {

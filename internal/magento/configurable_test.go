@@ -465,3 +465,28 @@ func TestCreateConfigurableAssignsChildQuantity(t *testing.T) {
 		t.Fatalf("request 3 sku = %q, want the parent", got)
 	}
 }
+
+func TestConfigurableVariantValueValidation(t *testing.T) {
+	parent := CreateProductInput{
+		SKU: "PARENT-1", Name: "Parent", AttributeSetID: 4, Price: "9.99", WebsiteIDs: []int{1},
+	}
+	variants := []VariantAttribute{{
+		AttributeID: 93, Code: "color",
+		Values: []VariantValue{{ValueIndex: 12, Label: "Red"}, {ValueIndex: 13, Label: "Blue"}},
+	}}
+	child := func(sku, value string) ChildProduct {
+		return ChildProduct{SKU: sku, Attributes: map[string]string{"color": value}}
+	}
+	valid := CreateConfigurableInput{Parent: parent, Variants: variants, Children: []ChildProduct{child("C-1", "12"), child("C-2", "13")}}
+	if err := validateConfigurableInput(valid); err != nil {
+		t.Fatalf("valid input rejected: %v", err)
+	}
+	undeclared := CreateConfigurableInput{Parent: parent, Variants: variants, Children: []ChildProduct{child("C-1", "99")}}
+	if err := validateConfigurableInput(undeclared); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("undeclared value err = %v", err)
+	}
+	duplicate := CreateConfigurableInput{Parent: parent, Variants: variants, Children: []ChildProduct{child("C-1", "12"), child("C-2", "12")}}
+	if err := validateConfigurableInput(duplicate); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("duplicate combination err = %v", err)
+	}
+}
