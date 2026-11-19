@@ -170,3 +170,26 @@ func TestCreateAttributeOptionValidation(t *testing.T) {
 		t.Fatalf("label err = %v", err)
 	}
 }
+
+func TestDeleteAttributeOption(t *testing.T) {
+	var method, path string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`true`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	if err := svc.DeleteAttributeOption(context.Background(), "color", 14); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodDelete || path != "/rest/default/V1/products/attributes/color/options/14" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if err := svc.DeleteAttributeOption(context.Background(), "Bad Code!", 14); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("code err = %v", err)
+	}
+	if err := svc.DeleteAttributeOption(context.Background(), "color", 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("id err = %v", err)
+	}
+}

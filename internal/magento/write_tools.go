@@ -285,6 +285,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newOrderCreateTool(lookup), newTierPricesSetTool(lookup), newInventoryTransferTool(lookup),
 		newCustomerCreateTool(lookup), newCustomerUpdateTool(lookup),
 		newMediaUpdateTool(lookup), newOrderCancelTool(lookup), newAttributeOptionCreateTool(lookup),
+		newAttributeOptionDeleteTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -336,6 +337,7 @@ func writeToolSchemas() map[string]string {
 		mediaUpdateToolName:           mediaUpdateSchema,
 		orderCancelToolName:           orderCancelSchema,
 		attributeOptionCreateToolName: attributeOptionCreateSchema,
+		attributeOptionDeleteToolName: attributeOptionDeleteSchema,
 	}
 }
 
@@ -1814,6 +1816,53 @@ func newAttributeOptionCreateTool(lookup serviceLookup) registry.Tool {
 				}
 				return nil, attributeOptionCreateOutput{Option: *option}, nil
 			})
+		return nil
+	}
+	return t
+}
+
+const (
+	attributeOptionDeleteToolName    = "magento.attributes.options.delete"
+	attributeOptionDeleteToolTitle   = "Delete a Magento attribute option"
+	attributeOptionDeleteDescription = "Magento write operation: deletes a select or multiselect option " +
+		"(DELETE /rest/{store_code}/V1/products/attributes/{code}/options/{id}) on the resolved instance. " +
+		"Destructive: products and configurable variants referencing the option make Magento reject the call. Requires human confirmation."
+
+	attributeOptionDeleteSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"attribute_code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"},
+		"option_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "attribute_code", "option_id"], "additionalProperties": false}`
+)
+
+type attributeOptionDeleteInput struct {
+	Instance      string `json:"instance"`
+	AttributeCode string `json:"attribute_code"`
+	OptionID      int    `json:"option_id"`
+}
+
+type attributeOptionDeleteOutput struct {
+	AttributeCode string `json:"attribute_code"`
+	OptionID      int    `json:"option_id"`
+	Deleted       bool   `json:"deleted"`
+}
+
+func newAttributeOptionDeleteTool(lookup serviceLookup) registry.Tool {
+	t := destructiveToolMetadata(attributeOptionDeleteToolName, attributeOptionDeleteToolTitle, attributeOptionDeleteDescription, "magento.attribute.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: attributeOptionDeleteToolName, Title: attributeOptionDeleteToolTitle, Description: attributeOptionDeleteDescription,
+			InputSchema: json.RawMessage(attributeOptionDeleteSchema),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in attributeOptionDeleteInput) (*mcp.CallToolResult, attributeOptionDeleteOutput, error) {
+			svc, err := lookup(in.Instance)
+			if err != nil {
+				return nil, attributeOptionDeleteOutput{}, err
+			}
+			if err := svc.DeleteAttributeOption(ctx, in.AttributeCode, in.OptionID); err != nil {
+				return nil, attributeOptionDeleteOutput{}, err
+			}
+			return nil, attributeOptionDeleteOutput{AttributeCode: in.AttributeCode, OptionID: in.OptionID, Deleted: true}, nil
+		})
 		return nil
 	}
 	return t
