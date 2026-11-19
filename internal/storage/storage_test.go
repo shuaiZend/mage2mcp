@@ -218,3 +218,33 @@ func TestJobQueueIdempotentEnqueue(t *testing.T) {
 		t.Fatal("a different key must create a new job")
 	}
 }
+
+func TestImportBatchLifecycle(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	id, err := store.CreateImportBatch(ctx, "store-us", "", "csv", []byte("sku,name\nA,B\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := &jobs.ImportBatchResult{
+		Total: 2, Processed: 2, Created: 1, Failed: 1,
+		Failures: []jobs.ImportBatchFailure{{RowNumber: 3, SKU: "B", Action: "create", Error: "boom"}},
+	}
+	if err := store.FinishImportBatch(ctx, id, result, "partial", ""); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := store.GetImportBatchByJob(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch != nil {
+		t.Fatal("empty job id must not match a batch")
+	}
+	var storedID string
+	if err := store.pool.QueryRow(ctx, `SELECT id::text FROM import_batches WHERE instance_id = 'store-us'`).Scan(&storedID); err != nil {
+		t.Fatal(err)
+	}
+	if storedID != id {
+		t.Fatalf("stored id = %q", storedID)
+	}
+}

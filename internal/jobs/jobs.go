@@ -221,3 +221,39 @@ func jitter(base time.Duration) time.Duration {
 	offset := int64(binary.BigEndian.Uint32(buf[:])) % int64(base)
 	return base/2 + time.Duration(offset)
 }
+
+// ImportBatchResult is the persisted outcome of one import batch.
+type ImportBatchResult struct {
+	Total     int
+	Processed int
+	Created   int
+	Updated   int
+	Skipped   int
+	Failed    int
+	Failures  []ImportBatchFailure
+}
+
+// ImportBatch is the persisted state of one asynchronous import.
+type ImportBatch struct {
+	ID         string
+	InstanceID string
+	JobID      string
+	Format     string
+	State      string
+	Total      int
+	Processed  int
+	Created    int
+	Updated    int
+	Skipped    int
+	Failed     int
+	ErrorCode  string
+	Failures   []ImportBatchFailure
+}
+
+// ImportBatchFailure is one failed row persisted for resume.
+type ImportBatchFailure struct {
+	RowNumber int
+	SKU       string
+	Action    string
+	Error     string
+}

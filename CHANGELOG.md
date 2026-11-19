@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Asynchronous imports persist full batch state (`import_batches`,
+  `import_batch_failures`, migration 000004). The worker finalizes each batch
+  with every failed row, and `magento.import.resume` reads those rows instead of
+  the 100-row job report, falling back to the report for older jobs (ADR-0021).
+
 ### Added
 
 - `magento.customer.addresses.update` (confirmation-gated): partial address

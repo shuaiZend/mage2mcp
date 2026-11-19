@@ -33,17 +33,28 @@ type ImportQueue interface {
 	GetJob(ctx context.Context, id string) (*jobs.JobRecord, error)
 }
 
+// ImportBatchReader looks up the persisted batch for a job.
+type ImportBatchReader interface {
+	GetImportBatchByJob(ctx context.Context, jobID string) (*jobs.ImportBatch, error)
+}
+
 // RegisterImportJobs registers the asynchronous import tools. It requires a
 // durable queue, so callers register these only when the database is configured.
-func RegisterImportJobs(reg *registry.Registry, resolver *Resolver, queue ImportQueue) error {
+// A batch reader is optional; without one, resume falls back to the job's
+// bounded failure report.
+func RegisterImportJobs(reg *registry.Registry, resolver *Resolver, queue ImportQueue, batchReaders ...ImportBatchReader) error {
 	if reg == nil || resolver == nil || queue == nil {
 		return errs.New(errs.CodeInternal, "import tools require a registry, resolver, and queue")
+	}
+	var batches ImportBatchReader
+	if len(batchReaders) > 0 {
+		batches = batchReaders[0]
 	}
 	for _, tool := range []registry.Tool{
 		newImportStartTool(resolver, queue),
 		newImportStatusTool(queue),
 		newImportCancelTool(queue),
-		newImportResumeTool(queue),
+		newImportResumeTool(queue, batches),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -222,7 +233,7 @@ type importResumeOutput struct {
 	Rows  int    `json:"rows"`
 }
 
-func newImportResumeTool(queue ImportQueue) registry.Tool {
+func newImportResumeTool(queue ImportQueue, batches ImportBatchReader) registry.Tool {
 	t := writeToolMetadata(importResumeToolName, importResumeToolTitle, importResumeToolDescription, "magento.import.write")
 	t.Register = func(srv *mcp.Server) error {
 		mcp.AddTool(srv, mcpWriteTool(importResumeToolName, importResumeToolTitle, importResumeToolDescription, importResumeSchema),
@@ -235,15 +246,24 @@ func newImportResumeTool(queue ImportQueue) registry.Tool {
 				if err := json.Unmarshal(record.Payload, &payload); err != nil {
 					return nil, importResumeOutput{}, errs.New(errs.CodeInvalidArgument, "job is not an import job")
 				}
-				var report ImportReport
-				if record.Result != "" {
-					if err := json.Unmarshal([]byte(record.Result), &report); err != nil {
-						return nil, importResumeOutput{}, errs.New(errs.CodeInvalidArgument, "job has no resumable report")
+				rows := make([]int, 0)
+				if batches != nil {
+					if batch, err := batches.GetImportBatchByJob(ctx, in.JobID); err == nil && batch != nil {
+						for _, failure := range batch.Failures {
+							rows = append(rows, failure.RowNumber)
+						}
 					}
 				}
-				rows := make([]int, 0, len(report.Failures))
-				for _, failure := range report.Failures {
-					rows = append(rows, failure.RowNumber)
+				if len(rows) == 0 {
+					var report ImportReport
+					if record.Result != "" {
+						if err := json.Unmarshal([]byte(record.Result), &report); err != nil {
+							return nil, importResumeOutput{}, errs.New(errs.CodeInvalidArgument, "job has no resumable report")
+						}
+					}
+					for _, failure := range report.Failures {
+						rows = append(rows, failure.RowNumber)
+					}
 				}
 				if len(rows) == 0 {
 					return nil, importResumeOutput{}, errs.New(errs.CodeInvalidArgument, "job has no failed rows to resume")

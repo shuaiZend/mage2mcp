@@ -224,3 +224,57 @@ func TestRegisterImportJobsValidation(t *testing.T) {
 		t.Fatalf("nil queue err = %v", err)
 	}
 }
+
+type fakeBatchReader struct {
+	batch *jobs.ImportBatch
+}
+
+func (f *fakeBatchReader) GetImportBatchByJob(context.Context, string) (*jobs.ImportBatch, error) {
+	return f.batch, nil
+}
+
+func TestImportResumeUsesPersistedFailures(t *testing.T) {
+	payload, _ := json.Marshal(ImportJobPayload{Instance: "store-us", Format: "csv", DataBase64: base64.StdEncoding.EncodeToString([]byte("sku,name\nA,B\n"))})
+	queue := &fakeImportQueue{record: &jobs.JobRecord{ID: "11111111-1111-1111-1111-111111111111", Kind: jobs.TypeMagentoImport, Payload: payload}}
+	batches := &fakeBatchReader{batch: &jobs.ImportBatch{Failures: []jobs.ImportBatchFailure{
+		{RowNumber: 5, SKU: "A"}, {RowNumber: 9, SKU: "B"},
+	}}}
+	resolver, _ := NewResolver(map[string]*Service{"store-us": testService(t, "https://shop.example.com")})
+	reg := registry.New()
+	if err := RegisterImportJobs(reg, resolver, queue, batches); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: importResumeToolName,
+		Arguments: map[string]any{"job_id": "11111111-1111-1111-1111-111111111111"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("resume error: %+v", result.Content)
+	}
+	var resumed ImportJobPayload
+	if err := json.Unmarshal(queue.tasks[0].Payload, &resumed); err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed.OnlyRows) != 2 || resumed.OnlyRows[0] != 5 || resumed.OnlyRows[1] != 9 {
+		t.Fatalf("payload = %+v", resumed)
+	}
+}
