@@ -19,6 +19,7 @@ import (
 
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
+	"github.com/shuaiZend/mage2mcp/internal/magento"
 	"github.com/shuaiZend/mage2mcp/internal/observability"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
@@ -59,7 +60,23 @@ func run() error {
 		return err
 	}
 
-	worker := jobs.NewWorker(storage.NewJobQueue(store), jobs.WorkerOptions{Logger: logger})
+	queue := storage.NewJobQueue(store)
+
+	var magentoResolver *magento.Resolver
+	if cfg.Modules.Magento.Enabled && len(cfg.Modules.Magento.Instances) > 0 {
+		settings := make([]magento.InstanceSettings, 0, len(cfg.Modules.Magento.Instances))
+		for _, inst := range cfg.Modules.Magento.Instances {
+			settings = append(settings, magento.InstanceSettings{
+				ID: inst.ID, Endpoint: inst.Endpoint, StoreCode: inst.StoreCode, Credential: inst.Credential,
+			})
+		}
+		magentoResolver, err = magento.NewResolverFromSettings(settings)
+		if err != nil {
+			return err
+		}
+	}
+
+	worker := jobs.NewWorker(queue, jobs.WorkerOptions{Logger: logger})
 	worker.Handle(jobs.TypeNoop, func(_ context.Context, task jobs.Task) error {
 		var payload jobs.NoopPayload
 		if err := json.Unmarshal(task.Payload, &payload); err != nil {
@@ -68,6 +85,32 @@ func run() error {
 		logger.Info("noop task executed", "job_id", task.ID, "message", payload.Message)
 		return nil
 	})
+
+	if magentoResolver != nil {
+		worker.Handle(jobs.TypeMagentoImport, func(ctx context.Context, task jobs.Task) error {
+			var payload magento.ImportJobPayload
+			if err := json.Unmarshal(task.Payload, &payload); err != nil {
+				return fmt.Errorf("decode import payload: %w", err)
+			}
+			svc, err := magentoResolver.Resolve(payload.Instance)
+			if err != nil {
+				return err
+			}
+			data, err := magento.DecodeImportPayload(payload.DataBase64)
+			if err != nil {
+				return err
+			}
+			result, err := svc.ExecuteImport(ctx, payload.Format, data, payload.UpdateExisting)
+			if err != nil {
+				return err
+			}
+			raw, err := json.Marshal(result)
+			if err != nil {
+				return fmt.Errorf("encode import result: %w", err)
+			}
+			return queue.SetResult(ctx, task.ID, string(raw))
+		})
+	}
 
 	logger.Info("worker starting", "version", version, "queue", "postgresql")
 	if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

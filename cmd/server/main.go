@@ -67,13 +67,10 @@ func run() error {
 	logger := observability.NewLogger(cfg.Log.Level, cfg.Log.Format, os.Stderr)
 	metrics := observability.NewMetrics()
 
-	reg := registry.New()
-	if err := registerModules(cfg, reg); err != nil {
-		return err
-	}
 	var auditor audit.Recorder = audit.NewMemory()
 	var confirmStore confirm.Store = confirm.NewMemoryStore()
 	var store *storage.Store
+	var importQueue magento.ImportQueue
 	if cfg.Database.URL != "" {
 		store, err = storage.Open(context.Background(), storage.Config{
 			URL: cfg.Database.URL, MaxConns: cfg.Database.MaxConns,
@@ -87,9 +84,15 @@ func run() error {
 		}
 		auditor = storage.NewAuditRecorder(store)
 		confirmStore = storage.NewConfirmStore(store)
+		importQueue = storage.NewJobQueue(store)
 		logger.Info("durable audit and confirmations enabled", "store", "postgresql")
 	} else {
 		logger.Warn("database.url is not set: audit is in memory and lost on restart")
+	}
+
+	reg := registry.New()
+	if err := registerModules(cfg, reg, importQueue); err != nil {
+		return err
 	}
 	confirmSvc, err := confirm.NewService(confirmStore, confirm.DefaultTTL)
 	if err != nil {
@@ -237,51 +240,35 @@ func authorizeFunc(cfg config.Config, policy *rbac.Policy) func(context.Context,
 // registerModules builds one service per enabled module and registers its tools.
 // Multi-instance routing is not wired yet: a module with more than one instance
 // is a startup error rather than a silently wrong credential choice.
-func registerModules(cfg config.Config, reg *registry.Registry) error {
+func registerModules(cfg config.Config, reg *registry.Registry, importQueues ...magento.ImportQueue) error {
+	var importQueue magento.ImportQueue
+	if len(importQueues) > 0 {
+		importQueue = importQueues[0]
+	}
 	var cloudflareSvc *cloudflare.Service
 	var ga4Svc *ga4.Service
 	if cfg.Modules.Magento.Enabled {
-		services := make(map[string]*magento.Service, len(cfg.Modules.Magento.Instances))
+		settings := make([]magento.InstanceSettings, 0, len(cfg.Modules.Magento.Instances))
 		for _, inst := range cfg.Modules.Magento.Instances {
-			signer, err := magentoSigner(inst.Credential)
-			if err != nil {
-				return fmt.Errorf("magento %s: %w", inst.ID, err)
-			}
-			client, err := magento.NewClient(magento.ClientConfig{
-				BaseURL: inst.Endpoint, StoreCode: inst.StoreCode, Signer: signer,
+			settings = append(settings, magento.InstanceSettings{
+				ID: inst.ID, Endpoint: inst.Endpoint, StoreCode: inst.StoreCode, Credential: inst.Credential,
 			})
-			if err != nil {
-				return fmt.Errorf("magento %s: %w", inst.ID, err)
-			}
-			svc, err := magento.NewService(client)
-			if err != nil {
-				return err
-			}
-			services[inst.ID] = svc
 		}
-		if len(services) == 1 {
-			for _, svc := range services {
-				if err := magento.Register(reg, svc); err != nil {
-					return err
-				}
-				if cfg.Tools.Writes {
-					if err := magento.RegisterWrites(reg, svc); err != nil {
-						return err
-					}
-				}
-			}
-		} else {
-			resolver, err := magento.NewResolver(services)
-			if err != nil {
+		resolver, err := magento.NewResolverFromSettings(settings)
+		if err != nil {
+			return err
+		}
+		if err := magento.RegisterWithResolver(reg, resolver); err != nil {
+			return err
+		}
+		if cfg.Tools.Writes {
+			if err := magento.RegisterWritesWithResolver(reg, resolver); err != nil {
 				return err
 			}
-			if err := magento.RegisterWithResolver(reg, resolver); err != nil {
+		}
+		if importQueue != nil {
+			if err := magento.RegisterImportJobs(reg, resolver, importQueue); err != nil {
 				return err
-			}
-			if cfg.Tools.Writes {
-				if err := magento.RegisterWritesWithResolver(reg, resolver); err != nil {
-					return err
-				}
 			}
 		}
 	}
@@ -407,20 +394,6 @@ func (a ga4SessionsAdapter) Sessions(ctx context.Context, _ string, from, to tim
 // magentoSigner parses the credential form. "bearer:<token>" is supported for
 // stores that enable integration-as-bearer; "oauth1:<key>:<secret>:<token>:<token-secret>"
 // is the production form.
-func magentoSigner(credential string) (magento.Signer, error) {
-	if strings.HasPrefix(credential, "bearer:") {
-		return &magento.BearerSigner{Token: strings.TrimPrefix(credential, "bearer:")}, nil
-	}
-	if strings.HasPrefix(credential, "oauth1:") {
-		parts := strings.Split(strings.TrimPrefix(credential, "oauth1:"), ":")
-		if len(parts) != 4 {
-			return nil, fmt.Errorf("oauth1 credential must be oauth1:<key>:<secret>:<token>:<token-secret>")
-		}
-		return magento.NewOAuth1Signer(parts[0], parts[1], parts[2], parts[3])
-	}
-	return nil, fmt.Errorf("unsupported credential form; use bearer:<token> or oauth1:<key>:<secret>:<token>:<token-secret>")
-}
-
 // runHealthcheck probes the local /healthz endpoint. Distroless images have no
 // shell or curl, so the binary is the container health probe.
 func runHealthcheck() error {

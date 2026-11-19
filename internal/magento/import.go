@@ -342,3 +342,29 @@ func parseImportRows(format string, data []byte) ([]ImportRow, error) {
 		return nil, errs.New(errs.CodeUnsupportedFormat, "format must be csv or json")
 	}
 }
+
+// ValidateImportShape validates the payload structure and rows without calling
+// Magento. It is used when enqueueing an asynchronous import so obviously bad
+// batches are rejected before a job is created.
+func ValidateImportShape(format string, data []byte) (int, error) {
+	rows, err := parseImportRows(format, data)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, errs.New(errs.CodeValidationFailed, "import contains no rows")
+	}
+	if len(rows) > maxImportRows {
+		return 0, errs.New(errs.CodeValidationFailed, "import exceeds 5000 rows").
+			WithDetail("rows", fmt.Sprint(len(rows)))
+	}
+	seen := make(map[string]int, len(rows))
+	for _, row := range rows {
+		if rowErrors := validateImportRow(row, seen); len(rowErrors) > 0 {
+			return 0, errs.New(errs.CodeValidationFailed, "import has invalid rows").
+				WithDetail("row", fmt.Sprint(row.RowNumber)).
+				WithDetail("reason", rowErrors[0].Message)
+		}
+	}
+	return len(rows), nil
+}

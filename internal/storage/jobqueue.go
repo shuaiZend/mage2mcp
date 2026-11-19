@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
 )
 
@@ -159,6 +160,50 @@ func (q *JobQueue) Cancel(ctx context.Context, id string) error {
 		WHERE id = $1::uuid AND state IN ('queued','running')`, id)
 	if err != nil {
 		return fmt.Errorf("storage: cancel job: %w", err)
+	}
+	return nil
+}
+
+// GetJob returns one job by id.
+func (q *JobQueue) GetJob(ctx context.Context, id string) (*jobs.JobRecord, error) {
+	if q == nil || q.store == nil || q.store.pool == nil {
+		return nil, fmt.Errorf("storage: job queue not configured")
+	}
+	var record jobs.JobRecord
+	var finished *time.Time
+	var result *string
+	var errorCode *string
+	err := q.store.pool.QueryRow(ctx, `
+		SELECT id::text, kind, state, attempt_count, max_attempts,
+		       last_error_code, result_ref, created_at, finished_at
+		FROM jobs WHERE id = $1::uuid`, id).
+		Scan(&record.ID, &record.Kind, &record.State, &record.Attempts, &record.MaxAttempts,
+			&errorCode, &result, &record.CreatedAt, &finished)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.New(errs.CodeNotFound, "job not found").WithDetail("job_id", id)
+		}
+		return nil, fmt.Errorf("storage: get job: %w", err)
+	}
+	if errorCode != nil {
+		record.ErrorCode = *errorCode
+	}
+	if result != nil {
+		record.Result = *result
+	}
+	record.FinishedAt = finished
+	return &record, nil
+}
+
+// SetResult stores a handler result summary on a job.
+func (q *JobQueue) SetResult(ctx context.Context, id, result string) error {
+	if q == nil || q.store == nil || q.store.pool == nil {
+		return fmt.Errorf("storage: job queue not configured")
+	}
+	_, err := q.store.pool.Exec(ctx, `
+		UPDATE jobs SET result_ref = $2, updated_at = now() WHERE id = $1::uuid`, id, result)
+	if err != nil {
+		return fmt.Errorf("storage: set job result: %w", err)
 	}
 	return nil
 }

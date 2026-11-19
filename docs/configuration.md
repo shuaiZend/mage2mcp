@@ -42,6 +42,9 @@ Environment override: `MAGE2MCP_TOOLS_WRITES=true`.
 
 ## `database`
 
+Asynchronous import tools (`magento.import.*`) are registered only when
+`database.url` is set: the job queue lives in PostgreSQL.
+
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `url` | string | — | `postgres://` or `postgresql://` URL. Enables durable audit and confirmations. |

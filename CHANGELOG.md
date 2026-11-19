@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Asynchronous Magento imports: `magento.import.start` validates the batch shape
+  and enqueues a `magento:import` job in the PostgreSQL queue,
+  `magento.import.status` reports job state/attempts/result, and
+  `magento.import.cancel` cancels it. `cmd/worker` resolves the store from
+  configuration and stores the partial-success report on the job.
+- Shared Magento credential parsing and resolver construction
+  (`magento.ParseCredential`, `magento.NewResolverFromSettings`) used by both the
+  server and the worker.
 - `magento.invoice.capture` (charges the payment method for an existing invoice;
   confirmation-gated and documented as money-moving) and `magento.order.email`
   (sends the order confirmation email).
