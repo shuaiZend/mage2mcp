@@ -137,4 +137,18 @@ job=$(client import-retry "$cid" | awk '/JOB/{print $2}')
 client import-status "$job" | tee "$WORK/import-status.txt" | grep -q "JOB succeeded" || fail "import did not succeed"
 grep -q '"created":1' "$WORK/import-status.txt" || fail "import report missing created=1"
 
+echo "== configurable product =="
+out=$(client configurable)
+cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
+[[ -n "$cid" ]] || fail "no configurable confirmation id: $out"
+approve "$cid"
+client configurable-retry "$cid" | grep -q "CREATED CONFIGURABLE" || fail "configurable retry"
+
+echo "== order creation =="
+out=$(client order)
+cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
+[[ -n "$cid" ]] || fail "no order confirmation id: $out"
+approve "$cid"
+client order-retry "$cid" | grep -q "ORDER 99" || fail "order retry"
+
 echo "E2E PASS"

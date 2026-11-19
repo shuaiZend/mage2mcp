@@ -139,6 +139,21 @@ func productArgs() map[string]any {
 	}
 }
 
+func orderArgs() map[string]any {
+	address := map[string]any{
+		"firstname": "Ada", "lastname": "Lovelace",
+		"street": []string{"1 Analytical Engine Way"}, "city": "London",
+		"postcode": "N1 9GU", "country_id": "GB", "telephone": "0123456789",
+	}
+	return map[string]any{
+		"instance": instance, "customer_id": 7,
+		"items":           []map[string]any{{"sku": "SKU-1", "qty": 2}},
+		"billing_address": address, "shipping_address": address,
+		"shipping_carrier_code": "flatrate", "shipping_method_code": "flatrate",
+		"payment_method": "checkmo",
+	}
+}
+
 func importCSV() string {
 	return "sku,name,type_id,price,attribute_set_id,description,url_key,meta_title,meta_description\n" +
 		"E2E-2,Imported Widget,simple,12.50,4," +
@@ -248,6 +263,88 @@ func main() {
 		}
 		_ = json.Unmarshal(result.StructuredContent, &out)
 		fmt.Println("JOB", out.JobID)
+	case "configurable":
+		parent := productArgs()
+		parent["sku"] = "E2E-CFG"
+		parent["name"] = "E2E Configurable"
+		parent["type_id"] = "configurable"
+		parent["url_key"] = "e2e-configurable"
+		args := map[string]any{
+			"instance": instance,
+			"parent":   parent,
+			"variant_attributes": []map[string]any{{
+				"attribute_id": 93, "code": "color",
+				"values": []map[string]any{{"value_index": 12, "label": "Red"}},
+			}},
+			"children": []map[string]any{{
+				"sku": "E2E-CFG-RED", "attributes": map[string]string{"color": "12"},
+				"price": "19.99", "url_key": "e2e-configurable-red",
+			}},
+		}
+		result, err := callTool("magento.configurable.create", args)
+		if err != nil {
+			fmt.Println("CONFIGURABLE FAIL:", err)
+			os.Exit(1)
+		}
+		code, details := errorDetails(result)
+		if code == "confirmation_required" {
+			fmt.Println("CONFIRMATION", details["confirmation_id"])
+			return
+		}
+		fmt.Println("UNEXPECTED", code, string(result.StructuredContent))
+	case "configurable-retry":
+		parent := productArgs()
+		parent["sku"] = "E2E-CFG"
+		parent["name"] = "E2E Configurable"
+		parent["type_id"] = "configurable"
+		parent["url_key"] = "e2e-configurable"
+		args := map[string]any{
+			"instance": instance, "confirmation_id": os.Args[2],
+			"parent": parent,
+			"variant_attributes": []map[string]any{{
+				"attribute_id": 93, "code": "color",
+				"values": []map[string]any{{"value_index": 12, "label": "Red"}},
+			}},
+			"children": []map[string]any{{
+				"sku": "E2E-CFG-RED", "attributes": map[string]string{"color": "12"},
+				"price": "19.99", "url_key": "e2e-configurable-red",
+			}},
+		}
+		result, err := callTool("magento.configurable.create", args)
+		if err != nil || result.IsError {
+			code, _ := errorDetails(result)
+			fmt.Println("CONFIGURABLE RETRY FAIL:", err, code, string(result.StructuredContent))
+			os.Exit(1)
+		}
+		fmt.Println("CREATED CONFIGURABLE", string(result.StructuredContent))
+	case "order":
+		result, err := callTool("magento.order.create", orderArgs())
+		if err != nil {
+			fmt.Println("ORDER FAIL:", err)
+			os.Exit(1)
+		}
+		code, details := errorDetails(result)
+		if code == "confirmation_required" {
+			fmt.Println("CONFIRMATION", details["confirmation_id"])
+			return
+		}
+		fmt.Println("UNEXPECTED", code, string(result.StructuredContent))
+	case "order-retry":
+		args := orderArgs()
+		args["confirmation_id"] = os.Args[2]
+		result, err := callTool("magento.order.create", args)
+		if err != nil || result.IsError {
+			code, _ := errorDetails(result)
+			fmt.Println("ORDER RETRY FAIL:", err, code, string(result.StructuredContent))
+			os.Exit(1)
+		}
+		var out struct {
+			Order struct {
+				EntityID int `json:"entity_id"`
+			} `json:"order"`
+		}
+		_ = json.Unmarshal(result.StructuredContent, &out)
+		fmt.Println("ORDER", out.Order.EntityID)
 	case "import-status":
 		jobID := os.Args[2]
 		deadline := time.Now().Add(90 * time.Second)

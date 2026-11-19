@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The end-to-end test now also covers configurable product creation and order
+  creation through the admin cart flow (both through the confirmation gate), with
+  fake Magento cart and configurable endpoints.
+
+### Added
+
 - `magento.order.create`: places an order for an existing customer through
   Magento's admin cart flow (cart, items, shipping information, place order).
   Totals are computed by Magento; the tool is confirmation-gated, validates
