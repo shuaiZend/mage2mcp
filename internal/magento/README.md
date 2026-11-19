@@ -13,7 +13,8 @@ No plugin is installed and the Magento database is never touched.
   reads, stock/MSI reads, order status history, invoice/shipment/creditmemo reads,
   product deletion (destructive), configurable child unlinking, and MSI source
   unassignment — all writes require two-step confirmation. Catalog discovery
-  covers attribute options and category product listings.
+  covers attribute options and category product listings. Customer reads use a
+  PII-safe projection: email, name, and addresses are never returned.
 - `Register(reg, svc)` — read tools; `RegisterWrites(reg, svc)` — write tools
   (require confirmation and `tools.writes`).
 

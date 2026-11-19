@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento customer reads with a PII-safe projection:
+  `magento.customer.get` and `magento.customer.search` (exact email filter).
+  Responses carry id, group, website, store, and timestamps only; email, name,
+  and addresses are never echoed, and the search `fields` projection does not
+  request them.
 - Magento catalog discovery: `magento.configurable.children`,
   `magento.attributes.options` (select option value_index for variants), and
   `magento.category.products` (paginated products in a category).
