@@ -74,9 +74,7 @@ echo "== fake magento =="
 "$WORK/bin/fake-magento" "$MAGENTO_PORT" >"$WORK/magento.log" 2>&1 &
 MAGENTO_PID=$!
 
-echo "== worker and server =="
-"$WORK/bin/worker" -config "$WORK/config.yaml" >"$WORK/worker.log" 2>&1 &
-WORKER_PID=$!
+echo "== server =="
 "$WORK/bin/server" -config "$WORK/config.yaml" >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 1 30); do
@@ -84,6 +82,10 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 curl -fsS "http://127.0.0.1:${API_PORT}/healthz" >/dev/null
+
+echo "== worker =="
+"$WORK/bin/worker" -config "$WORK/config.yaml" >"$WORK/worker.log" 2>&1 &
+WORKER_PID=$!
 
 export E2E_ENDPOINT="http://127.0.0.1:${API_PORT}/mcp"
 export E2E_INSTANCE="store-us"

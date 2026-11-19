@@ -114,7 +114,9 @@ jobs:
       - name: Build
         run: go build ./...
       - name: Test with race detector
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+        run: |
+          mapfile -t packages < <(go list ./... | grep -v '/test/e2e/')
+          go test -race -covermode=atomic -coverprofile=coverage.out "${packages[@]}"
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Enforce coverage floor
