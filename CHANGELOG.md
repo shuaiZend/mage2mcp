@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.product.media.upload`: confirmation-gated image upload with a 5 MiB
+  decoded payload ceiling, MIME/filename allowlists, media-type subset and
+  duplicate checks, and label/position bounds.
 - Magento customer reads with a PII-safe projection:
   `magento.customer.get` and `magento.customer.search` (exact email filter).
   Responses carry id, group, website, store, and timestamps only; email, name,

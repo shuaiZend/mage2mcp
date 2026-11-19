@@ -214,6 +214,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newProductCreateTool(lookup), newProductUpdateTool(lookup), newConfigurableCreateTool(lookup),
 		newConfigurableAddChildTool(lookup), newInventoryAssignTool(lookup), newImportExecuteTool(lookup),
 		newProductDeleteTool(lookup), newRemoveChildTool(lookup), newUnassignSourceItemsTool(lookup),
+		newMediaUploadTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -570,6 +571,61 @@ func newUnassignSourceItemsTool(lookup serviceLookup) registry.Tool {
 					return nil, unassignSourceItemsOutput{}, err
 				}
 				return nil, unassignSourceItemsOutput{Unassigned: len(refs)}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	mediaUploadToolName    = "magento.product.media.upload"
+	mediaUploadToolTitle   = "Upload product media"
+	mediaUploadDescription = "Magento write operation: adds an image to a product gallery " +
+		"(POST /rest/{store_code}/V1/products/{sku}/media) on the resolved instance. " +
+		"The payload is base64 and capped at 5 MiB decoded; mime_type, filename, and media types are validated. Requires human confirmation."
+
+	mediaUploadSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
+		"filename": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "description": "Safe file name, e.g. front.jpg."},
+		"mime_type": {"type": "string", "enum": ["image/jpeg", "image/png", "image/webp", "image/gif"]},
+		"data_base64": {"type": "string", "maxLength": 6990508, "description": "Base64 image content, at most 5 MiB decoded."},
+		"label": {"type": "string", "maxLength": 255},
+		"position": {"type": "integer", "minimum": 0, "maximum": 1000},
+		"types": {"type": "array", "items": {"type": "string", "enum": ["image", "small_image", "thumbnail", "swatch_image"]}, "maxItems": 4}
+	}, "required": ["instance", "sku", "filename", "mime_type", "data_base64"], "additionalProperties": false}`
+)
+
+type mediaUploadInput struct {
+	Instance   string   `json:"instance"`
+	SKU        string   `json:"sku"`
+	Filename   string   `json:"filename"`
+	MIMEType   string   `json:"mime_type"`
+	DataBase64 string   `json:"data_base64"`
+	Label      string   `json:"label"`
+	Position   int      `json:"position"`
+	Types      []string `json:"types"`
+}
+
+type mediaUploadOutput struct {
+	Media MediaEntry `json:"media"`
+}
+
+func newMediaUploadTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(mediaUploadToolName, mediaUploadToolTitle, mediaUploadDescription, capabilityProductWrite)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(mediaUploadToolName, mediaUploadToolTitle, mediaUploadDescription, mediaUploadSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in mediaUploadInput) (*mcp.CallToolResult, mediaUploadOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, mediaUploadOutput{}, err
+				}
+				media, err := svc.UploadMedia(ctx, in.SKU, MediaUploadInput{
+					Label: in.Label, Position: in.Position, Types: in.Types,
+					Filename: in.Filename, MIMEType: in.MIMEType, DataBase64: in.DataBase64,
+				})
+				if err != nil {
+					return nil, mediaUploadOutput{}, err
+				}
+				return nil, mediaUploadOutput{Media: *media}, nil
 			})
 		return nil
 	}

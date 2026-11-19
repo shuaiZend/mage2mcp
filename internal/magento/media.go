@@ -4,9 +4,13 @@ package magento
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strings"
+	"unicode"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
@@ -42,4 +46,124 @@ func (s *Service) ProductMedia(ctx context.Context, sku string) ([]MediaEntry, e
 		entries = []MediaEntry{}
 	}
 	return entries, nil
+}
+
+const (
+	maxMediaBytes      = 5 << 20 // decoded payload ceiling
+	maxMediaLabelBytes = 255
+	maxMediaPosition   = 1000
+)
+
+var (
+	mediaFilenameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	mediaTypes      = map[string]bool{"image": true, "small_image": true, "thumbnail": true, "swatch_image": true}
+	mediaMIMETypes  = map[string]bool{
+		"image/jpeg": true, "image/png": true, "image/webp": true, "image/gif": true,
+	}
+)
+
+// MediaUploadInput is one media upload request.
+type MediaUploadInput struct {
+	Label      string
+	Position   int
+	Types      []string
+	Filename   string
+	MIMEType   string
+	DataBase64 string
+}
+
+// UploadMedia adds an image to a product gallery with
+// POST /products/{sku}/media. The payload is bounded and the MIME type and
+// file name are validated before any bytes are sent.
+func (s *Service) UploadMedia(ctx context.Context, sku string, in MediaUploadInput) (*MediaEntry, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento media service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return nil, err
+	}
+	content, err := validateMediaUpload(in)
+	if err != nil {
+		return nil, err
+	}
+	entry := mediaUploadEntry{
+		MediaType: "image",
+		Label:     in.Label,
+		Position:  in.Position,
+		Types:     in.Types,
+	}
+	entry.Content.Base64 = in.DataBase64
+	entry.Content.Type = in.MIMEType
+	entry.Content.Name = in.Filename
+	body := mediaUploadBody{Entry: entry}
+	raw, err := s.client.do(ctx, http.MethodPost, "/products/"+url.PathEscape(sku)+"/media", nil, body)
+	if err != nil {
+		return nil, err
+	}
+	var created MediaEntry
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &created); err != nil {
+			return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media payload").WithCause(err)
+		}
+	}
+	_ = content
+	return &created, nil
+}
+
+type mediaUploadBody struct {
+	Entry mediaUploadEntry `json:"entry"`
+}
+
+type mediaUploadEntry struct {
+	MediaType string   `json:"media_type"`
+	Label     string   `json:"label,omitempty"`
+	Position  int      `json:"position,omitempty"`
+	Disabled  bool     `json:"disabled"`
+	Types     []string `json:"types,omitempty"`
+	Content   struct {
+		Base64 string `json:"base64_encoded_data"`
+		Type   string `json:"type"`
+		Name   string `json:"name"`
+	} `json:"content"`
+}
+
+// validateMediaUpload checks the upload before any bytes leave the gateway.
+func validateMediaUpload(in MediaUploadInput) ([]byte, error) {
+	if !mediaMIMETypes[in.MIMEType] {
+		return nil, invalidf("mime_type must be one of image/jpeg, image/png, image/webp, image/gif")
+	}
+	if !mediaFilenameRE.MatchString(in.Filename) {
+		return nil, invalidf("filename must match %s", mediaFilenameRE.String())
+	}
+	if len(in.Label) > maxMediaLabelBytes || strings.ContainsFunc(in.Label, unicode.IsControl) {
+		return nil, invalidf("label must be at most %d bytes and contain no control characters", maxMediaLabelBytes)
+	}
+	if in.Position < 0 || in.Position > maxMediaPosition {
+		return nil, invalidf("position must be between 0 and %d", maxMediaPosition)
+	}
+	seen := make(map[string]bool, len(in.Types))
+	for _, mediaType := range in.Types {
+		if !mediaTypes[mediaType] {
+			return nil, invalidf("types must be a subset of image, small_image, thumbnail, swatch_image")
+		}
+		if seen[mediaType] {
+			return nil, invalidf("media types must not repeat")
+		}
+		seen[mediaType] = true
+	}
+	if in.DataBase64 == "" {
+		return nil, invalidf("data_base64 is required")
+	}
+	// Bound before decoding so an oversized body is rejected without allocating.
+	if base64.StdEncoding.DecodedLen(len(in.DataBase64)) > maxMediaBytes {
+		return nil, invalidf("media payload must be at most %d bytes", maxMediaBytes)
+	}
+	content, err := base64.StdEncoding.DecodeString(in.DataBase64)
+	if err != nil {
+		return nil, invalidf("data_base64 is not valid base64")
+	}
+	if len(content) == 0 {
+		return nil, invalidf("media payload must not be empty")
+	}
+	return content, nil
 }
