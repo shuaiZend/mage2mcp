@@ -109,7 +109,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newProductsBatchTool(lookup), newProductSEOTool(lookup), newCustomerAddressesTool(lookup),
 		newStockStatusBatchTool(lookup), newTierPricesTool(lookup),
 		newInventorySourcesTool(lookup), newInventoryStocksTool(lookup), newMediaGetTool(lookup),
-		newOrderSummaryTool(lookup),
+		newOrderSummaryTool(lookup), newProductOptionsTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1625,6 +1625,50 @@ func newOrderSummaryTool(lookup serviceLookup) registry.Tool {
 					return nil, salesSummaryOutput{}, err
 				}
 				return nil, salesSummaryOutput{Summary: *summary}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	productOptionsToolName  = "magento.product.options"
+	productOptionsToolTitle = "List Magento product custom options"
+
+	productOptionsToolDescription = "Lists a product's custom options (not configurable variant options) " +
+		"(GET /rest/{store_code}/V1/products/{sku}/options), including each value's price and price type. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	productOptionsSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `"}
+	}, "required": ["instance", "sku"], "additionalProperties": false}`
+)
+
+type productOptionsInput struct {
+	Instance string `json:"instance"`
+	SKU      string `json:"sku"`
+}
+
+type productOptionsOutput struct {
+	Options []ProductOption `json:"options"`
+}
+
+func newProductOptionsTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(productOptionsToolName, productOptionsToolTitle, productOptionsToolDescription)
+	t.Capability = "magento.product.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(productOptionsToolName, productOptionsToolTitle, productOptionsToolDescription, productOptionsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productOptionsInput) (*mcp.CallToolResult, productOptionsOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productOptionsOutput{}, err
+				}
+				options, err := svc.ProductOptions(ctx, in.SKU)
+				if err != nil {
+					return nil, productOptionsOutput{}, err
+				}
+				return nil, productOptionsOutput{Options: options}, nil
 			})
 		return nil
 	}

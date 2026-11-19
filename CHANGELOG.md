@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.product.options` (read): a product's custom options with each value's
+  price and price type.
+
+### Added
+
 - Tool contract tests: the 90 Magento tool names are pinned in
   `testdata/tool-names.txt`, and `docs/implemented-tools.md` is checked against
   the registry, so an accidental rename or doc drift fails CI.
