@@ -29,6 +29,7 @@ var writeToolNames = []string{
 	categoryCreateToolName, categoryUpdateToolName, categoryAssignToolName,
 	productLinkAddToolName, productLinkRemoveToolName, invoiceCaptureToolName, orderEmailToolName,
 	mediaDeleteToolName, orderCreateToolName, tierPricesSetToolName, inventoryTransferToolName,
+	customerCreateToolName, customerUpdateToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -381,6 +382,8 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 		"order.create":              orderCreateSchema,
 		"product.tier_prices.set":   tierPricesSetSchema,
 		"inventory.transfer":        inventoryTransferSchema,
+		"customer.create":           customerCreateSchema,
+		"customer.update":           customerUpdateSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {

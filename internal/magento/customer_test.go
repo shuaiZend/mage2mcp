@@ -5,6 +5,7 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -118,5 +119,85 @@ func TestCustomerAddressesOmitsPII(t *testing.T) {
 	}
 	if _, err := svc.CustomerAddresses(context.Background(), 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("validation err = %v", err)
+	}
+}
+
+func TestCreateCustomerSendsPIIButReturnsProjection(t *testing.T) {
+	var body map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":9,"group_id":1,"website_id":1,"store_id":1,"created_at":"2026-11-19 10:00:00",
+			"email":"new@example.com","firstname":"Ada","lastname":"Lovelace"}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	customer, err := svc.CreateCustomer(context.Background(), CustomerCreateInput{
+		Email: "new@example.com", Firstname: "Ada", Lastname: "Lovelace", WebsiteID: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := body["customer"].(map[string]any)
+	if payload["email"] != "new@example.com" || payload["firstname"] != "Ada" || payload["website_id"] != float64(1) {
+		t.Fatalf("body = %+v", payload)
+	}
+	raw, _ := json.Marshal(customer)
+	for _, forbidden := range []string{"new@example.com", "Ada", "Lovelace"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("projection leaks %q: %s", forbidden, raw)
+		}
+	}
+	if customer.ID != 9 || customer.WebsiteID != 1 {
+		t.Fatalf("customer = %+v", customer)
+	}
+}
+
+func TestUpdateCustomerPartial(t *testing.T) {
+	var body map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":9,"group_id":2,"website_id":1,"store_id":1}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	group := 2
+	customer, err := svc.UpdateCustomer(context.Background(), CustomerUpdateInput{CustomerID: 9, GroupID: &group})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := body["customer"].(map[string]any)
+	if payload["group_id"] != float64(2) {
+		t.Fatalf("body = %+v", payload)
+	}
+	if _, ok := payload["email"]; ok {
+		t.Fatal("unset email must be omitted")
+	}
+	if customer.GroupID != 2 {
+		t.Fatalf("customer = %+v", customer)
+	}
+}
+
+func TestCustomerWriteValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	if _, err := svc.CreateCustomer(ctx, CustomerCreateInput{Email: "bad", Firstname: "A", Lastname: "B", WebsiteID: 1}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("email err = %v", err)
+	}
+	if _, err := svc.CreateCustomer(ctx, CustomerCreateInput{Email: "a@example.com", Firstname: "", Lastname: "B", WebsiteID: 1}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("name err = %v", err)
+	}
+	if _, err := svc.CreateCustomer(ctx, CustomerCreateInput{Email: "a@example.com", Firstname: "A", Lastname: "B", WebsiteID: 0}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("website err = %v", err)
+	}
+	if _, err := svc.UpdateCustomer(ctx, CustomerUpdateInput{CustomerID: 9}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("empty update err = %v", err)
+	}
+	bad := -1
+	if _, err := svc.UpdateCustomer(ctx, CustomerUpdateInput{CustomerID: 9, GroupID: &bad}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("group err = %v", err)
 	}
 }
