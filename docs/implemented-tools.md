@@ -26,6 +26,7 @@ Common behavior:
 |---|---|---|---|
 | `magento.product.get` | read | 30s | One product by SKU |
 | `magento.products.get` | read | 30s | Up to 50 products by SKU in one search (duplicates ignored) |
+| `magento.product.seo` | read | 30s | Deterministic SEO/content audit (description, short description, url_key, meta_title, meta_description, meta_keywords) with a score and suggestions |
 | `magento.configurable.children` | read | 30s | Child products linked to a configurable product |
 | `magento.product.search` | read | 30s | Search by name/SKU/type/status plus price and creation windows |
 | `magento.import.validate` | read | 30s | CSV/JSON preview with per-row errors; never writes |
@@ -65,9 +66,9 @@ Common behavior:
 | `magento.creditmemo.list` | read | 30s | Credit memos of one order |
 | `magento.creditmemo.get` | read | 30s | One credit memo by id |
 | `magento.sales.summary` | read | 30s | Per-day order count, grand-total revenue, and item quantity over a bounded window (max 1000 orders, truncation reported) |
-| `magento.product.create` | write + confirmation | 60s | Simple/virtual/downloadable/bundle create with EAV attributes |
-| `magento.product.update` | write + confirmation | 60s | Merge update of provided fields |
-| `magento.configurable.create` | write + confirmation | 60s | Children → parent options → links; staged non-atomic errors |
+| `magento.product.create` | write + confirmation | 60s | Simple/virtual/downloadable/bundle create with EAV attributes plus description, short_description, url_key, meta_title, meta_keywords, meta_description (SEO guidance in the schema) |
+| `magento.product.update` | write + confirmation | 60s | Merge update of provided fields, including SEO/content fields |
+| `magento.configurable.create` | write + confirmation | 60s | Children → parent options → links; staged non-atomic errors; parent supports SEO/content fields |
 | `magento.configurable.add_child` | write + confirmation | 60s | Link one variant |
 | `magento.inventory.assign` | write + confirmation | 60s | MSI source items, at most 100 per call |
 | `magento.import.execute` | write + confirmation | 60s | Bounded batch execution with partial-success report |

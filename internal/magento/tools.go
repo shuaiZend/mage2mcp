@@ -106,7 +106,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCreditmemoListTool(lookup), newCreditmemoGetTool(lookup),
 		newConfigurableChildrenTool(lookup), newAttributeOptionsTool(lookup), newCategoryProductsTool(lookup),
 		newCustomerGetTool(lookup), newCustomerSearchTool(lookup), newProductLinksTool(lookup),
-		newProductsBatchTool(lookup),
+		newProductsBatchTool(lookup), newProductSEOTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1288,6 +1288,50 @@ func newProductsBatchTool(lookup serviceLookup) registry.Tool {
 					return nil, productsBatchOutput{}, err
 				}
 				return nil, productsBatchOutput{Products: products}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	productSEOToolName  = "magento.product.seo"
+	productSEOToolTitle = "Audit Magento product SEO"
+
+	productSEOToolDescription = "Audits one product's content and SEO fields " +
+		"(GET /rest/{store_code}/V1/products/{sku}) and returns deterministic pass/warn/fail checks for description, " +
+		"short_description, url_key, meta_title, meta_description, and meta_keywords, plus a score. " +
+		"It suggests improvements but never generates copy. Read-only."
+
+	productSEOSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU."}
+	}, "required": ["instance", "sku"], "additionalProperties": false}`
+)
+
+type productSEOInput struct {
+	Instance string `json:"instance"`
+	SKU      string `json:"sku"`
+}
+
+type productSEOOutput struct {
+	Audit SEOAudit `json:"audit"`
+}
+
+func newProductSEOTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(productSEOToolName, productSEOToolTitle, productSEOToolDescription)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(productSEOToolName, productSEOToolTitle, productSEOToolDescription, productSEOSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productSEOInput) (*mcp.CallToolResult, productSEOOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productSEOOutput{}, err
+				}
+				audit, err := svc.AuditSEO(ctx, in.SKU)
+				if err != nil {
+					return nil, productSEOOutput{}, err
+				}
+				return nil, productSEOOutput{Audit: *audit}, nil
 			})
 		return nil
 	}

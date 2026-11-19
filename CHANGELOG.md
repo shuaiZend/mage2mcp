@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SEO/content fields on Magento product writes: `description`,
+  `short_description`, `url_key`, `meta_title`, `meta_keywords`, and
+  `meta_description` on create, update, and the configurable parent, with
+  length/slug/control-character validation and schema guidance for useful SEO
+  ranges. Setting them through the raw attributes map is rejected to avoid
+  duplicates.
+- `magento.product.seo`: deterministic audit of those fields with pass/warn/fail
+  checks, a score, and improvement suggestions (it never generates copy).
+- Import rows validate SEO attribute bounds alongside the other columns.
 - Magento product search gains `price_from`/`price_to` and
   `created_from`/`created_to` filters (decimal and date validation), and a new
   `magento.products.get` batch read for up to 50 SKUs in one search.

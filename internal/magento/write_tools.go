@@ -67,24 +67,31 @@ const (
 		"At most 100 items are accepted per call." +
 		instanceResolutionNote
 
-	instanceProp        = `"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}`
-	confirmationProp    = `"confirmation_id": {"type": "string", "maxLength": 128, "description": "Approval id from a confirmation_required response; resend the same arguments with this id to execute."}`
-	skuProp             = `"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}`
-	nameProp            = `"name": {"type": "string", "minLength": 1, "maxLength": 255}`
-	setProp             = `"attribute_set_id": {"type": "integer", "minimum": 1}`
-	typeIDProp          = `"type_id": {"type": "string", "enum": ["simple", "virtual", "downloadable", "bundle"]}`
-	priceProp           = `"price": {"type": "string", "pattern": "` + priceInputPattern + `", "description": "Decimal price string, up to 4 fraction digits."}`
-	statusProp          = `"status": {"type": "integer", "enum": [1, 2]}`
-	visibilityProp      = `"visibility": {"type": "integer", "enum": [1, 2, 3, 4]}`
-	websiteIDsProp      = `"website_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "maxItems": 50}`
-	categoryIDsProp     = `"category_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 500}`
-	attributesProp      = `"attributes": {"type": "object", "additionalProperties": {"type": "string", "maxLength": 255}, "description": "Custom EAV attributes keyed by attribute code."}`
-	childAttributesProp = `"attributes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "maxLength": 255}}`
-	quantityProp        = `"quantity": {"type": "integer", "minimum": 0, "description": "Optional default-source quantity assigned after the product exists."}`
+	instanceProp         = `"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}`
+	confirmationProp     = `"confirmation_id": {"type": "string", "maxLength": 128, "description": "Approval id from a confirmation_required response; resend the same arguments with this id to execute."}`
+	skuProp              = `"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}`
+	nameProp             = `"name": {"type": "string", "minLength": 1, "maxLength": 255}`
+	setProp              = `"attribute_set_id": {"type": "integer", "minimum": 1}`
+	typeIDProp           = `"type_id": {"type": "string", "enum": ["simple", "virtual", "downloadable", "bundle"]}`
+	priceProp            = `"price": {"type": "string", "pattern": "` + priceInputPattern + `", "description": "Decimal price string, up to 4 fraction digits."}`
+	statusProp           = `"status": {"type": "integer", "enum": [1, 2]}`
+	visibilityProp       = `"visibility": {"type": "integer", "enum": [1, 2, 3, 4]}`
+	websiteIDsProp       = `"website_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "maxItems": 50}`
+	categoryIDsProp      = `"category_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 500}`
+	attributesProp       = `"attributes": {"type": "object", "additionalProperties": {"type": "string", "maxLength": 255}, "description": "Custom EAV attributes keyed by attribute code."}`
+	childAttributesProp  = `"attributes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "maxLength": 255}}`
+	quantityProp         = `"quantity": {"type": "integer", "minimum": 0, "description": "Optional default-source quantity assigned after the product exists."}`
+	descriptionProp      = `"description": {"type": "string", "maxLength": 65535, "description": "Full product description (HTML allowed). For SEO, write at least 300 characters of unique, keyword-relevant copy; do not duplicate other products."}`
+	shortDescriptionProp = `"short_description": {"type": "string", "maxLength": 2048, "description": "Short summary shown in listings; a 1-2 sentence benefit statement works best."}`
+	urlKeyProp           = `"url_key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,254}$", "description": "SEO URL slug: lowercase letters, digits, and hyphens; include the main keyword, omit stop words."}`
+	metaTitleProp        = `"meta_title": {"type": "string", "maxLength": 255, "description": "SEO title tag. 30-60 characters is the useful range for search results; front-load the keyword and brand."}`
+	metaKeywordsProp     = `"meta_keywords": {"type": "string", "maxLength": 255, "description": "Optional comma-separated keywords; low ranking value, keep it short and relevant."}`
+	metaDescriptionProp  = `"meta_description": {"type": "string", "maxLength": 255, "description": "SEO meta description. 120-160 characters is the useful range; state the benefit and include a call to action."}`
+	seoProps             = descriptionProp + `, ` + shortDescriptionProp + `, ` + urlKeyProp + `, ` + metaTitleProp + `, ` + metaKeywordsProp + `, ` + metaDescriptionProp
 
-	productCreateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + typeIDProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + quantityProp + `}, "required": ["instance", "sku", "name", "attribute_set_id", "type_id", "price"], "additionalProperties": false}`
-	productUpdateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + attributesProp + `}, "required": ["instance", "sku"], "additionalProperties": false}`
-	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
+	productCreateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + typeIDProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + quantityProp + `, ` + seoProps + `}, "required": ["instance", "sku", "name", "attribute_set_id", "type_id", "price"], "additionalProperties": false}`
+	productUpdateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + attributesProp + `, ` + seoProps + `}, "required": ["instance", "sku"], "additionalProperties": false}`
+	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + seoProps + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
 	configurableAddChildSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "child_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}}, "required": ["instance", "parent_sku", "child_sku"], "additionalProperties": false}`
 	inventoryAssignSchema      = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "source_code", "quantity", "status"], "properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "source_code": {"type": "string", "pattern": "` + sourceCodeInputPattern + `"}, "quantity": {"type": "integer", "minimum": 0}, "status": {"type": "integer", "enum": [0, 1], "description": "1 in stock, 0 out of stock."}}}}}, "required": ["instance", "items"], "additionalProperties": false}`
 )
@@ -102,6 +109,13 @@ type productCreateInput struct {
 	CategoryIDs    []int             `json:"category_ids"`
 	Attributes     map[string]string `json:"attributes"`
 	Quantity       *int              `json:"quantity"`
+
+	Description      string `json:"description"`
+	ShortDescription string `json:"short_description"`
+	URLKey           string `json:"url_key"`
+	MetaTitle        string `json:"meta_title"`
+	MetaKeywords     string `json:"meta_keywords"`
+	MetaDescription  string `json:"meta_description"`
 }
 
 func (in productCreateInput) toCreateInput() CreateProductInput {
@@ -109,6 +123,8 @@ func (in productCreateInput) toCreateInput() CreateProductInput {
 		SKU: in.SKU, Name: in.Name, AttributeSetID: in.AttributeSetID, TypeID: in.TypeID,
 		Price: in.Price, Status: in.Status, Visibility: in.Visibility,
 		WebsiteIDs: in.WebsiteIDs, CategoryIDs: in.CategoryIDs, Attributes: in.Attributes, Quantity: in.Quantity,
+		Description: in.Description, ShortDescription: in.ShortDescription, URLKey: in.URLKey,
+		MetaTitle: in.MetaTitle, MetaKeywords: in.MetaKeywords, MetaDescription: in.MetaDescription,
 	}
 }
 
@@ -120,6 +136,13 @@ type productUpdateInput struct {
 	Status     *int              `json:"status"`
 	Visibility *int              `json:"visibility"`
 	Attributes map[string]string `json:"attributes"`
+
+	Description      *string `json:"description"`
+	ShortDescription *string `json:"short_description"`
+	URLKey           *string `json:"url_key"`
+	MetaTitle        *string `json:"meta_title"`
+	MetaKeywords     *string `json:"meta_keywords"`
+	MetaDescription  *string `json:"meta_description"`
 }
 
 type variantAttributeInput struct {
@@ -286,6 +309,8 @@ func newProductUpdateTool(lookup serviceLookup) registry.Tool {
 				}
 				product, err := svc.Update(ctx, in.SKU, UpdateProductInput{
 					Name: in.Name, Price: in.Price, Status: in.Status, Visibility: in.Visibility, Attributes: in.Attributes,
+					Description: in.Description, ShortDescription: in.ShortDescription, URLKey: in.URLKey,
+					MetaTitle: in.MetaTitle, MetaKeywords: in.MetaKeywords, MetaDescription: in.MetaDescription,
 				})
 				if err != nil {
 					return nil, productWriteOutput{}, err

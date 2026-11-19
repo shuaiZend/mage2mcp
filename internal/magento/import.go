@@ -209,9 +209,13 @@ func validateImportRow(row ImportRow, seen map[string]int) []ImportRowError {
 	if row.Price != "" && !priceRE.MatchString(row.Price) {
 		add("price", "price must be a non-negative decimal with at most 4 decimals")
 	}
-	for code := range row.Attributes {
+	for code, value := range row.Attributes {
 		if !attributeCodeRE.MatchString(code) {
 			add("attributes", "attribute code must match ^[a-z0-9_]{1,64}$: "+code)
+			continue
+		}
+		if err := validateSEOAttribute(code, value); err != nil {
+			add(code, err.Error())
 		}
 	}
 	return problems
