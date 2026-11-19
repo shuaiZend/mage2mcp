@@ -289,7 +289,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCustomerAddressCreateTool(lookup), newCustomerAddressDeleteTool(lookup),
 		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup), newBulkOptionCreateTool(lookup),
 		newConfigurableUpdateTool(lookup), newInventorySourceCreateTool(lookup), newStockSourceLinkTool(lookup),
-		newStockSourceUnlinkTool(lookup),
+		newStockSourceUnlinkTool(lookup), newCreateVariationsTool(lookup),
 	}
 	tools = append(tools, newDocumentEmailTools(lookup)...)
 	for _, tool := range tools {
@@ -357,6 +357,7 @@ func writeToolSchemas() map[string]string {
 		inventorySourceCreateToolName: inventorySourceCreateSchema,
 		stockSourceLinkToolName:       stockSourceLinkSchema,
 		stockSourceUnlinkToolName:     stockSourceUnlinkSchema,
+		createVariationsToolName:      createVariationsSchema,
 	}
 }
 
@@ -2483,6 +2484,63 @@ func newStockSourceUnlinkTool(lookup serviceLookup) registry.Tool {
 			}
 			return nil, stockSourceUnlinkOutput{StockID: in.StockID, SourceCode: in.SourceCode, Unlinked: true}, nil
 		})
+		return nil
+	}
+	return t
+}
+
+const (
+	createVariationsToolName    = "magento.configurable.create_variations"
+	createVariationsToolTitle   = "Create configurable variations"
+	createVariationsDescription = "Magento write operation: creates simple children for an existing configurable parent and links them " +
+		"(POST /rest/{store_code}/V1/products then POST /rest/{store_code}/V1/configurable-products/{sku}/child) on the resolved instance. " +
+		"Existing SKUs are skipped, so the call is idempotent per SKU; failures are reported per row and earlier children are not rolled back. " +
+		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+
+	createVariationsSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+		"variants": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object",
+			"additionalProperties": false, "required": ["sku", "attributes"],
+			"properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+				"attributes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 255}}}}}
+	}, "required": ["instance", "parent_sku", "variants"], "additionalProperties": false}`
+)
+
+type variationWire struct {
+	SKU        string            `json:"sku"`
+	Attributes map[string]string `json:"attributes"`
+}
+
+type createVariationsInput struct {
+	Instance  string          `json:"instance"`
+	ParentSKU string          `json:"parent_sku"`
+	Variants  []variationWire `json:"variants"`
+}
+
+type createVariationsOutput struct {
+	Result VariationResult `json:"result"`
+}
+
+func newCreateVariationsTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(createVariationsToolName, createVariationsToolTitle, createVariationsDescription, capabilityConfigurableWrite)
+	t.Timeout = 120 * time.Second
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(createVariationsToolName, createVariationsToolTitle, createVariationsDescription, createVariationsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in createVariationsInput) (*mcp.CallToolResult, createVariationsOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, createVariationsOutput{}, err
+				}
+				variants := make([]VariationInput, 0, len(in.Variants))
+				for _, variant := range in.Variants {
+					variants = append(variants, VariationInput{SKU: variant.SKU, Attributes: variant.Attributes})
+				}
+				result, err := svc.CreateVariations(ctx, in.ParentSKU, variants)
+				if err != nil {
+					return nil, createVariationsOutput{}, err
+				}
+				return nil, createVariationsOutput{Result: *result}, nil
+			})
 		return nil
 	}
 	return t

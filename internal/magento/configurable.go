@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -532,4 +533,115 @@ func (s *Service) UpdateConfigurable(ctx context.Context, sku string, in UpdateP
 		return nil, invalidf("product %q is %s, not configurable", sku, product.TypeID)
 	}
 	return s.Update(ctx, sku, in)
+}
+
+const maxVariations = 50
+
+// VariationInput is one child product to create under an existing parent.
+type VariationInput struct {
+	SKU        string
+	Attributes map[string]string
+}
+
+// VariationRow is one variation's outcome.
+type VariationRow struct {
+	SKU    string `json:"sku"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// VariationResult reports a partial-success variation creation.
+type VariationResult struct {
+	Total   int            `json:"total"`
+	Created int            `json:"created"`
+	Skipped int            `json:"skipped"`
+	Failed  int            `json:"failed"`
+	Rows    []VariationRow `json:"rows"`
+}
+
+// CreateVariations creates simple children for an existing configurable parent
+// and links them. Existing SKUs are skipped, so the call is idempotent per SKU;
+// failures are reported per row and earlier children are not rolled back.
+func (s *Service) CreateVariations(ctx context.Context, parentSKU string, variants []VariationInput) (*VariationResult, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento product service is not configured")
+	}
+	if err := validateSKU(parentSKU); err != nil {
+		return nil, err
+	}
+	if len(variants) == 0 {
+		return nil, invalidf("at least one variation is required")
+	}
+	if len(variants) > maxVariations {
+		return nil, invalidf("at most %d variations are allowed per call", maxVariations)
+	}
+	seen := make(map[string]struct{}, len(variants))
+	for _, variant := range variants {
+		if err := validateSKU(variant.SKU); err != nil {
+			return nil, err
+		}
+		key := strings.ToUpper(variant.SKU)
+		if _, duplicate := seen[key]; duplicate {
+			return nil, invalidf("sku %q is duplicated", variant.SKU)
+		}
+		seen[key] = struct{}{}
+		if len(variant.Attributes) == 0 {
+			return nil, invalidf("variation %q needs at least one attribute value", variant.SKU)
+		}
+		for code, value := range variant.Attributes {
+			if !attributeCodeRE.MatchString(code) {
+				return nil, invalidf("attribute code %q is invalid", code)
+			}
+			if strings.TrimSpace(value) == "" {
+				return nil, invalidf("attribute %q has an empty value for %q", code, variant.SKU)
+			}
+		}
+	}
+	parent, err := s.Get(ctx, parentSKU)
+	if err != nil {
+		return nil, err
+	}
+	if parent.TypeID != "configurable" {
+		return nil, invalidf("product %q is %s, not configurable", parentSKU, parent.TypeID)
+	}
+	result := &VariationResult{Total: len(variants), Rows: make([]VariationRow, 0, len(variants))}
+	for _, variant := range variants {
+		row := VariationRow{SKU: variant.SKU}
+		if _, err := s.Get(ctx, variant.SKU); err == nil {
+			row.Status = "exists"
+			result.Skipped++
+			result.Rows = append(result.Rows, row)
+			continue
+		} else if errs.CodeOf(err) != errs.CodeNotFound {
+			row.Status = "failed"
+			row.Error = importErrorMessage(err)
+			result.Failed++
+			result.Rows = append(result.Rows, row)
+			continue
+		}
+		name := parent.Name + " " + variant.SKU
+		child, err := s.Create(ctx, CreateProductInput{
+			SKU: variant.SKU, Name: name, AttributeSetID: parent.AttributeSetID,
+			TypeID: "simple", Price: fmt.Sprintf("%.2f", parent.Price),
+			Status: 1, Visibility: 4, Attributes: variant.Attributes,
+		})
+		if err != nil {
+			row.Status = "failed"
+			row.Error = importErrorMessage(err)
+			result.Failed++
+			result.Rows = append(result.Rows, row)
+			continue
+		}
+		if err := s.AddChild(ctx, parentSKU, child.SKU); err != nil {
+			row.Status = "failed"
+			row.Error = importErrorMessage(err)
+			result.Failed++
+			result.Rows = append(result.Rows, row)
+			continue
+		}
+		row.Status = "created"
+		result.Created++
+		result.Rows = append(result.Rows, row)
+	}
+	return result, nil
 }
