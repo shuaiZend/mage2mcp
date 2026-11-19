@@ -128,6 +128,21 @@ out=$(client create-retry "$cid" 2>&1 || true)
 echo "$out"
 echo "$out" | grep -q "CREATED" || fail "create retry"
 
+echo "== invalid write rejected before confirmation =="
+out=$(client invalid-write 2>&1 || true)
+echo "$out"
+echo "$out" | grep -q "INVALID WRITE CODE invalid_argument" || fail "invalid write was not rejected"
+
+echo "== confirmation binds arguments =="
+out=$(client mismatch 2>&1 || true)
+echo "$out"
+cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
+[[ -n "$cid" ]] || fail "no mismatch confirmation id: $out"
+approve "$cid"
+out=$(client mismatch-retry "$cid" 2>&1 || true)
+echo "$out"
+echo "$out" | grep -q "MISMATCH RETRY CODE confirmation_param_mismatch" || fail "changed arguments were not rejected"
+
 echo "== SEO audit =="
 client seo | grep -q "SEO SCORE" || fail "seo audit"
 

@@ -355,6 +355,39 @@ func main() {
 		}
 		_ = json.Unmarshal(result.StructuredContent, &out)
 		fmt.Println("ORDER", out.Order.EntityID)
+	case "invalid-write":
+		args := productArgs()
+		args["bogus"] = true
+		result, err := callTool("magento.product.create", args)
+		if err != nil {
+			fmt.Println("INVALID WRITE FAIL:", err)
+			os.Exit(1)
+		}
+		code, _ := errorDetails(result)
+		fmt.Println("INVALID WRITE CODE", code)
+	case "mismatch":
+		result, err := callTool("magento.product.create", productArgs())
+		if err != nil {
+			fmt.Println("MISMATCH START FAIL:", err)
+			os.Exit(1)
+		}
+		code, details := errorDetails(result)
+		if code == "confirmation_required" {
+			fmt.Println("CONFIRMATION", details["confirmation_id"])
+			return
+		}
+		fmt.Println("UNEXPECTED", code)
+	case "mismatch-retry":
+		args := productArgs()
+		args["name"] = "Changed After Approval"
+		args["confirmation_id"] = os.Args[2]
+		result, err := callTool("magento.product.create", args)
+		if err != nil {
+			fmt.Println("MISMATCH RETRY FAIL:", err)
+			os.Exit(1)
+		}
+		code, _ := errorDetails(result)
+		fmt.Println("MISMATCH RETRY CODE", code)
 	case "import-status":
 		jobID := os.Args[2]
 		deadline := time.Now().Add(90 * time.Second)
