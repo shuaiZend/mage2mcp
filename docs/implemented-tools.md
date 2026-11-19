@@ -29,7 +29,7 @@ Common behavior:
 | `magento.product.seo` | read | 30s | Deterministic SEO/content audit (description, short description, url_key, meta_title, meta_description, meta_keywords) with a score and suggestions |
 | `magento.configurable.children` | read | 30s | Child products linked to a configurable product |
 | `magento.product.search` | read | 30s | Search by name/SKU/type/status plus price and creation windows |
-| `magento.import.validate` | read | 30s | CSV/JSON preview with per-row errors; never writes |
+| `magento.import.validate` | read | 30s | CSV/JSON preview with per-row errors plus bounded SEO/content warnings; never writes |
 | `magento.category.get` | read | 30s | One category by id |
 | `magento.category.tree` | read | 30s | Category subtree under a root, flattened depth-first (depth 1-5) |
 | `magento.category.products` | read | 30s | Products assigned to a category, paginated |
@@ -72,7 +72,7 @@ Common behavior:
 | `magento.configurable.add_child` | write + confirmation | 60s | Link one variant |
 | `magento.inventory.assign` | write + confirmation | 60s | MSI source items, at most 100 per call |
 | `magento.import.execute` | write + confirmation | 60s | Bounded batch execution with partial-success report |
-| `magento.import.start` | write + confirmation | 30s | Queues a bounded import for the worker; optional `idempotency_key` deduplicates submissions; requires the database queue |
+| `magento.import.start` | write + confirmation | 30s | Queues a bounded import for the worker (up to 2 attempts on pre-execution failures); optional `idempotency_key` deduplicates submissions; requires the database queue |
 | `magento.import.status` | read | 30s | Job state, attempts, error code, live progress (`done`/`total`), and a bounded result report (first 100 failed rows) |
 | `magento.import.cancel` | write + confirmation | 30s | Cancels a queued or running import job |
 | `magento.product.delete` | destructive + confirmation | 60s | Deletes one product by SKU; irreversible, 404 on unknown SKU |

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Import validation reports bounded SEO/content warnings (missing or short
+  description, missing url_key, meta_title outside 30-60, meta_description
+  outside 120-160) without failing rows.
+- Async import jobs allow two attempts for pre-execution/upstream failures; the
+  retry is safe because creates skip existing SKUs and updates are set
+  operations.
+- A docs contract test asserts `docs/magento-fields.md` and the product write
+  schema agree on every SEO field and mention the main write tools.
 - `docs/magento-fields.md`: field requirements, limits, and SEO guidance for
   every Magento write tool, linked from the docs index and the tool reference.
 - Configurable creation now rejects a child value that is not one of the

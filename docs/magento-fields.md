@@ -87,5 +87,7 @@ CSV/JSON rows use `sku`, `name`, `type_id`, `price`, optional
 `attribute_set_id`, and any other column as a custom attribute. SEO columns
 (`description`, `short_description`, `url_key`, `meta_title`, `meta_keywords`,
 `meta_description`) are validated with the same rules as the product tools.
-`magento.import.execute` runs bounded batches synchronously;
+`magento.import.validate` reports non-blocking SEO/content warnings (capped at
+200) so a batch can be improved before it is queued. `magento.import.execute`
+runs bounded batches synchronously;
 `magento.import.start` queues them for the worker and needs `database.url`.
