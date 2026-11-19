@@ -109,8 +109,8 @@ export E2E_INSTANCE="store-us"
 client() { "$WORK/bin/client" "$@"; }
 approve() {
   local out
-  out=$("$WORK/bin/admin" -config "$WORK/config.yaml" -as e2e-reviewer approve "$1" 2>&1)
-  echo "$out"
+  out=$("$WORK/bin/admin" -config "$WORK/config.yaml" -as e2e-reviewer approve "$1" 2>&1 || true)
+  echo "approve($1): $out"
   [[ "$out" == approved* ]] || { echo "approve failed for $1"; return 1; }
 }
 
