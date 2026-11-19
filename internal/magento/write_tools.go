@@ -283,6 +283,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newProductLinkAddTool(lookup), newProductLinkRemoveTool(lookup),
 		newInvoiceCaptureTool(lookup), newOrderEmailTool(lookup), newMediaDeleteTool(lookup),
 		newOrderCreateTool(lookup), newTierPricesSetTool(lookup), newInventoryTransferTool(lookup),
+		newCustomerCreateTool(lookup), newCustomerUpdateTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -329,6 +330,8 @@ func writeToolSchemas() map[string]string {
 		productLinkRemoveToolName:    productLinkRemoveSchema,
 		tierPricesSetToolName:        tierPricesSetSchema,
 		inventoryTransferToolName:    inventoryTransferSchema,
+		customerCreateToolName:       customerCreateSchema,
+		customerUpdateToolName:       customerUpdateSchema,
 	}
 }
 
@@ -1568,6 +1571,110 @@ func newInventoryTransferTool(lookup serviceLookup) registry.Tool {
 				Quantity: in.Quantity, Transferred: true,
 			}, nil
 		})
+		return nil
+	}
+	return t
+}
+
+const (
+	customerCreateToolName    = "magento.customer.create"
+	customerCreateToolTitle   = "Create a Magento customer"
+	customerCreateDescription = "Magento write operation: creates a customer " +
+		"(POST /rest/{store_code}/V1/customers) on the resolved instance. PII is accepted because a customer requires it, " +
+		"but the response is the PII-safe projection (id, group, website, store, timestamps) and never echoes email or name. " +
+		"Requires human confirmation."
+	customerUpdateToolName    = "magento.customer.update"
+	customerUpdateTitle       = "Update a Magento customer"
+	customerUpdateDescription = "Magento write operation: updates customer email, first/last name, or group " +
+		"(PUT /rest/{store_code}/V1/customers/{id}) on the resolved instance. Unset fields are omitted; the response is PII-safe. " +
+		"Requires human confirmation."
+
+	customerCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"email": {"type": "string", "format": "email", "maxLength": 254},
+		"firstname": {"type": "string", "minLength": 1, "maxLength": 255},
+		"lastname": {"type": "string", "minLength": 1, "maxLength": 255},
+		"website_id": {"type": "integer", "minimum": 1},
+		"store_id": {"type": "integer", "minimum": 0},
+		"group_id": {"type": "integer", "minimum": 0}
+	}, "required": ["instance", "email", "firstname", "lastname", "website_id"], "additionalProperties": false}`
+
+	customerUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"customer_id": {"type": "integer", "minimum": 1},
+		"email": {"type": "string", "format": "email", "maxLength": 254},
+		"firstname": {"type": "string", "minLength": 1, "maxLength": 255},
+		"lastname": {"type": "string", "minLength": 1, "maxLength": 255},
+		"group_id": {"type": "integer", "minimum": 0}
+	}, "required": ["instance", "customer_id"], "additionalProperties": false}`
+)
+
+type customerCreateWire struct {
+	Instance  string `json:"instance"`
+	Email     string `json:"email"`
+	Firstname string `json:"firstname"`
+	Lastname  string `json:"lastname"`
+	WebsiteID int    `json:"website_id"`
+	StoreID   int    `json:"store_id"`
+	GroupID   int    `json:"group_id"`
+}
+
+type customerCreateOutput struct {
+	Customer Customer `json:"customer"`
+}
+
+type customerUpdateWire struct {
+	Instance   string  `json:"instance"`
+	CustomerID int     `json:"customer_id"`
+	Email      *string `json:"email"`
+	Firstname  *string `json:"firstname"`
+	Lastname   *string `json:"lastname"`
+	GroupID    *int    `json:"group_id"`
+}
+
+type customerUpdateOutput struct {
+	Customer Customer `json:"customer"`
+}
+
+func newCustomerCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(customerCreateToolName, customerCreateToolTitle, customerCreateDescription, "magento.customer.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(customerCreateToolName, customerCreateToolTitle, customerCreateDescription, customerCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in customerCreateWire) (*mcp.CallToolResult, customerCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, customerCreateOutput{}, err
+				}
+				customer, err := svc.CreateCustomer(ctx, CustomerCreateInput{
+					Email: in.Email, Firstname: in.Firstname, Lastname: in.Lastname,
+					WebsiteID: in.WebsiteID, StoreID: in.StoreID, GroupID: in.GroupID,
+				})
+				if err != nil {
+					return nil, customerCreateOutput{}, err
+				}
+				return nil, customerCreateOutput{Customer: *customer}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newCustomerUpdateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(customerUpdateToolName, customerUpdateTitle, customerUpdateDescription, "magento.customer.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(customerUpdateToolName, customerUpdateTitle, customerUpdateDescription, customerUpdateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in customerUpdateWire) (*mcp.CallToolResult, customerUpdateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, customerUpdateOutput{}, err
+				}
+				customer, err := svc.UpdateCustomer(ctx, CustomerUpdateInput{
+					CustomerID: in.CustomerID, Email: in.Email,
+					Firstname: in.Firstname, Lastname: in.Lastname, GroupID: in.GroupID,
+				})
+				if err != nil {
+					return nil, customerUpdateOutput{}, err
+				}
+				return nil, customerUpdateOutput{Customer: *customer}, nil
+			})
 		return nil
 	}
 	return t

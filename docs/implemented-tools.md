@@ -37,6 +37,8 @@ Common behavior:
 | `magento.category.products` | read | 30s | Products assigned to a category, paginated |
 | `magento.customer.get` | read | 30s | One customer with a PII-safe projection (no email, name, or addresses) |
 | `magento.customer.search` | read | 30s | Exact-email customer lookup; response omits email, name, and addresses |
+| `magento.customer.create` | write + confirmation | 60s | Creates a customer (accepts PII); response is the PII-safe projection |
+| `magento.customer.update` | write + confirmation | 60s | Partial update of email/name/group; response is PII-safe |
 | `magento.customer.addresses` | read | 30s | PII-safe address projection: country, region, and default flags only |
 | `magento.attribute.sets` | read | 30s | Product attribute sets (max 200) |
 | `magento.attributes.list` | read | 30s | Attributes of one attribute set |

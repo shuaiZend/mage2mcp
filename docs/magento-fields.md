@@ -77,6 +77,13 @@ decoded), optional `label` (<= 255), `position` (0-1000), and `types` (subset of
 `image`, `small_image`, `thumbnail`, `swatch_image`). `magento.product.media.delete`
 takes `sku` and `media_id` and is destructive.
 
+## Customers
+
+`magento.customer.create` accepts email, first/last name, `website_id`, and
+optional `store_id`/`group_id`; `magento.customer.update` accepts a customer id
+plus at least one of email, first/last name, or group. Both require confirmation
+and return the PII-safe projection (no email or name in the response).
+
 ## Customer addresses
 
 `magento.customer.addresses` returns country, region, and default flags only;

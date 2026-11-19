@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Customer writes: `magento.customer.create` and `magento.customer.update`
+  (confirmation-gated). They accept PII because a customer requires it, but both
+  return the PII-safe projection and never echo email or name.
+
+### Added
+
 - `docs/compatibility.md` (supported components, interface stability promises,
   version support) and `docs/releases/v0.1.0.md` (draft release notes with
   breaking changes, upgrade steps, verification checklist, known limitations).
