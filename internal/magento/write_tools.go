@@ -290,6 +290,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup), newBulkOptionCreateTool(lookup),
 		newConfigurableUpdateTool(lookup), newInventorySourceCreateTool(lookup), newStockSourceLinkTool(lookup),
 		newStockSourceUnlinkTool(lookup), newCreateVariationsTool(lookup), newSetConfigurableOptionsTool(lookup),
+		newProductOptionCreateTool(lookup),
 	}
 	tools = append(tools, newDocumentEmailTools(lookup)...)
 	for _, tool := range tools {
@@ -359,6 +360,7 @@ func writeToolSchemas() map[string]string {
 		stockSourceUnlinkToolName:      stockSourceUnlinkSchema,
 		createVariationsToolName:       createVariationsSchema,
 		setConfigurableOptionsToolName: setConfigurableOptionsSchema,
+		productOptionCreateToolName:    productOptionCreateSchema,
 	}
 }
 
@@ -2603,6 +2605,75 @@ func newSetConfigurableOptionsTool(lookup serviceLookup) registry.Tool {
 					return nil, setConfigurableOptionsOutput{}, err
 				}
 				return nil, setConfigurableOptionsOutput{SKU: in.SKU, Options: len(options), Set: true}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	productOptionCreateToolName    = "magento.product.options.create"
+	productOptionCreateToolTitle   = "Create a Magento product custom option"
+	productOptionCreateDescription = "Magento write operation: adds one custom option to a product " +
+		"(POST /rest/{store_code}/V1/products/{sku}/options) on the resolved instance. Selectable types require 1-50 values with fixed or percent pricing. " +
+		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+
+	productOptionCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
+		"title": {"type": "string", "minLength": 1, "maxLength": 255},
+		"type": {"type": "string", "enum": ["field", "area", "file", "drop_down", "radio", "checkbox", "multiple", "date", "date_time", "time"]},
+		"is_require": {"type": "boolean", "default": false},
+		"sort_order": {"type": "integer", "minimum": 0},
+		"values": {"type": "array", "maxItems": 50, "items": {"type": "object", "additionalProperties": false,
+			"required": ["title"], "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 255},
+				"price": {"type": "number", "minimum": 0},
+				"price_type": {"type": "string", "enum": ["fixed", "percent"]},
+				"sku": {"type": "string", "maxLength": 64},
+				"sort_order": {"type": "integer", "minimum": 0}}}}
+	}, "required": ["instance", "sku", "title", "type"], "additionalProperties": false}`
+)
+
+type customOptionValueWire struct {
+	Title     string  `json:"title"`
+	Price     float64 `json:"price"`
+	PriceType string  `json:"price_type"`
+	SKU       string  `json:"sku"`
+	SortOrder int     `json:"sort_order"`
+}
+
+type productOptionCreateInput struct {
+	Instance  string                  `json:"instance"`
+	SKU       string                  `json:"sku"`
+	Title     string                  `json:"title"`
+	Type      string                  `json:"type"`
+	IsRequire bool                    `json:"is_require"`
+	SortOrder int                     `json:"sort_order"`
+	Values    []customOptionValueWire `json:"values"`
+}
+
+type productOptionCreateOutput struct {
+	Option ProductOption `json:"option"`
+}
+
+func newProductOptionCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(productOptionCreateToolName, productOptionCreateToolTitle, productOptionCreateDescription, "magento.product.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(productOptionCreateToolName, productOptionCreateToolTitle, productOptionCreateDescription, productOptionCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productOptionCreateInput) (*mcp.CallToolResult, productOptionCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productOptionCreateOutput{}, err
+				}
+				values := make([]CustomOptionValueInput, 0, len(in.Values))
+				for _, value := range in.Values {
+					values = append(values, CustomOptionValueInput(value))
+				}
+				option, err := svc.CreateProductOption(ctx, in.SKU, CustomOptionInput{
+					Title: in.Title, Type: in.Type, IsRequire: in.IsRequire, SortOrder: in.SortOrder, Values: values,
+				})
+				if err != nil {
+					return nil, productOptionCreateOutput{}, err
+				}
+				return nil, productOptionCreateOutput{Option: *option}, nil
 			})
 		return nil
 	}

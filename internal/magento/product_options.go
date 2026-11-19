@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
@@ -52,4 +53,111 @@ func (s *Service) ProductOptions(ctx context.Context, sku string) ([]ProductOpti
 		options = []ProductOption{}
 	}
 	return options, nil
+}
+
+const maxCustomOptionValues = 50
+
+var customOptionTypes = map[string]bool{
+	"field": true, "area": true, "file": true, "drop_down": true, "radio": true,
+	"checkbox": true, "multiple": true, "date": true, "date_time": true, "time": true,
+}
+
+// CustomOptionValueInput is one selectable value of a custom option.
+type CustomOptionValueInput struct {
+	Title     string
+	Price     float64
+	PriceType string
+	SKU       string
+	SortOrder int
+}
+
+// CustomOptionInput describes one custom option to create.
+type CustomOptionInput struct {
+	Title     string
+	Type      string
+	IsRequire bool
+	SortOrder int
+	Values    []CustomOptionValueInput
+}
+
+// CreateProductOption adds a custom option with POST /products/{sku}/options.
+func (s *Service) CreateProductOption(ctx context.Context, sku string, in CustomOptionInput) (*ProductOption, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento product service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return nil, err
+	}
+	if trimmed := strings.TrimSpace(in.Title); trimmed == "" || len(in.Title) > 255 {
+		return nil, invalidf("title is required and must be at most 255 bytes")
+	}
+	if !customOptionTypes[in.Type] {
+		return nil, invalidf("type must be one of field, area, file, drop_down, radio, checkbox, multiple, date, date_time, time")
+	}
+	if in.SortOrder < 0 {
+		return nil, invalidf("sort_order must not be negative")
+	}
+	needsValues := in.Type == "drop_down" || in.Type == "radio" || in.Type == "checkbox" || in.Type == "multiple"
+	if needsValues {
+		if len(in.Values) == 0 || len(in.Values) > maxCustomOptionValues {
+			return nil, invalidf("type %q requires 1-%d values", in.Type, maxCustomOptionValues)
+		}
+	} else if len(in.Values) != 0 {
+		return nil, invalidf("type %q does not accept values", in.Type)
+	}
+	values := make([]customOptionValuePayload, 0, len(in.Values))
+	for _, value := range in.Values {
+		if trimmed := strings.TrimSpace(value.Title); trimmed == "" || len(value.Title) > 255 {
+			return nil, invalidf("value title is required and must be at most 255 bytes")
+		}
+		if value.Price < 0 {
+			return nil, invalidf("value price must not be negative")
+		}
+		priceType := value.PriceType
+		if priceType == "" {
+			priceType = "fixed"
+		}
+		if priceType != "fixed" && priceType != "percent" {
+			return nil, invalidf("value price_type must be fixed or percent")
+		}
+		if value.SortOrder < 0 {
+			return nil, invalidf("value sort_order must not be negative")
+		}
+		values = append(values, customOptionValuePayload{
+			Title: value.Title, Price: value.Price, PriceType: priceType,
+			SKU: value.SKU, SortOrder: value.SortOrder,
+		})
+	}
+	body := customOptionBody{Option: customOptionPayload{
+		Title: in.Title, Type: in.Type, IsRequire: in.IsRequire, SortOrder: in.SortOrder, Values: values,
+	}}
+	raw, err := s.client.do(ctx, http.MethodPost, "/products/"+url.PathEscape(sku)+"/options", nil, body)
+	if err != nil {
+		return nil, err
+	}
+	var option ProductOption
+	if err := json.Unmarshal(raw, &option); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable product-option payload").WithCause(err)
+	}
+	return &option, nil
+}
+
+type customOptionBody struct {
+	Option customOptionPayload `json:"option"`
+}
+
+type customOptionPayload struct {
+	Title     string                     `json:"title"`
+	Type      string                     `json:"type"`
+	IsRequire bool                       `json:"is_require"`
+	SortOrder int                        `json:"sort_order"`
+	Values    []customOptionValuePayload `json:"values,omitempty"`
+}
+
+type customOptionValuePayload struct {
+	Title     string  `json:"title"`
+	Price     float64 `json:"price"`
+	PriceType string  `json:"price_type"`
+	SKU       string  `json:"sku,omitempty"`
+	SortOrder int     `json:"sort_order"`
 }
