@@ -97,6 +97,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newShipmentListTool(lookup), newShipmentGetTool(lookup),
 		newCreditmemoListTool(lookup), newCreditmemoGetTool(lookup),
 		newConfigurableChildrenTool(lookup), newAttributeOptionsTool(lookup), newCategoryProductsTool(lookup),
+		newCustomerGetTool(lookup), newCustomerSearchTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1089,6 +1090,104 @@ func newCategoryProductsTool(lookup serviceLookup) registry.Tool {
 					products = []Product{}
 				}
 				return nil, categoryProductsOutput{Products: products, Total: total}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	customerGetToolName     = "magento.customer.get"
+	customerGetToolTitle    = "Get Magento customer"
+	customerSearchToolName  = "magento.customer.search"
+	customerSearchToolTitle = "Search Magento customers by email"
+
+	customerGetToolDescription = "Reads one customer from the configured Magento 2 REST API " +
+		"(GET /rest/{store_code}/V1/customers/{id}). Read-only and PII-safe: the projection omits email, name, and addresses. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	customerSearchToolDescription = "Finds customers by exact email " +
+		"(GET /rest/{store_code}/V1/customers/search with an email eq filter). The response omits the email, name, and addresses: " +
+		"it returns id, group, website, store, and timestamps only. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	customerGetSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"customer_id": {"type": "integer", "minimum": 1, "description": "Magento customer id."}
+	}, "required": ["instance", "customer_id"], "additionalProperties": false}`
+
+	customerSearchSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"email": {"type": "string", "format": "email", "maxLength": 254, "description": "Exact customer email to match; never echoed back."},
+		"limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20, "description": "Page size, 1-100."},
+		"cursor": {"type": "string", "pattern": "` + cursorPattern + `", "description": "Zero-based row offset; must be a multiple of limit."}
+	}, "required": ["instance", "email"], "additionalProperties": false}`
+)
+
+type customerGetInput struct {
+	Instance   string `json:"instance"`
+	CustomerID int    `json:"customer_id"`
+}
+
+type customerGetOutput struct {
+	Customer Customer `json:"customer"`
+}
+
+type customerSearchInput struct {
+	Instance string `json:"instance"`
+	Email    string `json:"email"`
+	Limit    int    `json:"limit"`
+	Cursor   string `json:"cursor"`
+}
+
+type customerSearchOutput struct {
+	Customers []Customer `json:"customers"`
+	Total     int        `json:"total"`
+}
+
+func newCustomerGetTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(customerGetToolName, customerGetToolTitle, customerGetToolDescription)
+	t.Capability = "magento.customer.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(customerGetToolName, customerGetToolTitle, customerGetToolDescription, customerGetSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in customerGetInput) (*mcp.CallToolResult, customerGetOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, customerGetOutput{}, err
+				}
+				customer, err := svc.GetCustomer(ctx, in.CustomerID)
+				if err != nil {
+					return nil, customerGetOutput{}, err
+				}
+				return nil, customerGetOutput{Customer: *customer}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newCustomerSearchTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(customerSearchToolName, customerSearchToolTitle, customerSearchToolDescription)
+	t.Capability = "magento.customer.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(customerSearchToolName, customerSearchToolTitle, customerSearchToolDescription, customerSearchSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in customerSearchInput) (*mcp.CallToolResult, customerSearchOutput, error) {
+				offset := 0
+				if in.Cursor != "" {
+					parsed, err := strconv.Atoi(in.Cursor)
+					if err != nil || parsed < 0 {
+						return nil, customerSearchOutput{}, invalidf("cursor must be a non-negative decimal row offset")
+					}
+					offset = parsed
+				}
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, customerSearchOutput{}, err
+				}
+				customers, total, err := svc.SearchCustomers(ctx, in.Email, in.Limit, offset)
+				if err != nil {
+					return nil, customerSearchOutput{}, err
+				}
+				return nil, customerSearchOutput{Customers: customers, Total: total}, nil
 			})
 		return nil
 	}
