@@ -266,7 +266,7 @@ func validateImportRow(row ImportRow, seen map[string]int) []ImportRowError {
 			add("attributes", "attribute code must match ^[a-z0-9_]{1,64}$: "+code)
 			continue
 		}
-		if err := validateSEOAttribute(code, value); err != nil {
+		if err := validateReservedAttribute(code, value); err != nil {
 			add(code, err.Error())
 		}
 	}
@@ -333,7 +333,13 @@ func (s *Service) ExecuteImportWithProgress(ctx context.Context, format string, 
 				result.Rows = append(result.Rows, outcome)
 				continue
 			}
-			update := UpdateProductInput{Name: &row.Name, Attributes: row.Attributes}
+			update := UpdateProductInput{Name: &row.Name}
+			if err := applyImportUpdateAttributes(row.Attributes, &update); err != nil {
+				outcome.Action, outcome.Status, outcome.Error = "update", "failed", importErrorMessage(err)
+				result.Failed++
+				result.Rows = append(result.Rows, outcome)
+				continue
+			}
 			if row.Price != "" {
 				update.Price = &row.Price
 			}
@@ -353,7 +359,13 @@ func (s *Service) ExecuteImportWithProgress(ctx context.Context, format string, 
 				continue
 			}
 			create := CreateProductInput{SKU: row.SKU, Name: row.Name, Price: row.Price,
-				AttributeSetID: attrSetID, Attributes: row.Attributes}
+				AttributeSetID: attrSetID}
+			if err := applyImportAttributes(row.Attributes, &create); err != nil {
+				outcome.Action, outcome.Status, outcome.Error = "create", "failed", importErrorMessage(err)
+				result.Failed++
+				result.Rows = append(result.Rows, outcome)
+				continue
+			}
 			if row.TypeID != "" {
 				create.TypeID = row.TypeID
 			}
@@ -485,4 +497,130 @@ func CompactImportReport(result *ImportResult) *ImportReport {
 		})
 	}
 	return report
+}
+
+// reservedImportAttributes are the attribute codes with dedicated typed fields
+// on the product write inputs. Imports must route them through those fields, or
+// the duplicate rejection would fail every row.
+var reservedImportAttributes = map[string]bool{
+	"description": true, "short_description": true, "url_key": true,
+	"meta_title": true, "meta_keywords": true, "meta_description": true,
+	"weight": true, "special_price": true, "special_from_date": true,
+	"special_to_date": true, "cost": true, "tax_class_id": true,
+}
+
+// validateReservedAttribute validates a SEO/pricing attribute value from an
+// import row. Non-reserved codes are not checked here.
+func validateReservedAttribute(code, value string) error {
+	if !reservedImportAttributes[code] {
+		return nil
+	}
+	switch code {
+	case "weight", "special_price", "cost":
+		if value != "" && !priceRE.MatchString(value) {
+			return invalidf("%s must be a non-negative decimal with at most 4 fraction digits", code)
+		}
+		return nil
+	case "special_from_date", "special_to_date":
+		if value != "" && !specialDateRE.MatchString(value) {
+			return invalidf("%s must be a YYYY-MM-DD date", code)
+		}
+		return nil
+	case "tax_class_id":
+		if value != "" {
+			if _, err := strconv.Atoi(value); err != nil {
+				return invalidf("tax_class_id must be an integer")
+			}
+		}
+		return nil
+	default:
+		return validateSEOAttribute(code, value)
+	}
+}
+
+// splitImportAttributes separates reserved codes from custom EAV attributes.
+func splitImportAttributes(attrs map[string]string) (map[string]string, map[string]string) {
+	reserved := make(map[string]string, len(attrs))
+	custom := make(map[string]string, len(attrs))
+	for code, value := range attrs {
+		if reservedImportAttributes[code] {
+			reserved[code] = value
+			continue
+		}
+		custom[code] = value
+	}
+	return reserved, custom
+}
+
+// applyImportAttributes fills the typed SEO/pricing fields and custom attributes
+// of a create input from an import row.
+func applyImportAttributes(attrs map[string]string, in *CreateProductInput) error {
+	reserved, custom := splitImportAttributes(attrs)
+	in.Attributes = custom
+	in.Description = reserved["description"]
+	in.ShortDescription = reserved["short_description"]
+	in.URLKey = reserved["url_key"]
+	in.MetaTitle = reserved["meta_title"]
+	in.MetaKeywords = reserved["meta_keywords"]
+	in.MetaDescription = reserved["meta_description"]
+	in.Weight = reserved["weight"]
+	in.SpecialPrice = reserved["special_price"]
+	in.SpecialFromDate = reserved["special_from_date"]
+	in.SpecialToDate = reserved["special_to_date"]
+	in.Cost = reserved["cost"]
+	if raw := reserved["tax_class_id"]; raw != "" {
+		id, err := strconv.Atoi(raw)
+		if err != nil {
+			return invalidf("tax_class_id must be an integer")
+		}
+		in.TaxClassID = id
+	}
+	return nil
+}
+
+// applyImportUpdateAttributes fills the typed fields of an update input.
+func applyImportUpdateAttributes(attrs map[string]string, in *UpdateProductInput) error {
+	reserved, custom := splitImportAttributes(attrs)
+	in.Attributes = custom
+	if value, ok := reserved["description"]; ok {
+		in.Description = &value
+	}
+	if value, ok := reserved["short_description"]; ok {
+		in.ShortDescription = &value
+	}
+	if value, ok := reserved["url_key"]; ok {
+		in.URLKey = &value
+	}
+	if value, ok := reserved["meta_title"]; ok {
+		in.MetaTitle = &value
+	}
+	if value, ok := reserved["meta_keywords"]; ok {
+		in.MetaKeywords = &value
+	}
+	if value, ok := reserved["meta_description"]; ok {
+		in.MetaDescription = &value
+	}
+	if value, ok := reserved["weight"]; ok {
+		in.Weight = &value
+	}
+	if value, ok := reserved["special_price"]; ok {
+		in.SpecialPrice = &value
+	}
+	if value, ok := reserved["special_from_date"]; ok {
+		in.SpecialFromDate = &value
+	}
+	if value, ok := reserved["special_to_date"]; ok {
+		in.SpecialToDate = &value
+	}
+	if value, ok := reserved["cost"]; ok {
+		in.Cost = &value
+	}
+	if raw, ok := reserved["tax_class_id"]; ok && raw != "" {
+		id, err := strconv.Atoi(raw)
+		if err != nil {
+			return invalidf("tax_class_id must be an integer")
+		}
+		in.TaxClassID = &id
+	}
+	return nil
 }

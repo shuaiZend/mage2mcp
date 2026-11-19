@@ -99,7 +99,9 @@ name, street, city, postcode, and telephone are never returned.
 ## Imports
 
 CSV/JSON rows use `sku`, `name`, `type_id`, `price`, optional
-`attribute_set_id`, and any other column as a custom attribute. SEO columns
+`attribute_set_id`, and any other column as a custom attribute. The SEO and
+pricing columns are routed to their typed fields during execution (never sent
+as duplicate attributes). SEO columns
 (`description`, `short_description`, `url_key`, `meta_title`, `meta_keywords`,
 `meta_description`) are validated with the same rules as the product tools.
 `magento.import.validate` reports non-blocking SEO/content warnings (capped at
