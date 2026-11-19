@@ -201,10 +201,12 @@ jobs:
           fi
           curl -fsS http://127.0.0.1:18080/healthz
           curl -fsS http://127.0.0.1:18080/readyz
-          curl -fsS http://127.0.0.1:18080/metrics | grep -q mage2mcp_tool_calls_total
+          curl -fsS http://127.0.0.1:18080/metrics -o /tmp/mage2mcp-metrics.txt
+          grep -q mage2mcp_tool_calls_total /tmp/mage2mcp-metrics.txt
           user="$(docker inspect -f '{{.Config.User}}' mage2mcp-ci)"
           echo "container user: ${user}"
-          [ "${user}" = "nonroot:nonroot" ] || [ "${user}" = "65532:65532" ]
+          echo "${user}" | grep -Eq '^(nonroot(:nonroot)?|65532(:65532)?)$'
+          echo "docker smoke test passed"
       - name: Container logs
         if: always()
         run: docker logs mage2mcp-ci || true
