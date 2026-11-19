@@ -296,3 +296,21 @@ type stockSourceLink struct {
 	SourceCode string `json:"source_code"`
 	Position   int    `json:"position"`
 }
+
+// UnlinkStockSource detaches a source from a stock with
+// DELETE /inventory/stock-source-links. Products keep their source items; the
+// stock simply stops selling from that source.
+func (s *Service) UnlinkStockSource(ctx context.Context, stockID int, sourceCode string) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento inventory service is not configured")
+	}
+	if stockID <= 0 {
+		return invalidf("stock_id must be a positive integer")
+	}
+	if !sourceCodeRE.MatchString(sourceCode) {
+		return invalidf("source_code must match %s", sourceCodeRE.String())
+	}
+	body := stockSourceLinkBody{Links: []stockSourceLink{{StockID: stockID, SourceCode: sourceCode}}}
+	_, err := s.client.do(ctx, http.MethodDelete, "/inventory/stock-source-links", nil, body)
+	return err
+}

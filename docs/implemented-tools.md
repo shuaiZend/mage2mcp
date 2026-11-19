@@ -81,6 +81,7 @@ Common behavior:
 | `magento.inventory.sources` | read | 30s | MSI inventory sources with location fields |
 | `magento.inventory.source_create` | write + confirmation | 60s | Creates an MSI source with code, name, enabled flag, and location |
 | `magento.inventory.stock_source_link` | write + confirmation | 60s | Attaches a source to a stock with a position |
+| `magento.inventory.stock_source_unlink` | destructive + confirmation | 60s | Detaches a source from a stock; source items are kept |
 | `magento.inventory.stocks` | read | 30s | MSI inventory stocks |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
 | `magento.order.summary` | read | 30s | Daily order count, revenue, and quantity over a bounded window (same data as `sales.summary`) |

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.inventory.stock_source_unlink` (destructive, confirmation-gated):
+  detaches a source from a stock; per-source quantities are kept.
+
+### Added
+
 - MSI management: `magento.inventory.source_create` (new source with location)
   and `magento.inventory.stock_source_link` (attach a source to a stock), both
   confirmation-gated.

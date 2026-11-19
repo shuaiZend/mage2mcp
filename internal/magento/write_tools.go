@@ -289,6 +289,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCustomerAddressCreateTool(lookup), newCustomerAddressDeleteTool(lookup),
 		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup), newBulkOptionCreateTool(lookup),
 		newConfigurableUpdateTool(lookup), newInventorySourceCreateTool(lookup), newStockSourceLinkTool(lookup),
+		newStockSourceUnlinkTool(lookup),
 	}
 	tools = append(tools, newDocumentEmailTools(lookup)...)
 	for _, tool := range tools {
@@ -355,6 +356,7 @@ func writeToolSchemas() map[string]string {
 		creditmemoEmailToolName:       documentEmailSchema,
 		inventorySourceCreateToolName: inventorySourceCreateSchema,
 		stockSourceLinkToolName:       stockSourceLinkSchema,
+		stockSourceUnlinkToolName:     stockSourceUnlinkSchema,
 	}
 }
 
@@ -2433,6 +2435,54 @@ func newStockSourceLinkTool(lookup serviceLookup) registry.Tool {
 				}
 				return nil, stockSourceLinkOutput{StockID: in.StockID, SourceCode: in.SourceCode, Linked: true}, nil
 			})
+		return nil
+	}
+	return t
+}
+
+const (
+	stockSourceUnlinkToolName    = "magento.inventory.stock_source_unlink"
+	stockSourceUnlinkToolTitle   = "Unlink a source from a Magento stock"
+	stockSourceUnlinkDescription = "Magento write operation: detaches an MSI source from a stock " +
+		"(DELETE /rest/{store_code}/V1/inventory/stock-source-links) on the resolved instance. Products keep their source items; " +
+		"the stock stops selling from that source. Destructive and confirmation-gated. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	stockSourceUnlinkSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"stock_id": {"type": "integer", "minimum": 1},
+		"source_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}
+	}, "required": ["instance", "stock_id", "source_code"], "additionalProperties": false}`
+)
+
+type stockSourceUnlinkInput struct {
+	Instance   string `json:"instance"`
+	StockID    int    `json:"stock_id"`
+	SourceCode string `json:"source_code"`
+}
+
+type stockSourceUnlinkOutput struct {
+	StockID    int    `json:"stock_id"`
+	SourceCode string `json:"source_code"`
+	Unlinked   bool   `json:"unlinked"`
+}
+
+func newStockSourceUnlinkTool(lookup serviceLookup) registry.Tool {
+	t := destructiveToolMetadata(stockSourceUnlinkToolName, stockSourceUnlinkToolTitle, stockSourceUnlinkDescription, "magento.inventory.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: stockSourceUnlinkToolName, Title: stockSourceUnlinkToolTitle, Description: stockSourceUnlinkDescription,
+			InputSchema: json.RawMessage(stockSourceUnlinkSchema),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in stockSourceUnlinkInput) (*mcp.CallToolResult, stockSourceUnlinkOutput, error) {
+			svc, err := lookup(in.Instance)
+			if err != nil {
+				return nil, stockSourceUnlinkOutput{}, err
+			}
+			if err := svc.UnlinkStockSource(ctx, in.StockID, in.SourceCode); err != nil {
+				return nil, stockSourceUnlinkOutput{}, err
+			}
+			return nil, stockSourceUnlinkOutput{StockID: in.StockID, SourceCode: in.SourceCode, Unlinked: true}, nil
+		})
 		return nil
 	}
 	return t
