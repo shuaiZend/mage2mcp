@@ -203,3 +203,21 @@ func TestCompactImportReport(t *testing.T) {
 		t.Fatalf("capped failures = %d truncated=%v", len(capped.Failures), capped.FailuresTruncated)
 	}
 }
+
+func TestExecuteImportProgress(t *testing.T) {
+	var created, updated int
+	server := newImportFake(t, &created, &updated)
+	defer server.Close()
+	svc := newImportServiceAgainst(t, server.URL)
+	data := []byte("sku,name,type_id,price,attribute_set_id\nNEW-1,New,simple,9.99,4\nNEW-2,New2,simple,8.99,4\nOLD-1,Updated,simple,1.00,4\n")
+	var progress [][2]int
+	_, err := svc.ExecuteImportWithProgress(context.Background(), "csv", data, true, func(done, total int) {
+		progress = append(progress, [2]int{done, total})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(progress) != 2 || progress[0] != [2]int{0, 3} || progress[1] != [2]int{3, 3} {
+		t.Fatalf("progress = %v", progress)
+	}
+}

@@ -68,12 +68,12 @@ Common behavior:
 | `magento.sales.summary` | read | 30s | Per-day order count, grand-total revenue, and item quantity over a bounded window (max 1000 orders, truncation reported) |
 | `magento.product.create` | write + confirmation | 60s | Simple/virtual/downloadable/bundle create with EAV attributes plus description, short_description, url_key, meta_title, meta_keywords, meta_description (SEO guidance in the schema) |
 | `magento.product.update` | write + confirmation | 60s | Merge update of provided fields, including SEO/content fields |
-| `magento.configurable.create` | write + confirmation | 60s | Children → parent options → links; staged non-atomic errors; parent supports SEO/content fields |
+| `magento.configurable.create` | write + confirmation | 60s | Children → parent options → links; staged non-atomic errors; parent and children support SEO/content fields |
 | `magento.configurable.add_child` | write + confirmation | 60s | Link one variant |
 | `magento.inventory.assign` | write + confirmation | 60s | MSI source items, at most 100 per call |
 | `magento.import.execute` | write + confirmation | 60s | Bounded batch execution with partial-success report |
 | `magento.import.start` | write + confirmation | 30s | Queues a bounded import for the worker; optional `idempotency_key` deduplicates submissions; requires the database queue |
-| `magento.import.status` | read | 30s | Job state, attempts, error code, and a bounded result report (first 100 failed rows) |
+| `magento.import.status` | read | 30s | Job state, attempts, error code, live progress (`done`/`total`), and a bounded result report (first 100 failed rows) |
 | `magento.import.cancel` | write + confirmation | 30s | Cancels a queued or running import job |
 | `magento.product.delete` | destructive + confirmation | 60s | Deletes one product by SKU; irreversible, 404 on unknown SKU |
 | `magento.configurable.remove_child` | write + confirmation | 60s | Unlinks a child from a configurable product; child product remains |

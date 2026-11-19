@@ -151,3 +151,40 @@ func TestImportRowSEOValidation(t *testing.T) {
 		t.Fatalf("problem = %+v", problems[0])
 	}
 }
+
+func TestConfigurableChildCarriesSEOFields(t *testing.T) {
+	var bodies []map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"sku":"CHILD-1","name":"Child","type_id":"simple","price":9.99,"attribute_set_id":4}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	parent := CreateProductInput{Name: "Parent", AttributeSetID: 4, Price: "9.99", WebsiteIDs: []int{1}}
+	_, err := svc.createChild(context.Background(), parent, ChildProduct{
+		SKU: "CHILD-1", Attributes: map[string]string{"color": "1"},
+		URLKey: "parent-blue", MetaTitle: "Parent Blue | Shop", Description: "Child copy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("bodies = %+v", bodies)
+	}
+	product, _ := bodies[0]["product"].(map[string]any)
+	attrs, _ := product["custom_attributes"].([]any)
+	got := map[string]string{}
+	for _, attr := range attrs {
+		entry, _ := attr.(map[string]any)
+		code, _ := entry["attribute_code"].(string)
+		value, _ := entry["value"].(string)
+		got[code] = value
+	}
+	if got["url_key"] != "parent-blue" || got["meta_title"] != "Parent Blue | Shop" || got["description"] != "Child copy" {
+		t.Fatalf("attributes = %+v", got)
+	}
+}

@@ -247,6 +247,13 @@ type ImportResult struct {
 // row and do not roll back earlier writes: the caller receives a partial-success
 // report and must decide whether to retry the failed rows.
 func (s *Service) ExecuteImport(ctx context.Context, format string, data []byte, updateExisting bool) (*ImportResult, error) {
+	return s.ExecuteImportWithProgress(ctx, format, data, updateExisting, nil)
+}
+
+// ExecuteImportWithProgress is ExecuteImport with a progress callback invoked at
+// the start, every 25 rows, and at the end. The callback receives rows done and
+// the total, and may be called from the same goroutine only.
+func (s *Service) ExecuteImportWithProgress(ctx context.Context, format string, data []byte, updateExisting bool, progress func(done, total int)) (*ImportResult, error) {
 	preview, err := s.ValidateImport(ctx, format, data)
 	if err != nil {
 		return nil, err
@@ -260,7 +267,10 @@ func (s *Service) ExecuteImport(ctx context.Context, format string, data []byte,
 		return nil, err
 	}
 	result := &ImportResult{Total: len(rows)}
-	for _, row := range rows {
+	if progress != nil {
+		progress(0, len(rows))
+	}
+	for i, row := range rows {
 		outcome := ImportResultRow{RowNumber: row.RowNumber, SKU: row.SKU}
 		_, getErr := s.Get(ctx, row.SKU)
 		switch {
@@ -307,6 +317,12 @@ func (s *Service) ExecuteImport(ctx context.Context, format string, data []byte,
 			result.Failed++
 		}
 		result.Rows = append(result.Rows, outcome)
+		if progress != nil && (i+1)%25 == 0 {
+			progress(i+1, len(rows))
+		}
+	}
+	if progress != nil {
+		progress(len(rows), len(rows))
 	}
 	return result, nil
 }
