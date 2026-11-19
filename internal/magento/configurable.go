@@ -645,3 +645,86 @@ func (s *Service) CreateVariations(ctx context.Context, parentSKU string, varian
 	}
 	return result, nil
 }
+
+const (
+	maxConfigurableOptions = 10
+	maxOptionValues        = 100
+)
+
+// ConfigurableOptionInput declares one variant attribute and its option values.
+type ConfigurableOptionInput struct {
+	AttributeID int
+	Label       string
+	Position    int
+	Values      []int
+}
+
+// SetConfigurableOptions declares the variant attributes (and value ordering) of
+// an existing configurable parent with
+// POST /configurable-products/{sku}/options.
+//
+// Magento saves one option per call; a failure leaves earlier options in place.
+func (s *Service) SetConfigurableOptions(ctx context.Context, sku string, options []ConfigurableOptionInput) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento product service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return err
+	}
+	if len(options) == 0 {
+		return invalidf("at least one option is required")
+	}
+	if len(options) > maxConfigurableOptions {
+		return invalidf("at most %d options are allowed per call", maxConfigurableOptions)
+	}
+	seen := make(map[int]struct{}, len(options))
+	for _, option := range options {
+		if option.AttributeID <= 0 {
+			return invalidf("attribute_id must be a positive integer")
+		}
+		if _, duplicate := seen[option.AttributeID]; duplicate {
+			return invalidf("attribute_id %d is duplicated", option.AttributeID)
+		}
+		seen[option.AttributeID] = struct{}{}
+		if trimmed := strings.TrimSpace(option.Label); trimmed == "" || len(option.Label) > 255 {
+			return invalidf("label is required and must be at most 255 bytes")
+		}
+		if option.Position < 0 || option.Position > 1000 {
+			return invalidf("position must be between 0 and 1000")
+		}
+		if len(option.Values) == 0 || len(option.Values) > maxOptionValues {
+			return invalidf("values must have 1-%d entries", maxOptionValues)
+		}
+		values := make(map[int]struct{}, len(option.Values))
+		for _, value := range option.Values {
+			if value <= 0 {
+				return invalidf("value indexes must be positive integers")
+			}
+			if _, duplicate := values[value]; duplicate {
+				return invalidf("value index %d is duplicated", value)
+			}
+			values[value] = struct{}{}
+		}
+	}
+	parent, err := s.Get(ctx, sku)
+	if err != nil {
+		return err
+	}
+	if parent.TypeID != "configurable" {
+		return invalidf("product %q is %s, not configurable", sku, parent.TypeID)
+	}
+	for _, option := range options {
+		values := make([]configurableOptionValue, 0, len(option.Values))
+		for _, value := range option.Values {
+			values = append(values, configurableOptionValue{ValueIndex: value})
+		}
+		body := configurableOptionBody{Option: configurableOption{
+			AttributeID: strconv.Itoa(option.AttributeID), Label: option.Label, Position: option.Position, Values: values,
+		}}
+		if _, err := s.client.do(ctx, http.MethodPost,
+			"/configurable-products/"+url.PathEscape(sku)+"/options", nil, body); err != nil {
+			return err
+		}
+	}
+	return nil
+}

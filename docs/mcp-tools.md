@@ -187,7 +187,7 @@ Cloudflare and GA4 tools are read-only except `cloudflare.logs.jobs`, which is `
 | `magento.configurable.add_child` | write | Link an existing simple product as a variant **Implemented.** |
 | `magento.configurable.remove_child` | destructive | Remove a variant link (optionally delete the child) **Implemented.** |
 | `magento.configurable.children` | read | List variant children with their attribute values **Implemented.** |
-| `magento.configurable.set_options` | write | Declare the variant attributes and option ordering |
+| `magento.configurable.set_options` | write | Declare the variant attributes and option ordering **Implemented.** |
 | `magento.configurable.create_variations` | write | Create missing child products from an attribute matrix **Implemented.** |
 | `magento.configurable.verify_storefront` | read | Verify variants through the storefront GraphQL API |
 

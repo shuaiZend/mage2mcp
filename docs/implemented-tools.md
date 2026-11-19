@@ -98,6 +98,7 @@ Common behavior:
 | `magento.product.update` | write + confirmation | 60s | Merge update of provided fields, including SEO/content fields and category/website reassignment |
 | `magento.products.bulk_update` | write + confirmation | 120s | Same status/visibility/attributes update for up to 50 SKUs with a per-SKU partial-success report |
 | `magento.configurable.update` | write + confirmation | 60s | Updates a configurable parent (fields, SEO/pricing, assignments); refuses non-configurable SKUs |
+| `magento.configurable.set_options` | write + confirmation | 120s | Declares variant attributes and value ordering (1-10 options) |
 | `magento.configurable.create_variations` | write + confirmation | 120s | Creates simple children for an existing parent and links them; existing SKUs are skipped |
 | `magento.configurable.create` | write + confirmation | 60s | Children → parent options → links; staged non-atomic errors; parent and children support SEO/content fields |
 | `magento.configurable.add_child` | write + confirmation | 60s | Link one variant |
