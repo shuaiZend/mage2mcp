@@ -64,6 +64,9 @@ func (s *Store) GetImportBatchByJob(ctx context.Context, jobID string) (*jobs.Im
 	if s == nil || s.pool == nil {
 		return nil, fmt.Errorf("storage: not open")
 	}
+	if jobID == "" {
+		return nil, nil
+	}
 	var batch jobs.ImportBatch
 	var payload []byte
 	err := s.pool.QueryRow(ctx, `
