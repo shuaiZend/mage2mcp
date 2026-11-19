@@ -52,6 +52,7 @@ Common behavior:
 | `magento.product.media.types` | read | 30s | Media roles available for an attribute set |
 | `magento.product.media.get` | read | 30s | One gallery entry: file, label, position, types, disabled |
 | `magento.product.media` | read | 30s | Media gallery of one product |
+| `magento.product.options.create` | write + confirmation | 60s | Adds one custom option; selectable types require values with fixed/percent pricing |
 | `magento.product.options` | read | 30s | Custom options (not variant options) with values, prices, and price types |
 | `magento.product.links` | read | 30s | Related, upsell, or cross-sell links of a product |
 | `magento.product.media.upload` | write + confirmation | 60s | Adds an image to a gallery; base64 capped at 5 MiB, MIME/filename/types validated |
