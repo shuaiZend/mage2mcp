@@ -241,11 +241,10 @@ func Handler(srv *mcp.Server, opts Options) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if opts.Registry.Len() == 0 {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "no tools registered"})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+		// Readiness means the process can serve MCP. A deployment with no
+		// business module enabled still serves platform.info, so it is ready;
+		// the tool count is reported for operators.
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "tools": opts.Registry.Len()})
 	})
 	if opts.Metrics != nil {
 		mux.Handle("/metrics", opts.Metrics)

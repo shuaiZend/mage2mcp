@@ -42,8 +42,29 @@ curl -s localhost:8080/readyz
 ```
 
 MCP 端点为 `POST /mcp`（Streamable HTTP）。生产环境应部署在 Cloudflare Tunnel 之后，
-并通过 `MAGE2MCP_AUTH_*` 环境变量保持认证开启。Docker 用户可在 `.env` 中设置必需变量后
-运行 `docker compose up`。
+并通过 `MAGE2MCP_AUTH_*` 环境变量保持认证开启。
+
+### Docker
+
+镜像内置容器配置，并用二进制自身探测 `/healthz`（distroless 镜像没有 shell）：
+
+```bash
+# 本地开发栈（默认关闭认证、仅回环端口、固定开发密码）
+docker compose up --build
+
+# 或单容器
+docker build -t mage2mcp .
+docker run --rm -p 127.0.0.1:8080:8080 \
+  -e MAGE2MCP_AUTH_ENABLED=false -e MAGE2MCP_DEV_INSECURE=true mage2mcp
+```
+
+生产形态要求提供全部密钥与 Access 配置：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+切勿把开发栈暴露到网络：它以关闭认证和固定占位密码运行。
 
 ### 高风险操作
 

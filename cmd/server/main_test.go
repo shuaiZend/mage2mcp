@@ -3,6 +3,7 @@
 package main
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
@@ -191,5 +192,17 @@ func TestRegisterModulesSupportsMultiStoreWrites(t *testing.T) {
 	}
 	if _, ok := reg.Lookup("magento.product.create"); !ok {
 		t.Fatal("write tool not registered for multi-store")
+	}
+}
+
+func TestBuildAuthAllowsDevInsecureOnNonLoopback(t *testing.T) {
+	cfg := config.Default()
+	cfg.Auth.Enabled = false
+	cfg.Server.Listen = "0.0.0.0:8080"
+	if _, err := buildAuth(cfg, slog.Default(), false); err == nil {
+		t.Fatal("non-loopback without auth must be rejected by default")
+	}
+	if _, err := buildAuth(cfg, slog.Default(), true); err != nil {
+		t.Fatalf("dev-insecure should allow non-loopback: %v", err)
 	}
 }

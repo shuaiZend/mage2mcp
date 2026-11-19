@@ -38,6 +38,9 @@ type Metrics struct {
 	AuthFailures *prometheus.CounterVec
 	// Jobs counts background job transitions by queue and state.
 	Jobs *prometheus.CounterVec
+	// BuildInfo is always 1; it makes the gateway's own metrics discoverable
+	// before any tool has been called.
+	BuildInfo prometheus.Gauge
 }
 
 // NewMetrics creates a Metrics with a fresh private registry, the standard Go
@@ -81,12 +84,18 @@ func NewMetrics() *Metrics {
 			Name:      "auth_failures_total",
 			Help:      "Total number of authentication failures by reason.",
 		}, []string{"reason"}),
+		BuildInfo: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "build_info",
+			Help:      "Always 1. Identifies mage2mcp metrics before any tool call.",
+		}),
 		Jobs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "jobs_total",
 			Help:      "Total number of background job transitions by queue and state.",
 		}, []string{"queue", "state"}),
 	}
+	m.BuildInfo.Set(1)
 	registry.MustRegister(
 		m.ToolCalls,
 		m.ToolDuration,
@@ -94,6 +103,7 @@ func NewMetrics() *Metrics {
 		m.UpstreamDuration,
 		m.AuthFailures,
 		m.Jobs,
+		m.BuildInfo,
 	)
 	return m
 }

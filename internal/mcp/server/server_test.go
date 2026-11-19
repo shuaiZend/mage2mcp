@@ -129,7 +129,7 @@ func TestHealthAndReady(t *testing.T) {
 	}
 }
 
-func TestReadyzFailsWithoutTools(t *testing.T) {
+func TestReadyzReportsWithoutBusinessTools(t *testing.T) {
 	srv, err := NewMCP(Options{Version: "test", Registry: registry.New()})
 	if err != nil {
 		t.Fatal(err)
@@ -141,8 +141,8 @@ func TestReadyzFailsWithoutTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("readyz = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("readyz = %d, want 200", resp.StatusCode)
 	}
 }
 
