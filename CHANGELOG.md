@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The end-to-end test now asserts two safety properties: a malformed write is
+  rejected with `invalid_argument` before a confirmation is issued, and changing
+  arguments after approval is rejected with `confirmation_param_mismatch`.
+
+### Added
+
 - `magento.inventory.transfer` (destructive, confirmation-gated): moves
   quantity between two MSI sources for one SKU, refusing an insufficient source
   and documenting that the two-row upsert is not transactional.

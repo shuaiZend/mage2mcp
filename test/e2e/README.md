@@ -10,7 +10,10 @@
    confirmation (approved by a different identity), `magento.product.seo`,
    `magento.import.validate`, and an asynchronous `magento.import.start` that the
    worker executes;
-4. asserts the import report contains `created: 1`, then cleans up.
+4. asserts an invalid write is rejected with `invalid_argument` before any
+   confirmation, that changing arguments after approval is rejected with
+   `confirmation_param_mismatch`, and that the import report contains
+   `created: 1`, then cleans up.
 
 ```bash
 make e2e          # or: ./test/e2e/run.sh
