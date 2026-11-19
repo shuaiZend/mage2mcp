@@ -215,6 +215,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newConfigurableAddChildTool(lookup), newInventoryAssignTool(lookup), newImportExecuteTool(lookup),
 		newProductDeleteTool(lookup), newRemoveChildTool(lookup), newUnassignSourceItemsTool(lookup),
 		newMediaUploadTool(lookup), newInvoiceCreateTool(lookup),
+		newShipmentCreateTool(lookup), newCreditmemoCreateTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -681,6 +682,127 @@ func newInvoiceCreateTool(lookup serviceLookup) registry.Tool {
 					return nil, invoiceCreateOutput{}, err
 				}
 				return nil, invoiceCreateOutput{Invoice: *invoice}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	shipmentCreateToolName    = "magento.shipment.create"
+	shipmentCreateToolTitle   = "Create Magento shipment"
+	shipmentCreateDescription = "Magento write operation: creates a shipment for an order " +
+		"(POST /rest/{store_code}/V1/shipments) on the resolved instance, with 1-100 order-item lines and up to 20 tracking numbers. " +
+		"Requires human confirmation."
+	creditmemoCreateToolName    = "magento.creditmemo.create"
+	creditmemoCreateToolTitle   = "Create Magento credit memo"
+	creditmemoCreateDescription = "Magento write operation: creates a credit memo (refund record) for an order " +
+		"(POST /rest/{store_code}/V1/creditmemos) on the resolved instance with 1-100 order-item lines and optional adjustments. " +
+		"Requires human confirmation; actual payment refunds depend on the payment method."
+
+	documentLinesProp = `"items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object",
+		"additionalProperties": false, "required": ["order_item_id", "qty"],
+		"properties": {"order_item_id": {"type": "integer", "minimum": 1},
+			"qty": {"type": "number", "exclusiveMinimum": 0}}}}`
+
+	shipmentCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"order_id": {"type": "integer", "minimum": 1},
+		` + documentLinesProp + `,
+		"tracks": {"type": "array", "maxItems": 20, "items": {"type": "object", "additionalProperties": false,
+			"required": ["track_number", "carrier_code"],
+			"properties": {"track_number": {"type": "string", "maxLength": 128},
+				"title": {"type": "string", "maxLength": 255},
+				"carrier_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}}}},
+		"comment": {"type": "string", "maxLength": 1024},
+		"notify": {"type": "boolean", "default": false}
+	}, "required": ["instance", "order_id", "items"], "additionalProperties": false}`
+
+	creditmemoCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"order_id": {"type": "integer", "minimum": 1},
+		` + documentLinesProp + `,
+		"adjustment_positive": {"type": "number", "minimum": 0},
+		"adjustment_negative": {"type": "number", "minimum": 0},
+		"comment": {"type": "string", "maxLength": 1024},
+		"notify": {"type": "boolean", "default": false}
+	}, "required": ["instance", "order_id", "items"], "additionalProperties": false}`
+)
+
+type shipmentCreateInput struct {
+	Instance string               `json:"instance"`
+	OrderID  int                  `json:"order_id"`
+	Items    []InvoiceLine        `json:"items"`
+	Tracks   []ShipmentTrackInput `json:"tracks"`
+	Comment  string               `json:"comment"`
+	Notify   bool                 `json:"notify"`
+}
+
+type shipmentCreateOutput struct {
+	Shipment Shipment `json:"shipment"`
+}
+
+type creditmemoCreateInput struct {
+	Instance           string        `json:"instance"`
+	OrderID            int           `json:"order_id"`
+	Items              []InvoiceLine `json:"items"`
+	AdjustmentPositive float64       `json:"adjustment_positive"`
+	AdjustmentNegative float64       `json:"adjustment_negative"`
+	Comment            string        `json:"comment"`
+	Notify             bool          `json:"notify"`
+}
+
+type creditmemoCreateOutput struct {
+	Creditmemo Creditmemo `json:"creditmemo"`
+}
+
+func newShipmentCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(shipmentCreateToolName, shipmentCreateToolTitle, shipmentCreateDescription, "magento.shipment.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(shipmentCreateToolName, shipmentCreateToolTitle, shipmentCreateDescription, shipmentCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in shipmentCreateInput) (*mcp.CallToolResult, shipmentCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, shipmentCreateOutput{}, err
+				}
+				lines := make([]DocumentLine, 0, len(in.Items))
+				for _, item := range in.Items {
+					lines = append(lines, DocumentLine(item))
+				}
+				shipment, err := svc.CreateShipment(ctx, ShipmentCreateInput{
+					OrderID: in.OrderID, Items: lines, Tracks: in.Tracks,
+					Comment: in.Comment, Notify: in.Notify,
+				})
+				if err != nil {
+					return nil, shipmentCreateOutput{}, err
+				}
+				return nil, shipmentCreateOutput{Shipment: *shipment}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newCreditmemoCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(creditmemoCreateToolName, creditmemoCreateToolTitle, creditmemoCreateDescription, "magento.creditmemo.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(creditmemoCreateToolName, creditmemoCreateToolTitle, creditmemoCreateDescription, creditmemoCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in creditmemoCreateInput) (*mcp.CallToolResult, creditmemoCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, creditmemoCreateOutput{}, err
+				}
+				lines := make([]DocumentLine, 0, len(in.Items))
+				for _, item := range in.Items {
+					lines = append(lines, DocumentLine(item))
+				}
+				creditmemo, err := svc.CreateCreditmemo(ctx, CreditmemoCreateInput{
+					OrderID: in.OrderID, Items: lines,
+					AdjustmentPositive: in.AdjustmentPositive, AdjustmentNegative: in.AdjustmentNegative,
+					Comment: in.Comment, Notify: in.Notify,
+				})
+				if err != nil {
+					return nil, creditmemoCreateOutput{}, err
+				}
+				return nil, creditmemoCreateOutput{Creditmemo: *creditmemo}, nil
 			})
 		return nil
 	}

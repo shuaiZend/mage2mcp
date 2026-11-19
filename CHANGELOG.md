@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento fulfillment writes: `magento.shipment.create` (order-item lines plus
+  up to 20 tracking numbers) and `magento.creditmemo.create` (refund record with
+  optional positive/negative adjustments). Both are confirmation-gated with
+  bounded lines, validated tracking, and comment/quantity checks.
 - `magento.product.links` (related/upsell/cross-sell reads).
 - `magento.invoice.create`: confirmation-gated invoicing with `capture=false` by
   default, strict order-item/quantity validation, and duplicate rejection.
