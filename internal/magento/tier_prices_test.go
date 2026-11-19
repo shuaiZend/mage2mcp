@@ -93,3 +93,32 @@ func TestSetTierPricesValidation(t *testing.T) {
 		t.Fatalf("ceiling err = %v", err)
 	}
 }
+
+func TestTierPricesFallbackToProduct(t *testing.T) {
+	var calls []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/default/V1/products/tier-prices":
+			http.NotFound(w, r)
+		case "/rest/default/V1/products/SKU-1":
+			_, _ = w.Write([]byte(`{"id":1,"sku":"SKU-1","name":"Widget","type_id":"simple","price":9.99,"attribute_set_id":4,
+				"tier_prices":[{"sku":"SKU-1","price":8.5,"price_type":"fixed","website_id":0,"customer_group_id":0,"qty":10}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	prices, err := svc.TierPrices(context.Background(), "SKU-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls[0] != "/rest/default/V1/products/tier-prices" || calls[1] != "/rest/default/V1/products/SKU-1" {
+		t.Fatalf("calls = %v", calls)
+	}
+	if len(prices) != 1 || prices[0].Price != 8.5 || prices[0].Quantity != 10 || prices[0].CustomerGroup != "0" {
+		t.Fatalf("prices = %+v", prices)
+	}
+}

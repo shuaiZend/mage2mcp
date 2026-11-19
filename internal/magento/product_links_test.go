@@ -69,3 +69,30 @@ func TestBulkChangeLinksValidation(t *testing.T) {
 		t.Fatalf("ceiling err = %v", err)
 	}
 }
+
+func TestProductLinksFallbackToProduct(t *testing.T) {
+	var calls []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/default/V1/products/SKU-1/links":
+			http.NotFound(w, r)
+		case "/rest/default/V1/products/SKU-1":
+			_, _ = w.Write([]byte(`{"id":1,"sku":"SKU-1","name":"Widget","type_id":"simple","price":9.99,"attribute_set_id":4,
+				"product_links":[{"sku":"SKU-1","link_type":"related","linked_product_sku":"SKU-2","position":1},
+					{"sku":"SKU-1","link_type":"upsell","linked_product_sku":"SKU-3","position":0}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	links, err := svc.ProductLinks(context.Background(), "SKU-1", "related")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || len(links) != 1 || links[0].LinkedProductSKU != "SKU-2" {
+		t.Fatalf("calls = %v links = %+v", calls, links)
+	}
+}

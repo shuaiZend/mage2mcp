@@ -32,12 +32,33 @@ func TestOrderStatusHistory(t *testing.T) {
 	}
 }
 
+func TestOrderStatusHistoryEnvelope(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"entity_id":1,"status":"pending","comment":null,"is_customer_notified":1}],"total_count":1}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	history, err := svc.OrderStatusHistory(context.Background(), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 || history[0].Status != "pending" || !history[0].IsCustomerNotified {
+		t.Fatalf("history = %+v", history)
+	}
+}
+
 func TestOrderInvoicesAndGet(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/default/V1/orders/42/invoices":
-			_, _ = w.Write([]byte(`[{"entity_id":7,"increment_id":"000000007","order_id":42,"state":2,"grand_total":129.99,"total_qty":2,"order_currency_code":"USD"}]`))
+		case "/rest/default/V1/invoices":
+			if r.URL.Query().Get("searchCriteria[filter_groups][0][filters][0][field]") != "order_id" ||
+				r.URL.Query().Get("searchCriteria[filter_groups][0][filters][0][value]") != "42" {
+				http.Error(w, `{"message":"missing order filter"}`, http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write([]byte(`{"items":[{"entity_id":7,"increment_id":"000000007","order_id":42,"state":2,"grand_total":129.99,"total_qty":2,"order_currency_code":"USD"}],"total_count":1}`))
 		case "/rest/default/V1/invoices/7":
 			_, _ = w.Write([]byte(`{"entity_id":7,"increment_id":"000000007","order_id":42,"state":2,"grand_total":129.99,"subtotal":120,"total_qty":2,"order_currency_code":"USD"}`))
 		default:
@@ -66,8 +87,8 @@ func TestOrderShipmentsAndGet(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/default/V1/orders/42/shipments":
-			_, _ = w.Write([]byte(`[{"entity_id":3,"increment_id":"000000003","order_id":42,"total_qty":2,"tracks":[{"title":"UPS","track_number":"1Z999","carrier_code":"ups"}]}]`))
+		case "/rest/default/V1/shipments":
+			_, _ = w.Write([]byte(`{"items":[{"entity_id":3,"increment_id":"000000003","order_id":42,"total_qty":2,"tracks":[{"title":"UPS","track_number":"1Z999","carrier_code":"ups"}]}],"total_count":1}`))
 		case "/rest/default/V1/shipments/3":
 			_, _ = w.Write([]byte(`{"entity_id":3,"increment_id":"000000003","order_id":42,"total_qty":2}`))
 		default:
@@ -116,8 +137,8 @@ func TestOrderCreditmemosAndGet(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/default/V1/orders/42/creditmemos":
-			_, _ = w.Write([]byte(`[{"entity_id":9,"increment_id":"000000009","order_id":42,"state":2,"grand_total":25,"total_qty":1,"order_currency_code":"USD"}]`))
+		case "/rest/default/V1/creditmemos":
+			_, _ = w.Write([]byte(`{"items":[{"entity_id":9,"increment_id":"000000009","order_id":42,"state":2,"grand_total":25,"total_qty":1,"order_currency_code":"USD"}],"total_count":1}`))
 		case "/rest/default/V1/creditmemos/9":
 			_, _ = w.Write([]byte(`{"entity_id":9,"increment_id":"000000009","order_id":42,"grand_total":25,"adjustment":-5,"order_currency_code":"USD"}`))
 		default:

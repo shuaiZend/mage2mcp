@@ -39,7 +39,13 @@ func (s *Service) TierPrices(ctx context.Context, sku string) ([]TierPrice, erro
 	query.Set("skus", sku)
 	raw, err := s.client.do(ctx, http.MethodGet, "/products/tier-prices", query, nil)
 	if err != nil {
-		return nil, err
+		// Older Magento builds and some hosting configurations do not expose the
+		// tier-price storage route. The product resource still carries the same
+		// data, so fall back to it instead of failing the read.
+		if errs.CodeOf(err) != errs.CodeNotFound {
+			return nil, err
+		}
+		return s.tierPricesFromProduct(ctx, sku)
 	}
 	var prices []TierPrice
 	if err := json.Unmarshal(raw, &prices); err != nil {
@@ -49,6 +55,48 @@ func (s *Service) TierPrices(ctx context.Context, sku string) ([]TierPrice, erro
 		prices = []TierPrice{}
 	}
 	return prices, nil
+}
+
+// tierPricesFromProduct reads the tier_prices array embedded in the product
+// resource (GET /products/{sku}) when the storage route is unavailable.
+func (s *Service) tierPricesFromProduct(ctx context.Context, sku string) ([]TierPrice, error) {
+	raw, err := s.client.do(ctx, http.MethodGet, "/products/"+url.PathEscape(sku), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		TierPrices []tierPriceFallback `json:"tier_prices"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable product payload").WithCause(err)
+	}
+	prices := make([]TierPrice, 0, len(payload.TierPrices))
+	for _, item := range payload.TierPrices {
+		group := item.CustomerGroup
+		if group == "" {
+			group = strconv.Itoa(item.CustomerGroupID)
+		}
+		quantity := item.Quantity
+		if quantity == 0 {
+			quantity = item.Qty
+		}
+		prices = append(prices, TierPrice{
+			SKU: item.SKU, Price: item.Price, PriceType: item.PriceType,
+			WebsiteID: item.WebsiteID, CustomerGroup: group, Quantity: quantity,
+		})
+	}
+	return prices, nil
+}
+
+type tierPriceFallback struct {
+	SKU             string  `json:"sku"`
+	Price           float64 `json:"price"`
+	PriceType       string  `json:"price_type"`
+	WebsiteID       int     `json:"website_id"`
+	CustomerGroupID int     `json:"customer_group_id"`
+	CustomerGroup   string  `json:"customer_group"`
+	Quantity        float64 `json:"quantity"`
+	Qty             float64 `json:"qty"`
 }
 
 // SetTierPrices replaces the tier prices of one SKU with POST
