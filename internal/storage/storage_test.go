@@ -248,3 +248,40 @@ func TestImportBatchLifecycle(t *testing.T) {
 		t.Fatalf("stored id = %q", storedID)
 	}
 }
+
+func TestListAndGetImportBatch(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	const instance = "store-list-test"
+	id, err := store.CreateImportBatch(ctx, instance, "", "csv", []byte("sku\nA\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := &jobs.ImportBatchResult{Total: 1, Processed: 1, Failed: 1,
+		Failures: []jobs.ImportBatchFailure{{RowNumber: 2, SKU: "A", Action: "create", Error: "boom"}}}
+	if err := store.FinishImportBatch(ctx, id, result, "partial", ""); err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.ListImportBatches(ctx, instance, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != id || list[0].State != "partial" || list[0].Failed != 1 {
+		t.Fatalf("list = %+v", list)
+	}
+	batch, err := store.GetImportBatch(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch == nil || len(batch.Failures) != 1 || batch.Failures[0].SKU != "A" {
+		t.Fatalf("batch = %+v", batch)
+	}
+	if missing, err := store.GetImportBatch(ctx, "00000000-0000-0000-0000-000000000000"); err != nil || missing != nil {
+		t.Fatalf("missing batch = %+v, %v", missing, err)
+	}
+	// Default limit and empty instance filter.
+	all, err := store.ListImportBatches(ctx, "", 0)
+	if err != nil || len(all) == 0 {
+		t.Fatalf("all batches = %+v, %v", all, err)
+	}
+}

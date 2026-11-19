@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Import batch reads: `magento.import.batches` (recent batches per instance) and
+  `magento.import.batch` (one batch with every failed row), backed by the
+  persisted batch tables.
+
 ### Changed
 
 - Asynchronous imports persist full batch state (`import_batches`,

@@ -97,3 +97,74 @@ func (s *Store) GetImportBatchByJob(ctx context.Context, jobID string) (*jobs.Im
 	}
 	return &batch, rows.Err()
 }
+
+// ListImportBatches returns recent batches for an instance (counts only, no
+// failure rows).
+func (s *Store) ListImportBatches(ctx context.Context, instanceID string, limit int) ([]jobs.ImportBatch, error) {
+	if s == nil || s.pool == nil {
+		return nil, fmt.Errorf("storage: not open")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, instance_id, COALESCE(job_id::text,''), format, state, total, processed,
+		       created, updated, skipped, failed, COALESCE(error_code,'')
+		FROM import_batches
+		WHERE ($1 = '' OR instance_id = $1)
+		ORDER BY created_at DESC
+		LIMIT $2`, instanceID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list import batches: %w", err)
+	}
+	defer rows.Close()
+	batches := make([]jobs.ImportBatch, 0, limit)
+	for rows.Next() {
+		var batch jobs.ImportBatch
+		if err := rows.Scan(&batch.ID, &batch.InstanceID, &batch.JobID, &batch.Format, &batch.State,
+			&batch.Total, &batch.Processed, &batch.Created, &batch.Updated, &batch.Skipped,
+			&batch.Failed, &batch.ErrorCode); err != nil {
+			return nil, fmt.Errorf("storage: scan import batch: %w", err)
+		}
+		batches = append(batches, batch)
+	}
+	return batches, rows.Err()
+}
+
+// GetImportBatch returns one batch by id, including failure rows.
+func (s *Store) GetImportBatch(ctx context.Context, id string) (*jobs.ImportBatch, error) {
+	if s == nil || s.pool == nil {
+		return nil, fmt.Errorf("storage: not open")
+	}
+	if id == "" {
+		return nil, nil
+	}
+	var batch jobs.ImportBatch
+	err := s.pool.QueryRow(ctx, `
+		SELECT id::text, instance_id, COALESCE(job_id::text,''), format, state, total, processed,
+		       created, updated, skipped, failed, COALESCE(error_code,'')
+		FROM import_batches WHERE id = $1::uuid`, id).
+		Scan(&batch.ID, &batch.InstanceID, &batch.JobID, &batch.Format, &batch.State, &batch.Total,
+			&batch.Processed, &batch.Created, &batch.Updated, &batch.Skipped, &batch.Failed, &batch.ErrorCode)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("storage: get import batch: %w", err)
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT row_number, sku, action, error FROM import_batch_failures
+		WHERE batch_id = $1::uuid ORDER BY row_number`, batch.ID)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list import failures: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var failure jobs.ImportBatchFailure
+		if err := rows.Scan(&failure.RowNumber, &failure.SKU, &failure.Action, &failure.Error); err != nil {
+			return nil, fmt.Errorf("storage: scan import failure: %w", err)
+		}
+		batch.Failures = append(batch.Failures, failure)
+	}
+	return &batch, rows.Err()
+}

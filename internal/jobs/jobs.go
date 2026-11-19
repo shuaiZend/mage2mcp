@@ -235,25 +235,25 @@ type ImportBatchResult struct {
 
 // ImportBatch is the persisted state of one asynchronous import.
 type ImportBatch struct {
-	ID         string
-	InstanceID string
-	JobID      string
-	Format     string
-	State      string
-	Total      int
-	Processed  int
-	Created    int
-	Updated    int
-	Skipped    int
-	Failed     int
-	ErrorCode  string
-	Failures   []ImportBatchFailure
+	ID         string               `json:"id"`
+	InstanceID string               `json:"instance_id"`
+	JobID      string               `json:"job_id,omitempty"`
+	Format     string               `json:"format"`
+	State      string               `json:"state"`
+	Total      int                  `json:"total"`
+	Processed  int                  `json:"processed"`
+	Created    int                  `json:"created"`
+	Updated    int                  `json:"updated"`
+	Skipped    int                  `json:"skipped"`
+	Failed     int                  `json:"failed"`
+	ErrorCode  string               `json:"error_code,omitempty"`
+	Failures   []ImportBatchFailure `json:"failures,omitempty"`
 }
 
 // ImportBatchFailure is one failed row persisted for resume.
 type ImportBatchFailure struct {
-	RowNumber int
-	SKU       string
-	Action    string
-	Error     string
+	RowNumber int    `json:"row_number"`
+	SKU       string `json:"sku"`
+	Action    string `json:"action"`
+	Error     string `json:"error"`
 }

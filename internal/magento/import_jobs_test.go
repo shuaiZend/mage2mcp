@@ -233,6 +233,17 @@ func (f *fakeBatchReader) GetImportBatchByJob(context.Context, string) (*jobs.Im
 	return f.batch, nil
 }
 
+func (f *fakeBatchReader) GetImportBatch(context.Context, string) (*jobs.ImportBatch, error) {
+	return f.batch, nil
+}
+
+func (f *fakeBatchReader) ListImportBatches(context.Context, string, int) ([]jobs.ImportBatch, error) {
+	if f.batch == nil {
+		return nil, nil
+	}
+	return []jobs.ImportBatch{*f.batch}, nil
+}
+
 func TestImportResumeUsesPersistedFailures(t *testing.T) {
 	payload, _ := json.Marshal(ImportJobPayload{Instance: "store-us", Format: "csv", DataBase64: base64.StdEncoding.EncodeToString([]byte("sku,name\nA,B\n"))})
 	queue := &fakeImportQueue{record: &jobs.JobRecord{ID: "11111111-1111-1111-1111-111111111111", Kind: jobs.TypeMagentoImport, Payload: payload}}
@@ -276,5 +287,137 @@ func TestImportResumeUsesPersistedFailures(t *testing.T) {
 	}
 	if len(resumed.OnlyRows) != 2 || resumed.OnlyRows[0] != 5 || resumed.OnlyRows[1] != 9 {
 		t.Fatalf("payload = %+v", resumed)
+	}
+}
+
+func TestImportBatchTools(t *testing.T) {
+	batch := &jobs.ImportBatch{
+		ID: "22222222-2222-2222-2222-222222222222", InstanceID: "store-us", State: "partial",
+		Total: 3, Created: 2, Failed: 1,
+		Failures: []jobs.ImportBatchFailure{{RowNumber: 4, SKU: "X", Action: "create", Error: "boom"}},
+	}
+	queue := &fakeImportQueue{}
+	batches := &fakeBatchReader{batch: batch}
+	resolver, _ := NewResolver(map[string]*Service{"store-us": testService(t, "https://shop.example.com")})
+	reg := registry.New()
+	if err := RegisterImportJobs(reg, resolver, queue, batches); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+
+	list, err := session.CallTool(ctx, &mcp.CallToolParams{Name: importBatchListToolName,
+		Arguments: map[string]any{"instance": "store-us"}})
+	if err != nil || list.IsError {
+		t.Fatalf("list = %+v %v", list, err)
+	}
+	raw, _ := json.Marshal(list.StructuredContent)
+	if !strings.Contains(string(raw), `"state":"partial"`) {
+		t.Fatalf("list payload = %s", raw)
+	}
+
+	get, err := session.CallTool(ctx, &mcp.CallToolParams{Name: importBatchGetToolName,
+		Arguments: map[string]any{"batch_id": batch.ID}})
+	if err != nil || get.IsError {
+		t.Fatalf("get = %+v %v", get, err)
+	}
+	raw, _ = json.Marshal(get.StructuredContent)
+	if !strings.Contains(string(raw), `"sku":"X"`) {
+		t.Fatalf("get payload = %s", raw)
+	}
+}
+
+func TestImportBatchToolErrors(t *testing.T) {
+	queue := &fakeImportQueue{}
+	resolver, _ := NewResolver(map[string]*Service{"store-us": testService(t, "https://shop.example.com")})
+	reg := registry.New()
+	// No batch reader: the read tools must report a configuration error.
+	if err := RegisterImportJobs(reg, resolver, queue); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	for _, call := range []struct {
+		name string
+		args map[string]any
+	}{
+		{importBatchListToolName, map[string]any{"instance": "store-us"}},
+		{importBatchGetToolName, map[string]any{"batch_id": "22222222-2222-2222-2222-222222222222"}},
+	} {
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: call.name, Arguments: call.args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.IsError {
+			t.Fatalf("%s without a store must fail", call.name)
+		}
+	}
+}
+
+func TestImportBatchNotFound(t *testing.T) {
+	queue := &fakeImportQueue{}
+	batches := &fakeBatchReader{}
+	resolver, _ := NewResolver(map[string]*Service{"store-us": testService(t, "https://shop.example.com")})
+	reg := registry.New()
+	if err := RegisterImportJobs(reg, resolver, queue, batches); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: importBatchGetToolName,
+		Arguments: map[string]any{"batch_id": "22222222-2222-2222-2222-222222222222"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatal("missing batch must be an error")
 	}
 }
