@@ -70,6 +70,15 @@ func (q *JobQueue) Enqueue(ctx context.Context, t jobs.Task) (string, error) {
 	if t.IdempotencyKey != "" {
 		idempotencyKey = &t.IdempotencyKey
 	}
+	if instanceID != nil {
+		// Jobs reference the instance registry; register a configured instance
+		// lazily so a job can carry its attribution without a separate sync step.
+		if _, err := q.store.pool.Exec(ctx, `
+			INSERT INTO datasource_instances (id, module) VALUES ($1, $2)
+			ON CONFLICT (id) DO NOTHING`, *instanceID, module); err != nil {
+			return "", fmt.Errorf("storage: register instance: %w", err)
+		}
+	}
 	var id string
 	err := q.store.pool.QueryRow(ctx, `
 		INSERT INTO jobs (module, instance_id, tool, kind, queue, payload, subject_hash,
