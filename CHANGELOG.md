@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.product.update` accepts `category_ids` and `website_ids` to replace a
+  product's assignments; an empty array clears them and omission leaves them
+  untouched. The extension payload now emits explicitly empty arrays instead of
+  omitting them.
 - `magento.customer.addresses`: PII-safe address projection (country, region,
   default flags) for one customer.
 - `magento.order.search` gains a `customer_id` filter.

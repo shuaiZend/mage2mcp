@@ -188,3 +188,65 @@ func TestConfigurableChildCarriesSEOFields(t *testing.T) {
 		t.Fatalf("attributes = %+v", got)
 	}
 }
+
+func TestUpdateProductReassignsCategoriesAndWebsites(t *testing.T) {
+	var body map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"sku":"SKU-1","name":"Widget","type_id":"simple","price":9.99,"attribute_set_id":4}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	_, err := svc.Update(context.Background(), "SKU-1", UpdateProductInput{
+		CategoryIDs: []int{12, 13}, WebsiteIDs: []int{1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	product, _ := body["product"].(map[string]any)
+	ext, _ := product["extension_attributes"].(map[string]any)
+	links, _ := ext["category_links"].([]any)
+	if len(links) != 2 {
+		t.Fatalf("category_links = %+v", ext)
+	}
+	first, _ := links[0].(map[string]any)
+	if first["category_id"] != "12" || first["position"] != float64(0) {
+		t.Fatalf("link = %+v", first)
+	}
+	websites, _ := ext["website_ids"].([]any)
+	if len(websites) != 1 {
+		t.Fatalf("website_ids = %+v", ext)
+	}
+}
+
+func TestUpdateProductClearsCategories(t *testing.T) {
+	var body map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"sku":"SKU-1","name":"Widget","type_id":"simple","price":9.99,"attribute_set_id":4}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	if _, err := svc.Update(context.Background(), "SKU-1", UpdateProductInput{CategoryIDs: []int{}}); err != nil {
+		t.Fatal(err)
+	}
+	product, _ := body["product"].(map[string]any)
+	ext, _ := product["extension_attributes"].(map[string]any)
+	if links, ok := ext["category_links"]; !ok || links == nil {
+		t.Fatalf("clearing must send an empty category_links array: %+v", ext)
+	}
+	if links, _ := ext["category_links"].([]any); len(links) != 0 {
+		t.Fatalf("category_links = %+v", links)
+	}
+}
+
+func TestUpdateProductRejectsBadCategoryIDs(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	if _, err := svc.Update(context.Background(), "SKU-1", UpdateProductInput{CategoryIDs: []int{0}}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("err = %v", err)
+	}
+}
