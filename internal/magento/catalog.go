@@ -275,3 +275,21 @@ type attributeOptionBody struct {
 type attributeOptionPayload struct {
 	Label string `json:"label"`
 }
+
+// DeleteAttributeOption removes one select/multiselect option with
+// DELETE /products/attributes/{code}/options/{id}. Options referenced by
+// products cannot be removed; Magento rejects the call in that case.
+func (s *Service) DeleteAttributeOption(ctx context.Context, attributeCode string, optionID int) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento catalog service is not configured")
+	}
+	if !attributeCodeRE.MatchString(attributeCode) {
+		return invalidf("attribute code must match %s", attributeCodeRE.String())
+	}
+	if optionID <= 0 {
+		return invalidf("option_id must be a positive integer")
+	}
+	path := "/products/attributes/" + url.PathEscape(attributeCode) + "/options/" + strconv.Itoa(optionID)
+	_, err := s.client.do(ctx, http.MethodDelete, path, nil, nil)
+	return err
+}

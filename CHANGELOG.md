@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.attributes.options.delete` (destructive, confirmation-gated): removes
+  a select/multiselect option; Magento rejects the call while products reference
+  it.
+
+### Added
+
 - `magento.import.resume` (confirmation-gated): queues a new asynchronous import
   containing only the failed rows of a previous job, using the stored job payload
   and bounded failure report. Resuming the same job twice returns the same new
