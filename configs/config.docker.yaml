@@ -16,7 +16,7 @@ auth:
   jwks_url: "${MAGE2MCP_AUTH_JWKS_URL}"
 
 log:
-  level: "${MAGE2MCP_LOG_LEVEL}"
+  level: "info"  # override with MAGE2MCP_LOG_LEVEL
   format: "json"
 
 tools:
