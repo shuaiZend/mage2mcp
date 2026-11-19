@@ -31,7 +31,8 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Development plan](development-plan.md) | Phases, exit criteria, traceability matrix |
 | [Configuration](configuration.md) | Every configuration key, default, and environment override |
 | [Compatibility](compatibility.md) | Supported components, interface stability promises, version support |
-| [v0.6.0 release notes](releases/v0.6.0.md) | Highlights, breaking changes, upgrade and verification checklist |
+| [v0.7.0 release notes](releases/v0.7.0.md) | Highlights, breaking changes, upgrade and verification checklist |
+| [v0.6.0 release notes](releases/v0.6.0.md) | Previous release notes |
 | [v0.5.0 release notes](releases/v0.5.0.md) | Previous release notes |
 | [v0.4.0 release notes](releases/v0.4.0.md) | Previous release notes |
 | [v0.3.0 release notes](releases/v0.3.0.md) | Previous release notes |
