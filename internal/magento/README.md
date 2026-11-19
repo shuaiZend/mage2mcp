@@ -10,7 +10,7 @@ No plugin is installed and the Magento database is never touched.
 - `NewService(*Client)` — product reads and writes, configurable lifecycle, MSI
   source items, bounded import validation and execution, order reads and a
   bounded per-day sales summary, category reads/tree, attribute-set reads, media
-  reads, and stock/MSI reads.
+  reads, stock/MSI reads, order status history, and invoice/shipment reads.
 - `Register(reg, svc)` — read tools; `RegisterWrites(reg, svc)` — write tools
   (require confirmation and `tools.writes`).
 

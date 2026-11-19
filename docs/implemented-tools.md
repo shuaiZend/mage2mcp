@@ -36,6 +36,11 @@ Common behavior:
 | `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
 | `magento.order.search` | read | 30s | Orders by status, state, increment id, creation window, or store view; items omitted |
+| `magento.order.status_history` | read | 30s | Status history with comment and notification flags |
+| `magento.invoice.list` | read | 30s | Invoices of one order |
+| `magento.invoice.get` | read | 30s | One invoice by id |
+| `magento.shipment.list` | read | 30s | Shipments of one order, including tracking numbers |
+| `magento.shipment.get` | read | 30s | One shipment by id |
 | `magento.sales.summary` | read | 30s | Per-day order count, grand-total revenue, and item quantity over a bounded window (max 1000 orders, truncation reported) |
 | `magento.product.create` | write + confirmation | 60s | Simple/virtual/downloadable/bundle create with EAV attributes |
 | `magento.product.update` | write + confirmation | 60s | Merge update of provided fields |
