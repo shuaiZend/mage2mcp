@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `magento.configurable.set_options` (confirmation-gated): declares the variant
+  attributes and value ordering of an existing configurable parent (1-10
+  options, one save per option).
+
 ## [0.4.0] - 2026-11-19
 
 Fourth minor pre-release: configurable parent updates and variation creation,

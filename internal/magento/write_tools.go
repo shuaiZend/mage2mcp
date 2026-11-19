@@ -289,7 +289,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCustomerAddressCreateTool(lookup), newCustomerAddressDeleteTool(lookup),
 		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup), newBulkOptionCreateTool(lookup),
 		newConfigurableUpdateTool(lookup), newInventorySourceCreateTool(lookup), newStockSourceLinkTool(lookup),
-		newStockSourceUnlinkTool(lookup), newCreateVariationsTool(lookup),
+		newStockSourceUnlinkTool(lookup), newCreateVariationsTool(lookup), newSetConfigurableOptionsTool(lookup),
 	}
 	tools = append(tools, newDocumentEmailTools(lookup)...)
 	for _, tool := range tools {
@@ -310,54 +310,55 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 // writeToolSchemas maps each write tool to its JSON Schema.
 func writeToolSchemas() map[string]string {
 	return map[string]string{
-		productCreateToolName:         productCreateSchema,
-		productUpdateToolName:         productUpdateSchema,
-		productDeleteToolName:         productDeleteSchema,
-		configurableCreateToolName:    configurableCreateSchema,
-		configurableAddChildToolName:  configurableAddChildSchema,
-		inventoryAssignToolName:       inventoryAssignSchema,
-		importExecuteToolName:         importExecuteSchema,
-		mediaUploadToolName:           mediaUploadSchema,
-		mediaDeleteToolName:           mediaDeleteSchema,
-		invoiceCreateToolName:         invoiceCreateSchema,
-		invoiceCaptureToolName:        invoiceCaptureSchema,
-		shipmentCreateToolName:        shipmentCreateSchema,
-		creditmemoCreateToolName:      creditmemoCreateSchema,
-		orderCommentToolName:          orderCommentSchema,
-		orderHoldToolName:             orderHoldSchema,
-		orderUnholdToolName:           orderHoldSchema,
-		orderEmailToolName:            orderEmailSchema,
-		orderCreateToolName:           orderCreateSchema,
-		categoryCreateToolName:        categoryCreateSchema,
-		categoryUpdateToolName:        categoryUpdateSchema,
-		categoryAssignToolName:        categoryAssignSchema,
-		removeChildToolName:           removeChildSchema,
-		unassignSourceItemsToolName:   unassignSourceItemsSchema,
-		productLinkAddToolName:        productLinkAddSchema,
-		productLinkRemoveToolName:     productLinkRemoveSchema,
-		tierPricesSetToolName:         tierPricesSetSchema,
-		inventoryTransferToolName:     inventoryTransferSchema,
-		customerCreateToolName:        customerCreateSchema,
-		customerUpdateToolName:        customerUpdateSchema,
-		mediaUpdateToolName:           mediaUpdateSchema,
-		orderCancelToolName:           orderCancelSchema,
-		attributeOptionCreateToolName: attributeOptionCreateSchema,
-		attributeOptionDeleteToolName: attributeOptionDeleteSchema,
-		bulkProductUpdateToolName:     bulkProductUpdateSchema,
-		categoryDeleteToolName:        categoryDeleteSchema,
-		customerAddressCreateToolName: customerAddressCreateSchema,
-		customerAddressDeleteToolName: customerAddressDeleteSchema,
-		customerAddressUpdateToolName: customerAddressUpdateSchema,
-		bulkLinkToolName:              bulkLinkSchema,
-		bulkOptionCreateToolName:      bulkOptionCreateSchema,
-		configurableUpdateToolName:    productUpdateSchema,
-		invoiceEmailToolName:          documentEmailSchema,
-		shipmentEmailToolName:         documentEmailSchema,
-		creditmemoEmailToolName:       documentEmailSchema,
-		inventorySourceCreateToolName: inventorySourceCreateSchema,
-		stockSourceLinkToolName:       stockSourceLinkSchema,
-		stockSourceUnlinkToolName:     stockSourceUnlinkSchema,
-		createVariationsToolName:      createVariationsSchema,
+		productCreateToolName:          productCreateSchema,
+		productUpdateToolName:          productUpdateSchema,
+		productDeleteToolName:          productDeleteSchema,
+		configurableCreateToolName:     configurableCreateSchema,
+		configurableAddChildToolName:   configurableAddChildSchema,
+		inventoryAssignToolName:        inventoryAssignSchema,
+		importExecuteToolName:          importExecuteSchema,
+		mediaUploadToolName:            mediaUploadSchema,
+		mediaDeleteToolName:            mediaDeleteSchema,
+		invoiceCreateToolName:          invoiceCreateSchema,
+		invoiceCaptureToolName:         invoiceCaptureSchema,
+		shipmentCreateToolName:         shipmentCreateSchema,
+		creditmemoCreateToolName:       creditmemoCreateSchema,
+		orderCommentToolName:           orderCommentSchema,
+		orderHoldToolName:              orderHoldSchema,
+		orderUnholdToolName:            orderHoldSchema,
+		orderEmailToolName:             orderEmailSchema,
+		orderCreateToolName:            orderCreateSchema,
+		categoryCreateToolName:         categoryCreateSchema,
+		categoryUpdateToolName:         categoryUpdateSchema,
+		categoryAssignToolName:         categoryAssignSchema,
+		removeChildToolName:            removeChildSchema,
+		unassignSourceItemsToolName:    unassignSourceItemsSchema,
+		productLinkAddToolName:         productLinkAddSchema,
+		productLinkRemoveToolName:      productLinkRemoveSchema,
+		tierPricesSetToolName:          tierPricesSetSchema,
+		inventoryTransferToolName:      inventoryTransferSchema,
+		customerCreateToolName:         customerCreateSchema,
+		customerUpdateToolName:         customerUpdateSchema,
+		mediaUpdateToolName:            mediaUpdateSchema,
+		orderCancelToolName:            orderCancelSchema,
+		attributeOptionCreateToolName:  attributeOptionCreateSchema,
+		attributeOptionDeleteToolName:  attributeOptionDeleteSchema,
+		bulkProductUpdateToolName:      bulkProductUpdateSchema,
+		categoryDeleteToolName:         categoryDeleteSchema,
+		customerAddressCreateToolName:  customerAddressCreateSchema,
+		customerAddressDeleteToolName:  customerAddressDeleteSchema,
+		customerAddressUpdateToolName:  customerAddressUpdateSchema,
+		bulkLinkToolName:               bulkLinkSchema,
+		bulkOptionCreateToolName:       bulkOptionCreateSchema,
+		configurableUpdateToolName:     productUpdateSchema,
+		invoiceEmailToolName:           documentEmailSchema,
+		shipmentEmailToolName:          documentEmailSchema,
+		creditmemoEmailToolName:        documentEmailSchema,
+		inventorySourceCreateToolName:  inventorySourceCreateSchema,
+		stockSourceLinkToolName:        stockSourceLinkSchema,
+		stockSourceUnlinkToolName:      stockSourceUnlinkSchema,
+		createVariationsToolName:       createVariationsSchema,
+		setConfigurableOptionsToolName: setConfigurableOptionsSchema,
 	}
 }
 
@@ -2540,6 +2541,68 @@ func newCreateVariationsTool(lookup serviceLookup) registry.Tool {
 					return nil, createVariationsOutput{}, err
 				}
 				return nil, createVariationsOutput{Result: *result}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	setConfigurableOptionsToolName    = "magento.configurable.set_options"
+	setConfigurableOptionsToolTitle   = "Set configurable variant options"
+	setConfigurableOptionsDescription = "Magento write operation: declares the variant attributes and value ordering of an existing configurable parent " +
+		"(POST /rest/{store_code}/V1/configurable-products/{sku}/options, one option per call) on the resolved instance. " +
+		"Earlier options stay if a later one fails. The instance input is resolved by the server when only one Magento instance is configured. " +
+		"Requires human confirmation."
+
+	setConfigurableOptionsSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+		"options": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "object",
+			"additionalProperties": false, "required": ["attribute_id", "label", "values"],
+			"properties": {"attribute_id": {"type": "integer", "minimum": 1},
+				"label": {"type": "string", "minLength": 1, "maxLength": 255},
+				"position": {"type": "integer", "minimum": 0, "maximum": 1000},
+				"values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "integer", "minimum": 1}}}}}
+	}, "required": ["instance", "sku", "options"], "additionalProperties": false}`
+)
+
+type configurableOptionWire struct {
+	AttributeID int    `json:"attribute_id"`
+	Label       string `json:"label"`
+	Position    int    `json:"position"`
+	Values      []int  `json:"values"`
+}
+
+type setConfigurableOptionsInput struct {
+	Instance string                   `json:"instance"`
+	SKU      string                   `json:"sku"`
+	Options  []configurableOptionWire `json:"options"`
+}
+
+type setConfigurableOptionsOutput struct {
+	SKU     string `json:"sku"`
+	Options int    `json:"options"`
+	Set     bool   `json:"set"`
+}
+
+func newSetConfigurableOptionsTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(setConfigurableOptionsToolName, setConfigurableOptionsToolTitle, setConfigurableOptionsDescription, capabilityConfigurableWrite)
+	t.Timeout = 120 * time.Second
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(setConfigurableOptionsToolName, setConfigurableOptionsToolTitle, setConfigurableOptionsDescription, setConfigurableOptionsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in setConfigurableOptionsInput) (*mcp.CallToolResult, setConfigurableOptionsOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, setConfigurableOptionsOutput{}, err
+				}
+				options := make([]ConfigurableOptionInput, 0, len(in.Options))
+				for _, option := range in.Options {
+					options = append(options, ConfigurableOptionInput(option))
+				}
+				if err := svc.SetConfigurableOptions(ctx, in.SKU, options); err != nil {
+					return nil, setConfigurableOptionsOutput{}, err
+				}
+				return nil, setConfigurableOptionsOutput{SKU: in.SKU, Options: len(options), Set: true}, nil
 			})
 		return nil
 	}

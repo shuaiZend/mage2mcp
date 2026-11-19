@@ -591,3 +591,58 @@ func TestCreateVariationsValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestSetConfigurableOptions(t *testing.T) {
+	var bodies []configurableOptionBody
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"id":1,"sku":"CFG","name":"Parent","type_id":"configurable","price":19.99,"attribute_set_id":4}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/configurable-products/CFG/options":
+			var body configurableOptionBody
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &body)
+			bodies = append(bodies, body)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	err := svc.SetConfigurableOptions(context.Background(), "CFG", []ConfigurableOptionInput{
+		{AttributeID: 93, Label: "Color", Position: 0, Values: []int{12, 13}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 1 || bodies[0].Option.AttributeID != "93" || len(bodies[0].Option.Values) != 2 {
+		t.Fatalf("bodies = %+v", bodies)
+	}
+	if bodies[0].Option.Values[1].ValueIndex != 13 {
+		t.Fatalf("values = %+v", bodies[0].Option.Values)
+	}
+}
+
+func TestSetConfigurableOptionsValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	valid := ConfigurableOptionInput{AttributeID: 93, Label: "Color", Values: []int{12}}
+	cases := []struct {
+		sku     string
+		options []ConfigurableOptionInput
+	}{
+		{"bad sku!", []ConfigurableOptionInput{valid}},
+		{"CFG", nil},
+		{"CFG", []ConfigurableOptionInput{{AttributeID: 0, Label: "Color", Values: []int{12}}}},
+		{"CFG", []ConfigurableOptionInput{{AttributeID: 93, Label: "", Values: []int{12}}}},
+		{"CFG", []ConfigurableOptionInput{{AttributeID: 93, Label: "Color", Values: nil}}},
+		{"CFG", []ConfigurableOptionInput{{AttributeID: 93, Label: "Color", Values: []int{0}}}},
+		{"CFG", []ConfigurableOptionInput{{AttributeID: 93, Label: "Color", Values: []int{12, 12}}}},
+		{"CFG", []ConfigurableOptionInput{valid, valid}},
+	}
+	for i, tc := range cases {
+		if err := svc.SetConfigurableOptions(ctx, tc.sku, tc.options); errs.CodeOf(err) != errs.CodeInvalidArgument {
+			t.Fatalf("case %d: err = %v", i, err)
+		}
+	}
+}
