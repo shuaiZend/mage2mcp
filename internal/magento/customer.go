@@ -216,10 +216,7 @@ func (s *Service) CreateCustomer(ctx context.Context, in CustomerCreateInput) (*
 	if in.StoreID < 0 || in.GroupID < 0 {
 		return nil, invalidf("store_id and group_id must not be negative")
 	}
-	body := customerWriteBody{Customer: customerWritePayload{
-		Email: in.Email, Firstname: in.Firstname, Lastname: in.Lastname,
-		WebsiteID: in.WebsiteID, StoreID: in.StoreID, GroupID: in.GroupID,
-	}}
+	body := customerWriteBody{Customer: customerWritePayload(in)}
 	raw, err := s.client.do(ctx, http.MethodPost, "/customers", nil, body)
 	if err != nil {
 		return nil, err
