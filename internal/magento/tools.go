@@ -109,6 +109,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newProductsBatchTool(lookup), newProductSEOTool(lookup), newCustomerAddressesTool(lookup),
 		newStockStatusBatchTool(lookup), newTierPricesTool(lookup),
 		newInventorySourcesTool(lookup), newInventoryStocksTool(lookup), newMediaGetTool(lookup),
+		newOrderSummaryTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1586,6 +1587,44 @@ func newMediaGetTool(lookup serviceLookup) registry.Tool {
 					return nil, mediaGetOutput{}, err
 				}
 				return nil, mediaGetOutput{Media: *entry}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	orderSummaryToolName  = "magento.order.summary"
+	orderSummaryToolTitle = "Magento order summary"
+
+	orderSummaryToolDescription = "Aggregates Magento orders per day over a bounded window: order count, " +
+		"grand-total revenue, and item quantity. Scans at most 1000 orders and reports truncation. " +
+		"This is the design-catalog name for the same data as magento.sales.summary; both stay available. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+)
+
+func newOrderSummaryTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(orderSummaryToolName, orderSummaryToolTitle, orderSummaryToolDescription)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(orderSummaryToolName, orderSummaryToolTitle, orderSummaryToolDescription, salesSummarySchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in salesSummaryInput) (*mcp.CallToolResult, salesSummaryOutput, error) {
+				from, err := parseSummaryTime(in.From, "from")
+				if err != nil {
+					return nil, salesSummaryOutput{}, err
+				}
+				to, err := parseSummaryTime(in.To, "to")
+				if err != nil {
+					return nil, salesSummaryOutput{}, err
+				}
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, salesSummaryOutput{}, err
+				}
+				summary, err := svc.SalesSummary(ctx, from, to)
+				if err != nil {
+					return nil, salesSummaryOutput{}, err
+				}
+				return nil, salesSummaryOutput{Summary: *summary}, nil
 			})
 		return nil
 	}

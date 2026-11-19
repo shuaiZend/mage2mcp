@@ -76,6 +76,7 @@ Common behavior:
 | `magento.inventory.sources` | read | 30s | MSI inventory sources with location fields |
 | `magento.inventory.stocks` | read | 30s | MSI inventory stocks |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
+| `magento.order.summary` | read | 30s | Daily order count, revenue, and quantity over a bounded window (same data as `sales.summary`) |
 | `magento.order.search` | read | 30s | Orders by status, state, increment id, creation window, store view, or customer id; items omitted |
 | `magento.order.status_history` | read | 30s | Status history with comment and notification flags |
 | `magento.invoice.list` | read | 30s | Invoices of one order |

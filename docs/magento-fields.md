@@ -132,3 +132,18 @@ re-queues only the failed rows of a previous job (from its bounded report) and
 is idempotent per source job. `magento.import.execute`
 runs bounded batches synchronously;
 `magento.import.start` queues them for the worker and needs `database.url`.
+
+## Limits and pagination
+
+| Surface | Limit |
+|---|---|
+| Product batch read (`products.get`) | 50 SKUs per call |
+| Bulk update (`products.bulk_update`) | 50 SKUs per call, one PUT each |
+| Order search (`order.search`) | `limit` 1-100, cursor for the next page |
+| Sales/order summary | 1000 orders scanned per window; truncation is reported |
+| Tier prices | 50 tiers per SKU per call |
+| Media upload | 8 MiB decoded per file |
+| Import | 8 MiB and 5000 rows per batch; async jobs retry twice |
+
+All limits are enforced before any upstream call; a request above a limit fails
+with `invalid_argument` rather than being silently truncated.

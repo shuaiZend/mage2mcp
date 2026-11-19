@@ -4,6 +4,7 @@ package magento
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
+	mcpserver "github.com/shuaiZend/mage2mcp/internal/mcp/server"
 )
 
 func TestGetOrderReturnsProjection(t *testing.T) {
@@ -179,5 +183,49 @@ func TestSalesSummaryValidation(t *testing.T) {
 	}
 	if _, err := svc.SalesSummary(ctx, from, from.Add(400*24*time.Hour)); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("oversized window err = %v", err)
+	}
+}
+
+func TestOrderSummaryTool(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"entity_id":1,"increment_id":"000000001","grand_total":20,"total_qty_ordered":2,
+			"created_at":"2026-11-18 10:00:00","status":"processing"}]}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	reg := registry.New()
+	if err := Register(reg, svc); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "magento.order.summary",
+		Arguments: map[string]any{"instance": "store-us", "from": "2026-11-01", "to": "2026-11-19"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("summary error: %+v", result.Content)
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	if !strings.Contains(string(raw), `"orders":1`) && !strings.Contains(string(raw), `"Orders":1`) {
+		t.Fatalf("summary payload = %s", raw)
 	}
 }
