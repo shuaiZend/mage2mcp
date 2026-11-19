@@ -49,11 +49,22 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: open pool: %w", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("storage: ping: %w", err)
+	// PostgreSQL may still be starting when a containerized gateway boots; retry
+	// the ping for a bounded time instead of failing the process immediately.
+	var pingErr error
+	for attempt := 0; attempt < 30; attempt++ {
+		if pingErr = pool.Ping(ctx); pingErr == nil {
+			return &Store{pool: pool}, nil
+		}
+		select {
+		case <-ctx.Done():
+			pool.Close()
+			return nil, fmt.Errorf("storage: ping: %w", ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
-	return &Store{pool: pool}, nil
+	pool.Close()
+	return nil, fmt.Errorf("storage: ping: %w", pingErr)
 }
 
 // Close releases the pool.
