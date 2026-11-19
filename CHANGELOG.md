@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.product.options.update` and `magento.product.options.delete`
+  (confirmation-gated), completing the custom-option lifecycle.
+
+### Added
+
 - `magento.product.options.create` (confirmation-gated): adds one custom option,
   with selectable types requiring 1-50 values and fixed/percent pricing.
 

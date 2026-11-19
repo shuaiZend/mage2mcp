@@ -290,7 +290,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup), newBulkOptionCreateTool(lookup),
 		newConfigurableUpdateTool(lookup), newInventorySourceCreateTool(lookup), newStockSourceLinkTool(lookup),
 		newStockSourceUnlinkTool(lookup), newCreateVariationsTool(lookup), newSetConfigurableOptionsTool(lookup),
-		newProductOptionCreateTool(lookup),
+		newProductOptionCreateTool(lookup), newProductOptionUpdateTool(lookup), newProductOptionDeleteTool(lookup),
 	}
 	tools = append(tools, newDocumentEmailTools(lookup)...)
 	for _, tool := range tools {
@@ -361,6 +361,8 @@ func writeToolSchemas() map[string]string {
 		createVariationsToolName:       createVariationsSchema,
 		setConfigurableOptionsToolName: setConfigurableOptionsSchema,
 		productOptionCreateToolName:    productOptionCreateSchema,
+		productOptionUpdateToolName:    productOptionUpdateSchema,
+		productOptionDeleteToolName:    productOptionDeleteSchema,
 	}
 }
 
@@ -2675,6 +2677,112 @@ func newProductOptionCreateTool(lookup serviceLookup) registry.Tool {
 				}
 				return nil, productOptionCreateOutput{Option: *option}, nil
 			})
+		return nil
+	}
+	return t
+}
+
+const (
+	productOptionUpdateToolName    = "magento.product.options.update"
+	productOptionUpdateToolTitle   = "Update a Magento product custom option"
+	productOptionUpdateDescription = "Magento write operation: updates one custom option " +
+		"(PUT /rest/{store_code}/V1/products/{sku}/options/{optionId}) on the resolved instance. Selectable types require 1-50 values with fixed or percent pricing. " +
+		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+	productOptionDeleteToolName    = "magento.product.options.delete"
+	productOptionDeleteToolTitle   = "Delete a Magento product custom option"
+	productOptionDeleteDescription = "Magento write operation: deletes one custom option " +
+		"(DELETE /rest/{store_code}/V1/products/{sku}/options/{optionId}) on the resolved instance. Irreversible; existing selections in carts are not restored. " +
+		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+
+	productOptionUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
+		"option_id": {"type": "integer", "minimum": 1},
+		"title": {"type": "string", "minLength": 1, "maxLength": 255},
+		"type": {"type": "string", "enum": ["field", "area", "file", "drop_down", "radio", "checkbox", "multiple", "date", "date_time", "time"]},
+		"is_require": {"type": "boolean", "default": false},
+		"sort_order": {"type": "integer", "minimum": 0},
+		"values": {"type": "array", "maxItems": 50, "items": {"type": "object", "additionalProperties": false,
+			"required": ["title"], "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 255},
+				"price": {"type": "number", "minimum": 0},
+				"price_type": {"type": "string", "enum": ["fixed", "percent"]},
+				"sku": {"type": "string", "maxLength": 64},
+				"sort_order": {"type": "integer", "minimum": 0}}}}
+	}, "required": ["instance", "sku", "option_id", "title", "type"], "additionalProperties": false}`
+
+	productOptionDeleteSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
+		"option_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "sku", "option_id"], "additionalProperties": false}`
+)
+
+type productOptionUpdateInput struct {
+	Instance  string                  `json:"instance"`
+	SKU       string                  `json:"sku"`
+	OptionID  int                     `json:"option_id"`
+	Title     string                  `json:"title"`
+	Type      string                  `json:"type"`
+	IsRequire bool                    `json:"is_require"`
+	SortOrder int                     `json:"sort_order"`
+	Values    []customOptionValueWire `json:"values"`
+}
+
+type productOptionUpdateOutput struct {
+	Option ProductOption `json:"option"`
+}
+
+type productOptionDeleteInput struct {
+	Instance string `json:"instance"`
+	SKU      string `json:"sku"`
+	OptionID int    `json:"option_id"`
+}
+
+type productOptionDeleteOutput struct {
+	SKU      string `json:"sku"`
+	OptionID int    `json:"option_id"`
+	Deleted  bool   `json:"deleted"`
+}
+
+func newProductOptionUpdateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(productOptionUpdateToolName, productOptionUpdateToolTitle, productOptionUpdateDescription, "magento.product.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(productOptionUpdateToolName, productOptionUpdateToolTitle, productOptionUpdateDescription, productOptionUpdateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productOptionUpdateInput) (*mcp.CallToolResult, productOptionUpdateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productOptionUpdateOutput{}, err
+				}
+				values := make([]CustomOptionValueInput, 0, len(in.Values))
+				for _, value := range in.Values {
+					values = append(values, CustomOptionValueInput(value))
+				}
+				option, err := svc.UpdateProductOption(ctx, in.SKU, in.OptionID, CustomOptionInput{
+					Title: in.Title, Type: in.Type, IsRequire: in.IsRequire, SortOrder: in.SortOrder, Values: values,
+				})
+				if err != nil {
+					return nil, productOptionUpdateOutput{}, err
+				}
+				return nil, productOptionUpdateOutput{Option: *option}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newProductOptionDeleteTool(lookup serviceLookup) registry.Tool {
+	t := destructiveToolMetadata(productOptionDeleteToolName, productOptionDeleteToolTitle, productOptionDeleteDescription, "magento.product.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: productOptionDeleteToolName, Title: productOptionDeleteToolTitle, Description: productOptionDeleteDescription,
+			InputSchema: json.RawMessage(productOptionDeleteSchema),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in productOptionDeleteInput) (*mcp.CallToolResult, productOptionDeleteOutput, error) {
+			svc, err := lookup(in.Instance)
+			if err != nil {
+				return nil, productOptionDeleteOutput{}, err
+			}
+			if err := svc.DeleteProductOption(ctx, in.SKU, in.OptionID); err != nil {
+				return nil, productOptionDeleteOutput{}, err
+			}
+			return nil, productOptionDeleteOutput{SKU: in.SKU, OptionID: in.OptionID, Deleted: true}, nil
+		})
 		return nil
 	}
 	return t
