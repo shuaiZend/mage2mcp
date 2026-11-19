@@ -7,8 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Fixed
 
+- Import execution routes reserved SEO and pricing columns
+  (`description`, `short_description`, `url_key`, `meta_*`, `weight`,
+  `special_price`, `special_*_date`, `cost`, `tax_class_id`) to their typed
+  fields instead of the custom-attributes map, which the duplicate rejection
+  would otherwise fail on every row.
+
+### Verified
+
+- End-to-end against a fake Magento REST API on the deployment host: MCP
+  initialize/tools, product create through the two-step confirmation (approval
+  by a different identity), SEO audit (83), import validation warnings, and an
+  asynchronous import queued, approved, executed by the worker, and reported as
+  `created: 1`. A mismatched confirmation retry was correctly rejected with
+  `confirmation_param_mismatch`.
+
+### Added
 - Typed pricing/shipping fields on product create/update and configurable
   children: `weight`, `special_price`, `special_from_date`, `special_to_date`,
   `cost`, and `tax_class_id`, with decimal/date/range validation and duplicate

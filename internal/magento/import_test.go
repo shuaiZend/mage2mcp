@@ -278,3 +278,30 @@ func TestValidateImportWarningsTruncated(t *testing.T) {
 		t.Fatalf("warnings=%d truncated=%v", len(preview.Warnings), preview.WarningsTruncated)
 	}
 }
+
+func TestExecuteImportRoutesReservedAttributes(t *testing.T) {
+	var created, updated int
+	server := newImportFake(t, &created, &updated)
+	defer server.Close()
+	svc := newImportServiceAgainst(t, server.URL)
+	data := []byte("sku,name,type_id,price,attribute_set_id,description,url_key,meta_title,weight\n" +
+		"NEW-1,New,simple,9.99,4," + strings.Repeat("copy ", 80) + ",new-widget,New Widget | Store,1.25\n")
+	result, err := svc.ExecuteImport(context.Background(), "csv", data, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Created != 1 || result.Failed != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestImportReservedAttributeValidation(t *testing.T) {
+	rows, err := parseImportRows("csv", []byte("sku,name,weight,special_from_date,tax_class_id\nSKU-1,Widget,heavy,01/11/2026,abc\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	problems := validateImportRow(rows[0], map[string]int{})
+	if len(problems) < 3 {
+		t.Fatalf("problems = %+v", problems)
+	}
+}
