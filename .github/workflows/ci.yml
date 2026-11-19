@@ -114,7 +114,9 @@ jobs:
       - name: Build
         run: go build ./...
       - name: Test with race detector
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+        run: |
+          mapfile -t packages < <(go list ./... | grep -v '/test/e2e/')
+          go test -race -covermode=atomic -coverprofile=coverage.out "${packages[@]}"
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Enforce coverage floor
@@ -213,6 +215,25 @@ jobs:
       - name: Clean up
         if: always()
         run: docker rm -f mage2mcp-ci || true
+
+  e2e:
+    name: e2e
+    needs: detect
+    if: needs.detect.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+      - name: End-to-end Magento smoke test
+        run: ./test/e2e/run.sh
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml ps || true
+          docker compose -f docker-compose.yml logs --tail=100 || true
 
   external-links:
     name: external-links

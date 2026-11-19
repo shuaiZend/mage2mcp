@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Repository end-to-end assets (`test/e2e/`): a fake Magento REST API, an MCP
+  client, and `run.sh`, wired to `make e2e` and a non-required CI job that starts
+  PostgreSQL, the worker, and the server, then exercises product creation through
+  confirmation, the SEO audit, import validation, and an asynchronous import.
+
 ### Fixed
 
 - Import execution routes reserved SEO and pricing columns

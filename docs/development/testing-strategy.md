@@ -297,3 +297,13 @@ behaviors were not re-verified.
 | Evidence labels and the no-mock-as-real rule | [Agent workflow](agent-workflow.md), Section 8 |
 | Security test corpus and severity model | [Threat model](../security/threat-model.md) |
 | Which suites block a merge | [CI/CD](ci-cd.md), Section 4 |
+
+## End-to-end smoke test
+
+`make e2e` (`test/e2e/run.sh`) starts PostgreSQL from Compose plus a fake Magento
+REST API, then runs the server and worker on loopback with writes enabled. It
+exercises `tools/list`, `magento.product.create` through the two-step
+confirmation (approved by a different identity), `magento.product.seo`,
+`magento.import.validate`, and an asynchronous `magento.import.start` executed by
+the worker, asserting `created: 1` in the job report. The CI `e2e` job runs the
+same script; it is not a required gate because it depends on Docker.

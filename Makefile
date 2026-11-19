@@ -40,3 +40,7 @@ docs-check: ## Lint documentation and design contracts
 	npm run lint:md
 	npm run lint:links
 	npm run test:contracts
+
+.PHONY: e2e
+e2e: ## Run the end-to-end Magento smoke test (needs Docker and Go)
+	./test/e2e/run.sh
