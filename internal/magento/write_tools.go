@@ -285,7 +285,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newOrderCreateTool(lookup), newTierPricesSetTool(lookup), newInventoryTransferTool(lookup),
 		newCustomerCreateTool(lookup), newCustomerUpdateTool(lookup),
 		newMediaUpdateTool(lookup), newOrderCancelTool(lookup), newAttributeOptionCreateTool(lookup),
-		newAttributeOptionDeleteTool(lookup), newBulkProductUpdateTool(lookup),
+		newAttributeOptionDeleteTool(lookup), newBulkProductUpdateTool(lookup), newCategoryDeleteTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -339,6 +339,7 @@ func writeToolSchemas() map[string]string {
 		attributeOptionCreateToolName: attributeOptionCreateSchema,
 		attributeOptionDeleteToolName: attributeOptionDeleteSchema,
 		bulkProductUpdateToolName:     bulkProductUpdateSchema,
+		categoryDeleteToolName:        categoryDeleteSchema,
 	}
 }
 
@@ -1914,6 +1915,50 @@ func newBulkProductUpdateTool(lookup serviceLookup) registry.Tool {
 				}
 				return nil, bulkProductUpdateOutput{Result: *result}, nil
 			})
+		return nil
+	}
+	return t
+}
+
+const (
+	categoryDeleteToolName    = "magento.category.delete"
+	categoryDeleteToolTitle   = "Delete a Magento category"
+	categoryDeleteDescription = "Magento write operation: deletes a category and its subtree " +
+		"(DELETE /rest/{store_code}/V1/categories/{id}) on the resolved instance. Products in the subtree lose that assignment but are not deleted. " +
+		"Irreversible; requires human confirmation."
+
+	categoryDeleteSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"category_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "category_id"], "additionalProperties": false}`
+)
+
+type categoryDeleteInput struct {
+	Instance   string `json:"instance"`
+	CategoryID int    `json:"category_id"`
+}
+
+type categoryDeleteOutput struct {
+	CategoryID int  `json:"category_id"`
+	Deleted    bool `json:"deleted"`
+}
+
+func newCategoryDeleteTool(lookup serviceLookup) registry.Tool {
+	t := destructiveToolMetadata(categoryDeleteToolName, categoryDeleteToolTitle, categoryDeleteDescription, "magento.category.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: categoryDeleteToolName, Title: categoryDeleteToolTitle, Description: categoryDeleteDescription,
+			InputSchema: json.RawMessage(categoryDeleteSchema),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in categoryDeleteInput) (*mcp.CallToolResult, categoryDeleteOutput, error) {
+			svc, err := lookup(in.Instance)
+			if err != nil {
+				return nil, categoryDeleteOutput{}, err
+			}
+			if err := svc.DeleteCategory(ctx, in.CategoryID); err != nil {
+				return nil, categoryDeleteOutput{}, err
+			}
+			return nil, categoryDeleteOutput{CategoryID: in.CategoryID, Deleted: true}, nil
+		})
 		return nil
 	}
 	return t

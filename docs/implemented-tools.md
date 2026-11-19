@@ -60,6 +60,7 @@ Common behavior:
 | `magento.order.cancel` | destructive + confirmation | 60s | Cancels a cancellable order; irreversible |
 | `magento.category.create` | write + confirmation | 60s | Creates a category under a parent |
 | `magento.category.update` | write + confirmation | 60s | Partial update of name/active/position/menu visibility |
+| `magento.category.delete` | destructive + confirmation | 60s | Deletes a category and its subtree; products lose the assignment but are not deleted |
 | `magento.category.assign_product` | write + confirmation | 60s | Links a product to a category |
 | `magento.product.links.add` | write + confirmation | 60s | Creates a related/upsell/crosssell link between two products |
 | `magento.product.links.remove` | write + confirmation | 60s | Deletes a related/upsell/crosssell link |
