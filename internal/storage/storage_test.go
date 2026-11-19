@@ -172,6 +172,9 @@ func TestJobQueueResultAndLookup(t *testing.T) {
 	if record.ID != id || record.Kind != jobs.TypeMagentoImport || record.State != "queued" || record.MaxAttempts != 2 {
 		t.Fatalf("record = %+v", record)
 	}
+	if len(record.Payload) == 0 {
+		t.Fatal("job payload is not returned by GetJob")
+	}
 	if err := queue.SetResult(ctx, id, `{"total":3}`); err != nil {
 		t.Fatal(err)
 	}

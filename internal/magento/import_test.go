@@ -305,3 +305,21 @@ func TestImportReservedAttributeValidation(t *testing.T) {
 		t.Fatalf("problems = %+v", problems)
 	}
 }
+
+func TestExecuteImportRowsFilters(t *testing.T) {
+	var created, updated int
+	server := newImportFake(t, &created, &updated)
+	defer server.Close()
+	svc := newImportServiceAgainst(t, server.URL)
+	data := []byte("sku,name,type_id,price,attribute_set_id\nNEW-1,New,simple,9.99,4\nOLD-1,Updated,simple,1.00,4\n")
+	result, err := svc.ExecuteImportRows(context.Background(), "csv", data, true, []int{3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 1 || result.Updated != 1 || result.Created != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	if created != 0 || updated != 1 {
+		t.Fatalf("upstream calls: created=%d updated=%d", created, updated)
+	}
+}

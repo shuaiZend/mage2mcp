@@ -119,6 +119,8 @@ as duplicate attributes). SEO columns
 (`description`, `short_description`, `url_key`, `meta_title`, `meta_keywords`,
 `meta_description`) are validated with the same rules as the product tools.
 `magento.import.validate` reports non-blocking SEO/content warnings (capped at
-200) so a batch can be improved before it is queued. `magento.import.execute`
+200) so a batch can be improved before it is queued. `magento.import.resume`
+re-queues only the failed rows of a previous job (from its bounded report) and
+is idempotent per source job. `magento.import.execute`
 runs bounded batches synchronously;
 `magento.import.start` queues them for the worker and needs `database.url`.

@@ -306,6 +306,16 @@ func (s *Service) ExecuteImport(ctx context.Context, format string, data []byte,
 // the start, every 25 rows, and at the end. The callback receives rows done and
 // the total, and may be called from the same goroutine only.
 func (s *Service) ExecuteImportWithProgress(ctx context.Context, format string, data []byte, updateExisting bool, progress func(done, total int)) (*ImportResult, error) {
+	return s.executeImportRows(ctx, format, data, updateExisting, nil, progress)
+}
+
+// ExecuteImportRows executes only the given row numbers (used by import resume).
+// An empty list is equivalent to ExecuteImport.
+func (s *Service) ExecuteImportRows(ctx context.Context, format string, data []byte, updateExisting bool, onlyRows []int) (*ImportResult, error) {
+	return s.executeImportRows(ctx, format, data, updateExisting, onlyRows, nil)
+}
+
+func (s *Service) executeImportRows(ctx context.Context, format string, data []byte, updateExisting bool, onlyRows []int, progress func(done, total int)) (*ImportResult, error) {
 	preview, err := s.ValidateImport(ctx, format, data)
 	if err != nil {
 		return nil, err
@@ -317,6 +327,19 @@ func (s *Service) ExecuteImportWithProgress(ctx context.Context, format string, 
 	rows, err := parseImportRows(format, data)
 	if err != nil {
 		return nil, err
+	}
+	if len(onlyRows) > 0 {
+		selected := make(map[int]bool, len(onlyRows))
+		for _, row := range onlyRows {
+			selected[row] = true
+		}
+		filtered := rows[:0]
+		for _, row := range rows {
+			if selected[row.RowNumber] {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
 	}
 	result := &ImportResult{Total: len(rows)}
 	if progress != nil {

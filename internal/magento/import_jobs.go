@@ -22,6 +22,8 @@ type ImportJobPayload struct {
 	Format         string `json:"format"`
 	DataBase64     string `json:"data_base64"`
 	UpdateExisting bool   `json:"update_existing"`
+	// OnlyRows limits execution to the given row numbers (import resume).
+	OnlyRows []int `json:"only_rows,omitempty"`
 }
 
 // ImportQueue is the queue surface the import tools need.
@@ -41,6 +43,7 @@ func RegisterImportJobs(reg *registry.Registry, resolver *Resolver, queue Import
 		newImportStartTool(resolver, queue),
 		newImportStatusTool(queue),
 		newImportCancelTool(queue),
+		newImportResumeTool(queue),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -50,6 +53,7 @@ func RegisterImportJobs(reg *registry.Registry, resolver *Resolver, queue Import
 		importStartToolName:  importStartSchema,
 		importStatusToolName: importStatusSchema,
 		importCancelToolName: importCancelSchema,
+		importResumeToolName: importResumeSchema,
 	} {
 		if err := reg.SetInputValidator(name, schema); err != nil {
 			return err
@@ -196,3 +200,70 @@ const (
 		"confirmation_id": {"type": "string", "maxLength": 128}
 	}, "required": ["job_id"], "additionalProperties": false}`
 )
+
+const (
+	importResumeToolName  = "magento.import.resume"
+	importResumeToolTitle = "Resume failed import rows"
+
+	importResumeToolDescription = "Queues a new asynchronous import containing only the failed rows of a previous job " +
+		"(from its bounded report). Requires confirmation and a configured database queue; repeated resumes of the same job return the same new job."
+	importResumeSchema = `{"type": "object", "properties": {
+		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `"},
+		"confirmation_id": {"type": "string", "maxLength": 128}
+	}, "required": ["job_id"], "additionalProperties": false}`
+)
+
+type importResumeInput struct {
+	JobID string `json:"job_id"`
+}
+
+type importResumeOutput struct {
+	JobID string `json:"job_id"`
+	Rows  int    `json:"rows"`
+}
+
+func newImportResumeTool(queue ImportQueue) registry.Tool {
+	t := writeToolMetadata(importResumeToolName, importResumeToolTitle, importResumeToolDescription, "magento.import.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(importResumeToolName, importResumeToolTitle, importResumeToolDescription, importResumeSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in importResumeInput) (*mcp.CallToolResult, importResumeOutput, error) {
+				record, err := queue.GetJob(ctx, in.JobID)
+				if err != nil {
+					return nil, importResumeOutput{}, err
+				}
+				var payload ImportJobPayload
+				if err := json.Unmarshal(record.Payload, &payload); err != nil {
+					return nil, importResumeOutput{}, errs.New(errs.CodeInvalidArgument, "job is not an import job")
+				}
+				var report ImportReport
+				if record.Result != "" {
+					if err := json.Unmarshal([]byte(record.Result), &report); err != nil {
+						return nil, importResumeOutput{}, errs.New(errs.CodeInvalidArgument, "job has no resumable report")
+					}
+				}
+				rows := make([]int, 0, len(report.Failures))
+				for _, failure := range report.Failures {
+					rows = append(rows, failure.RowNumber)
+				}
+				if len(rows) == 0 {
+					return nil, importResumeOutput{}, errs.New(errs.CodeInvalidArgument, "job has no failed rows to resume")
+				}
+				payload.OnlyRows = rows
+				raw, err := json.Marshal(payload)
+				if err != nil {
+					return nil, importResumeOutput{}, errs.New(errs.CodeInternal, "resume payload could not be encoded")
+				}
+				jobID, err := queue.Enqueue(ctx, jobs.Task{
+					Kind: jobs.TypeMagentoImport, Queue: jobs.QueueImport,
+					InstanceID: payload.Instance, IdempotencyKey: "resume:" + in.JobID,
+					Payload: raw, MaxAttempts: 2,
+				})
+				if err != nil {
+					return nil, importResumeOutput{}, err
+				}
+				return nil, importResumeOutput{JobID: jobID, Rows: len(rows)}, nil
+			})
+		return nil
+	}
+	return t
+}

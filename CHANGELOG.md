@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.import.resume` (confirmation-gated): queues a new asynchronous import
+  containing only the failed rows of a previous job, using the stored job payload
+  and bounded failure report. Resuming the same job twice returns the same new
+  job (`resume:<job_id>` idempotency key).
+
+### Added
+
 - `magento.attributes.options.create` (confirmation-gated): adds a select or
   multiselect option, which is how configurable variant values are introduced.
 

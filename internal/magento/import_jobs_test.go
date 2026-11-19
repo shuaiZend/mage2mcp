@@ -160,6 +160,58 @@ func TestImportStatusAndCancel(t *testing.T) {
 	}
 }
 
+func TestImportResumeEnqueuesFailedRows(t *testing.T) {
+	csv := "sku,name,type_id,price,attribute_set_id\nNEW-1,New,simple,9.99,4\n"
+	payload, _ := json.Marshal(ImportJobPayload{
+		Instance: "store-us", Format: "csv",
+		DataBase64: base64.StdEncoding.EncodeToString([]byte(csv)),
+	})
+	queue := &fakeImportQueue{record: &jobs.JobRecord{
+		ID: "11111111-1111-1111-1111-111111111111", Kind: jobs.TypeMagentoImport,
+		State: "succeeded", Payload: payload,
+		Result: `{"total":1,"created":0,"failed":1,"failures":[{"row_number":2,"sku":"NEW-1","action":"create","error":"boom"}]}`,
+	}}
+	session := newImportTestSession(t, queue)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: importResumeToolName,
+		Arguments: map[string]any{"job_id": "11111111-1111-1111-1111-111111111111"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("resume error: %+v", result.Content)
+	}
+	if len(queue.tasks) != 1 {
+		t.Fatalf("tasks = %+v", queue.tasks)
+	}
+	task := queue.tasks[0]
+	if task.IdempotencyKey != "resume:11111111-1111-1111-1111-111111111111" || task.InstanceID != "store-us" {
+		t.Fatalf("task = %+v", task)
+	}
+	var resumed ImportJobPayload
+	if err := json.Unmarshal(task.Payload, &resumed); err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed.OnlyRows) != 1 || resumed.OnlyRows[0] != 2 {
+		t.Fatalf("payload = %+v", resumed)
+	}
+}
+
+func TestImportResumeWithoutFailures(t *testing.T) {
+	queue := &fakeImportQueue{record: &jobs.JobRecord{
+		ID: "11111111-1111-1111-1111-111111111111", Kind: jobs.TypeMagentoImport,
+		State: "succeeded", Result: `{"total":1,"created":1,"failed":0}`,
+	}}
+	session := newImportTestSession(t, queue)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: importResumeToolName,
+		Arguments: map[string]any{"job_id": "11111111-1111-1111-1111-111111111111"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatal("resume without failures must fail")
+	}
+}
+
 func TestRegisterImportJobsValidation(t *testing.T) {
 	resolver, _ := NewResolver(map[string]*Service{"a": testService(t, "https://shop.example.com")})
 	if err := RegisterImportJobs(nil, resolver, &fakeImportQueue{}); err == nil {
