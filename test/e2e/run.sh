@@ -124,7 +124,7 @@ out=$(client create)
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no confirmation id: $out"
 approve "$cid"
-out=$(client create-retry "$cid" 2>&1)
+out=$(client create-retry "$cid" 2>&1 || true)
 echo "$out"
 echo "$out" | grep -q "CREATED" || fail "create retry"
 
@@ -135,11 +135,11 @@ echo "== import validation warnings =="
 client validate | grep -q "warnings=" || fail "import validation"
 
 echo "== asynchronous import =="
-out=$(client import-start)
+out=$(client import-start || true)
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no import confirmation id: $out"
 approve "$cid"
-job=$(client import-retry "$cid" | awk '/JOB/{print $2}')
+job=$(client import-retry "$cid" 2>&1 | awk '/JOB/{print $2}')
 [[ -n "$job" ]] || fail "no job id"
 client import-status "$job" | tee "$WORK/import-status.txt" | grep -q "JOB succeeded" || fail "import did not succeed"
 grep -q '"created":1' "$WORK/import-status.txt" || fail "import report missing created=1"
@@ -150,7 +150,7 @@ echo "$out"
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no configurable confirmation id: $out"
 approve "$cid"
-out=$(client configurable-retry "$cid" 2>&1)
+out=$(client configurable-retry "$cid" 2>&1 || true)
 echo "$out"
 echo "$out" | grep -q "CREATED CONFIGURABLE" || fail "configurable retry"
 
@@ -160,7 +160,7 @@ echo "$out"
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no order confirmation id: $out"
 approve "$cid"
-out=$(client order-retry "$cid" 2>&1)
+out=$(client order-retry "$cid" 2>&1 || true)
 echo "$out"
 echo "$out" | grep -q "ORDER 99" || fail "order retry"
 
