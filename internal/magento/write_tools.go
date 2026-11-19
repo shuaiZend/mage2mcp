@@ -287,7 +287,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newMediaUpdateTool(lookup), newOrderCancelTool(lookup), newAttributeOptionCreateTool(lookup),
 		newAttributeOptionDeleteTool(lookup), newBulkProductUpdateTool(lookup), newCategoryDeleteTool(lookup),
 		newCustomerAddressCreateTool(lookup), newCustomerAddressDeleteTool(lookup),
-		newCustomerAddressUpdateTool(lookup),
+		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -345,6 +345,7 @@ func writeToolSchemas() map[string]string {
 		customerAddressCreateToolName: customerAddressCreateSchema,
 		customerAddressDeleteToolName: customerAddressDeleteSchema,
 		customerAddressUpdateToolName: customerAddressUpdateSchema,
+		bulkLinkToolName:              bulkLinkSchema,
 	}
 }
 
@@ -2137,6 +2138,54 @@ func newCustomerAddressUpdateTool(lookup serviceLookup) registry.Tool {
 					return nil, customerAddressUpdateOutput{}, err
 				}
 				return nil, customerAddressUpdateOutput{Address: *address}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	bulkLinkToolName    = "magento.product.links.bulk"
+	bulkLinkToolTitle   = "Bulk change Magento product links"
+	bulkLinkDescription = "Magento write operation: adds (POST /rest/{store_code}/V1/products/{sku}/links) or removes " +
+		"(DELETE /rest/{store_code}/V1/products/{sku}/links/{type}/{linkedSku}) one link type (related, upsell, crosssell) for up to 50 target SKUs " +
+		"on one product, one call per target, with a per-target partial-success report. Earlier changes are not rolled back. " +
+		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+
+	bulkLinkSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
+		"link_type": {"type": "string", "enum": ["related", "upsell", "crosssell"]},
+		"action": {"type": "string", "enum": ["add", "remove"]},
+		"linked_skus": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "pattern": "` + skuInputPattern + `"}}
+	}, "required": ["instance", "sku", "link_type", "action", "linked_skus"], "additionalProperties": false}`
+)
+
+type bulkLinkInput struct {
+	Instance   string   `json:"instance"`
+	SKU        string   `json:"sku"`
+	LinkType   string   `json:"link_type"`
+	Action     string   `json:"action"`
+	LinkedSKUs []string `json:"linked_skus"`
+}
+
+type bulkLinkOutput struct {
+	Result LinkBulkResult `json:"result"`
+}
+
+func newBulkLinkTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(bulkLinkToolName, bulkLinkToolTitle, bulkLinkDescription, "magento.product.write")
+	t.Timeout = 120 * time.Second
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(bulkLinkToolName, bulkLinkToolTitle, bulkLinkDescription, bulkLinkSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in bulkLinkInput) (*mcp.CallToolResult, bulkLinkOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, bulkLinkOutput{}, err
+				}
+				result, err := svc.BulkChangeLinks(ctx, in.SKU, in.LinkType, in.Action, in.LinkedSKUs)
+				if err != nil {
+					return nil, bulkLinkOutput{}, err
+				}
+				return nil, bulkLinkOutput{Result: *result}, nil
 			})
 		return nil
 	}

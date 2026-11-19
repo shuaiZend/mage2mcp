@@ -67,6 +67,7 @@ Common behavior:
 | `magento.category.delete` | destructive + confirmation | 60s | Deletes a category and its subtree; products lose the assignment but are not deleted |
 | `magento.category.assign_product` | write + confirmation | 60s | Links a product to a category |
 | `magento.product.links.add` | write + confirmation | 60s | Creates a related/upsell/crosssell link between two products |
+| `magento.product.links.bulk` | write + confirmation | 120s | Add/remove one link type for up to 50 targets with a per-target partial-success report |
 | `magento.product.links.remove` | write + confirmation | 60s | Deletes a related/upsell/crosssell link |
 | `magento.invoice.capture` | write + confirmation | 60s | Captures payment for an existing invoice; charges the payment method |
 | `magento.order.email` | write + confirmation | 60s | Sends the order confirmation email |
