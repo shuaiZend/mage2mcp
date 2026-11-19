@@ -76,6 +76,7 @@ magento.product.media.delete
 magento.product.media.get
 magento.product.media.update
 magento.product.media.upload
+magento.product.options
 magento.product.search
 magento.product.seo
 magento.product.tier_prices

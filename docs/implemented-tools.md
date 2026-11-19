@@ -51,6 +51,7 @@ Common behavior:
 | `magento.attributes.options.delete` | destructive + confirmation | 60s | Deletes an option; rejected while products reference it |
 | `magento.product.media.get` | read | 30s | One gallery entry: file, label, position, types, disabled |
 | `magento.product.media` | read | 30s | Media gallery of one product |
+| `magento.product.options` | read | 30s | Custom options (not variant options) with values, prices, and price types |
 | `magento.product.links` | read | 30s | Related, upsell, or cross-sell links of a product |
 | `magento.product.media.upload` | write + confirmation | 60s | Adds an image to a gallery; base64 capped at 5 MiB, MIME/filename/types validated |
 | `magento.product.media.update` | write + confirmation | 60s | Updates label/position/types/disabled of one gallery entry |
