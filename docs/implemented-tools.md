@@ -42,6 +42,9 @@ Common behavior:
 | `magento.invoice.create` | write + confirmation | 60s | Invoices an order; `capture` defaults to false and does not charge |
 | `magento.shipment.create` | write + confirmation | 60s | Ships order items with up to 20 tracking numbers |
 | `magento.creditmemo.create` | write + confirmation | 60s | Refund record with order-item lines and optional adjustments |
+| `magento.order.comment` | write + confirmation | 60s | Adds a status-history comment; a non-empty status also transitions the order |
+| `magento.order.hold` | write + confirmation | 60s | Places an order on hold |
+| `magento.order.unhold` | write + confirmation | 60s | Releases an order hold |
 | `magento.inventory.status` | read | 30s | Catalog quantity, in-stock flag, and backorders for one SKU |
 | `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |

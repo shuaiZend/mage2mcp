@@ -216,6 +216,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newProductDeleteTool(lookup), newRemoveChildTool(lookup), newUnassignSourceItemsTool(lookup),
 		newMediaUploadTool(lookup), newInvoiceCreateTool(lookup),
 		newShipmentCreateTool(lookup), newCreditmemoCreateTool(lookup),
+		newOrderCommentTool(lookup), newOrderHoldTool(lookup, true), newOrderHoldTool(lookup, false),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -803,6 +804,98 @@ func newCreditmemoCreateTool(lookup serviceLookup) registry.Tool {
 					return nil, creditmemoCreateOutput{}, err
 				}
 				return nil, creditmemoCreateOutput{Creditmemo: *creditmemo}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	orderCommentToolName    = "magento.order.comment"
+	orderCommentToolTitle   = "Add Magento order comment"
+	orderCommentDescription = "Magento write operation: appends a status-history comment to an order " +
+		"(POST /rest/{store_code}/V1/orders/{id}/comments) on the resolved instance; a non-empty status also transitions the order. " +
+		"Requires human confirmation."
+	orderHoldToolName    = "magento.order.hold"
+	orderHoldToolTitle   = "Hold a Magento order"
+	orderHoldDescription = "Magento write operation: places an order on hold " +
+		"(POST /rest/{store_code}/V1/orders/{id}/hold) on the resolved instance. Requires human confirmation."
+	orderUnholdToolName    = "magento.order.unhold"
+	orderUnholdToolTitle   = "Release a Magento order hold"
+	orderUnholdDescription = "Magento write operation: releases an order hold " +
+		"(POST /rest/{store_code}/V1/orders/{id}/unhold) on the resolved instance. Requires human confirmation."
+
+	orderCommentSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"order_id": {"type": "integer", "minimum": 1},
+		"comment": {"type": "string", "minLength": 1, "maxLength": 1024},
+		"status": {"type": "string", "maxLength": 64, "description": "Optional new order status; omit to only add the comment."},
+		"notify": {"type": "boolean", "default": false}
+	}, "required": ["instance", "order_id", "comment"], "additionalProperties": false}`
+
+	orderHoldSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"order_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "order_id"], "additionalProperties": false}`
+)
+
+type orderCommentInput struct {
+	Instance string `json:"instance"`
+	OrderID  int    `json:"order_id"`
+	Comment  string `json:"comment"`
+	Status   string `json:"status"`
+	Notify   bool   `json:"notify"`
+}
+
+type orderHoldInput struct {
+	Instance string `json:"instance"`
+	OrderID  int    `json:"order_id"`
+}
+
+type orderActionOutput struct {
+	OrderID int  `json:"order_id"`
+	Applied bool `json:"applied"`
+}
+
+func newOrderCommentTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(orderCommentToolName, orderCommentToolTitle, orderCommentDescription, "magento.order.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(orderCommentToolName, orderCommentToolTitle, orderCommentDescription, orderCommentSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderCommentInput) (*mcp.CallToolResult, orderActionOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, orderActionOutput{}, err
+				}
+				if err := svc.AddOrderComment(ctx, in.OrderID, in.Comment, in.Status, in.Notify); err != nil {
+					return nil, orderActionOutput{}, err
+				}
+				return nil, orderActionOutput{OrderID: in.OrderID, Applied: true}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newOrderHoldTool(lookup serviceLookup, hold bool) registry.Tool {
+	name, title, description := orderHoldToolName, orderHoldToolTitle, orderHoldDescription
+	if !hold {
+		name, title, description = orderUnholdToolName, orderUnholdToolTitle, orderUnholdDescription
+	}
+	t := writeToolMetadata(name, title, description, "magento.order.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(name, title, description, orderHoldSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderHoldInput) (*mcp.CallToolResult, orderActionOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, orderActionOutput{}, err
+				}
+				if hold {
+					err = svc.HoldOrder(ctx, in.OrderID)
+				} else {
+					err = svc.UnholdOrder(ctx, in.OrderID)
+				}
+				if err != nil {
+					return nil, orderActionOutput{}, err
+				}
+				return nil, orderActionOutput{OrderID: in.OrderID, Applied: true}, nil
 			})
 		return nil
 	}
