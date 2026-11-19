@@ -42,6 +42,7 @@ Common behavior:
 | `magento.product.media` | read | 30s | Media gallery of one product |
 | `magento.product.links` | read | 30s | Related, upsell, or cross-sell links of a product |
 | `magento.product.media.upload` | write + confirmation | 60s | Adds an image to a gallery; base64 capped at 5 MiB, MIME/filename/types validated |
+| `magento.product.media.delete` | destructive + confirmation | 60s | Deletes one media entry from a gallery |
 | `magento.invoice.create` | write + confirmation | 60s | Invoices an order; `capture` defaults to false and does not charge |
 | `magento.shipment.create` | write + confirmation | 60s | Ships order items with up to 20 tracking numbers |
 | `magento.creditmemo.create` | write + confirmation | 60s | Refund record with order-item lines and optional adjustments |
@@ -56,6 +57,7 @@ Common behavior:
 | `magento.invoice.capture` | write + confirmation | 60s | Captures payment for an existing invoice; charges the payment method |
 | `magento.order.email` | write + confirmation | 60s | Sends the order confirmation email |
 | `magento.inventory.status` | read | 30s | Catalog quantity, in-stock flag, and backorders for one SKU |
+| `magento.inventory.status_batch` | read | 60s | Up to 25 SKUs, each reporting its own result or error |
 | `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
 | `magento.order.search` | read | 30s | Orders by status, state, increment id, creation window, store view, or customer id; items omitted |

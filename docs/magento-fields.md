@@ -61,7 +61,8 @@ omitting them leaves the assignments untouched.
 
 `filename` (safe name), `mime_type` (jpeg/png/webp/gif), `data_base64` (<= 5 MiB
 decoded), optional `label` (<= 255), `position` (0-1000), and `types` (subset of
-`image`, `small_image`, `thumbnail`, `swatch_image`).
+`image`, `small_image`, `thumbnail`, `swatch_image`). `magento.product.media.delete`
+takes `sku` and `media_id` and is destructive.
 
 ## Customer addresses
 

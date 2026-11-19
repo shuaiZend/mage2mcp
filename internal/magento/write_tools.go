@@ -251,7 +251,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newOrderCommentTool(lookup), newOrderHoldTool(lookup, true), newOrderHoldTool(lookup, false),
 		newCategoryCreateTool(lookup), newCategoryUpdateTool(lookup), newCategoryAssignProductTool(lookup),
 		newProductLinkAddTool(lookup), newProductLinkRemoveTool(lookup),
-		newInvoiceCaptureTool(lookup), newOrderEmailTool(lookup),
+		newInvoiceCaptureTool(lookup), newOrderEmailTool(lookup), newMediaDeleteTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -1240,6 +1240,51 @@ func newOrderEmailTool(lookup serviceLookup) registry.Tool {
 				}
 				return nil, orderEmailOutput{OrderID: in.OrderID, Sent: true}, nil
 			})
+		return nil
+	}
+	return t
+}
+
+const (
+	mediaDeleteToolName    = "magento.product.media.delete"
+	mediaDeleteToolTitle   = "Delete product media"
+	mediaDeleteDescription = "Magento write operation: deletes one media entry from a product gallery " +
+		"(DELETE /rest/{store_code}/V1/products/{sku}/media/{id}) on the resolved instance. Irreversible. Requires human confirmation."
+
+	mediaDeleteSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
+		"media_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "sku", "media_id"], "additionalProperties": false}`
+)
+
+type mediaDeleteInput struct {
+	Instance string `json:"instance"`
+	SKU      string `json:"sku"`
+	MediaID  int    `json:"media_id"`
+}
+
+type mediaDeleteOutput struct {
+	SKU     string `json:"sku"`
+	MediaID int    `json:"media_id"`
+	Deleted bool   `json:"deleted"`
+}
+
+func newMediaDeleteTool(lookup serviceLookup) registry.Tool {
+	t := destructiveToolMetadata(mediaDeleteToolName, mediaDeleteToolTitle, mediaDeleteDescription, capabilityProductWrite)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: mediaDeleteToolName, Title: mediaDeleteToolTitle, Description: mediaDeleteDescription,
+			InputSchema: json.RawMessage(mediaDeleteSchema),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in mediaDeleteInput) (*mcp.CallToolResult, mediaDeleteOutput, error) {
+			svc, err := lookup(in.Instance)
+			if err != nil {
+				return nil, mediaDeleteOutput{}, err
+			}
+			if err := svc.DeleteMedia(ctx, in.SKU, in.MediaID); err != nil {
+				return nil, mediaDeleteOutput{}, err
+			}
+			return nil, mediaDeleteOutput{SKU: in.SKU, MediaID: in.MediaID, Deleted: true}, nil
+		})
 		return nil
 	}
 	return t

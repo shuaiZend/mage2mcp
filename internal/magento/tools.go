@@ -107,6 +107,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newConfigurableChildrenTool(lookup), newAttributeOptionsTool(lookup), newCategoryProductsTool(lookup),
 		newCustomerGetTool(lookup), newCustomerSearchTool(lookup), newProductLinksTool(lookup),
 		newProductsBatchTool(lookup), newProductSEOTool(lookup), newCustomerAddressesTool(lookup),
+		newStockStatusBatchTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1379,6 +1380,50 @@ func newCustomerAddressesTool(lookup serviceLookup) registry.Tool {
 					return nil, customerAddressesOutput{}, err
 				}
 				return nil, customerAddressesOutput{Addresses: addresses}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	stockStatusBatchToolName  = "magento.inventory.status_batch"
+	stockStatusBatchToolTitle = "Get stock status for several SKUs"
+
+	stockStatusBatchToolDescription = "Reads catalog inventory status for up to 25 SKUs " +
+		"(GET /rest/{store_code}/V1/stockItems/{sku} per SKU). Each SKU reports its own error instead of failing the batch. Read-only."
+
+	stockStatusBatchSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"skus": {"type": "array", "minItems": 1, "maxItems": 25, "items": {"type": "string", "pattern": "` + skuInputPattern + `"}, "description": "SKUs to look up, 1-25; duplicates are ignored."}
+	}, "required": ["instance", "skus"], "additionalProperties": false}`
+)
+
+type stockStatusBatchInput struct {
+	Instance string   `json:"instance"`
+	SKUs     []string `json:"skus"`
+}
+
+type stockStatusBatchOutput struct {
+	Items []StockStatusBatchItem `json:"items"`
+}
+
+func newStockStatusBatchTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(stockStatusBatchToolName, stockStatusBatchToolTitle, stockStatusBatchToolDescription)
+	t.Capability = "magento.inventory.read"
+	t.Timeout = 60 * time.Second
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(stockStatusBatchToolName, stockStatusBatchToolTitle, stockStatusBatchToolDescription, stockStatusBatchSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in stockStatusBatchInput) (*mcp.CallToolResult, stockStatusBatchOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, stockStatusBatchOutput{}, err
+				}
+				items, err := svc.StockStatuses(ctx, in.SKUs)
+				if err != nil {
+					return nil, stockStatusBatchOutput{}, err
+				}
+				return nil, stockStatusBatchOutput{Items: items}, nil
 			})
 		return nil
 	}
