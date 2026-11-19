@@ -9,7 +9,8 @@ No plugin is installed and the Magento database is never touched.
   1.0a or bearer signing, 8 MiB response cap, error taxonomy mapping.
 - `NewService(*Client)` — product reads and writes, configurable lifecycle, MSI
   source items, bounded import validation and execution, order reads and a
-  bounded per-day sales summary, category reads/tree, and attribute-set reads.
+  bounded per-day sales summary, category reads/tree, attribute-set reads, media
+  reads, and stock/MSI reads.
 - `Register(reg, svc)` — read tools; `RegisterWrites(reg, svc)` — write tools
   (require confirmation and `tools.writes`).
 

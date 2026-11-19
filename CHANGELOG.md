@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento media and inventory reads: `magento.product.media`,
+  `magento.inventory.status` (catalog quantity/in-stock/backorders), and
+  `magento.inventory.source_items` (MSI per-source quantities for up to 20 SKUs).
 - Magento catalog interfaces: `magento.category.get`, `magento.category.tree`
   (flattened depth-first, depth 1-5), `magento.attribute.sets`, and
   `magento.attributes.list`, all read-only with strict id/depth validation.

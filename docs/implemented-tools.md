@@ -31,6 +31,9 @@ Common behavior:
 | `magento.category.tree` | read | 30s | Category subtree under a root, flattened depth-first (depth 1-5) |
 | `magento.attribute.sets` | read | 30s | Product attribute sets (max 200) |
 | `magento.attributes.list` | read | 30s | Attributes of one attribute set |
+| `magento.product.media` | read | 30s | Media gallery of one product |
+| `magento.inventory.status` | read | 30s | Catalog quantity, in-stock flag, and backorders for one SKU |
+| `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
 | `magento.order.search` | read | 30s | Orders by status, state, increment id, creation window, or store view; items omitted |
 | `magento.sales.summary` | read | 30s | Per-day order count, grand-total revenue, and item quantity over a bounded window (max 1000 orders, truncation reported) |
