@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Magento MSI reads: `magento.inventory.sources` and
+  `magento.inventory.stocks` (code/name/enabled/location and stock id/name).
+
 ### Changed
 
 - `docs/mcp-tools.md` now reports implementation status: 32 of the 75 design
