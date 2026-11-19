@@ -520,3 +520,16 @@ func (s *Service) RemoveChild(ctx context.Context, parentSKU, childSKU string) e
 	}
 	return nil
 }
+
+// UpdateConfigurable updates a configurable parent through the product update
+// endpoint, refusing SKUs that are not configurable.
+func (s *Service) UpdateConfigurable(ctx context.Context, sku string, in UpdateProductInput) (*Product, error) {
+	product, err := s.Get(ctx, sku)
+	if err != nil {
+		return nil, err
+	}
+	if product.TypeID != "configurable" {
+		return nil, invalidf("product %q is %s, not configurable", sku, product.TypeID)
+	}
+	return s.Update(ctx, sku, in)
+}

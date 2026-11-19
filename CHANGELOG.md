@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `magento.configurable.update` (confirmation-gated): updates a configurable
+  parent's fields, SEO/pricing, and assignments through the product update
+  endpoint, refusing SKUs that are not configurable.
+
 ## [0.3.0] - 2026-11-19
 
 Third minor pre-release: single media reads, order summary alias, bulk product

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -488,5 +489,44 @@ func TestConfigurableVariantValueValidation(t *testing.T) {
 	duplicate := CreateConfigurableInput{Parent: parent, Variants: variants, Children: []ChildProduct{child("C-1", "12"), child("C-2", "12")}}
 	if err := validateConfigurableInput(duplicate); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("duplicate combination err = %v", err)
+	}
+}
+
+func TestUpdateConfigurable(t *testing.T) {
+	status := 2
+	var method, path string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"id":1,"sku":"CFG-1","name":"Parent","type_id":"configurable","price":19.99,"attribute_set_id":4}`))
+		case http.MethodPut:
+			_, _ = w.Write([]byte(`{"id":1,"sku":"CFG-1","name":"Parent","type_id":"configurable","price":19.99,"attribute_set_id":4,"status":2}`))
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	product, err := svc.UpdateConfigurable(context.Background(), "CFG-1", UpdateProductInput{Status: &status})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPut || path != "/rest/default/V1/products/CFG-1" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if product.Status != 2 || product.TypeID != "configurable" {
+		t.Fatalf("product = %+v", product)
+	}
+}
+
+func TestUpdateConfigurableRejectsSimple(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"sku":"SIMPLE-1","name":"Simple","type_id":"simple","price":9.99,"attribute_set_id":4}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	if _, err := svc.UpdateConfigurable(context.Background(), "SIMPLE-1", UpdateProductInput{}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("err = %v", err)
 	}
 }

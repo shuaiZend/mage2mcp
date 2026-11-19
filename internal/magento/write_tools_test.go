@@ -33,6 +33,7 @@ var writeToolNames = []string{
 	attributeOptionCreateToolName, attributeOptionDeleteToolName, bulkProductUpdateToolName,
 	categoryDeleteToolName, customerAddressCreateToolName, customerAddressDeleteToolName,
 	customerAddressUpdateToolName, bulkLinkToolName, bulkOptionCreateToolName,
+	configurableUpdateToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -402,6 +403,7 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 		"customer.addresses.update":      customerAddressUpdateSchema,
 		"product.links.bulk":             bulkLinkSchema,
 		"attributes.options.bulk_create": bulkOptionCreateSchema,
+		"configurable.update":            productUpdateSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {
