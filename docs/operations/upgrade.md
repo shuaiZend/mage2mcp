@@ -38,11 +38,7 @@ config file; rotate them through the secret manager.
 
 ## Compatibility
 
-| Component | Supported |
-|---|---|
-| Go (building from source) | 1.26+ |
-| PostgreSQL | 16+ |
-| Redis | 7+ |
-| Magento | 2.4.x (2.4.9 primary target) |
-| Cloudflare API | current v4 API, read-only profile |
-| GA4 Data API | v1beta |
+See [compatibility.md](../compatibility.md) for the supported component matrix,
+interface stability promises, and version support. In short: Go 1.26/1.27,
+PostgreSQL 16+, Magento 2.4.x, the current Cloudflare v4/GraphQL APIs, the GA4
+Data API v1beta, MCP `2025-11-25`/`2026-07-28`, and no Redis.

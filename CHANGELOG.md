@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/compatibility.md` (supported components, interface stability promises,
+  version support) and `docs/releases/v0.1.0.md` (draft release notes with
+  breaking changes, upgrade steps, verification checklist, known limitations).
+- The documentation index now describes the project as a running gateway rather
+  than a Phase 0 design baseline.
+
+### Added
+
 - The end-to-end test now asserts two safety properties: a malformed write is
   rejected with `invalid_argument` before a confirmation is issued, and changing
   arguments after approval is rejected with `confirmation_param_mismatch`.

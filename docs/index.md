@@ -1,8 +1,8 @@
 # Documentation
 
-This is the entry point for mage2mcp documentation. The project is in **Phase 0
-(design)**: the documents below are the proposed baseline pending maintainer approval, not
-descriptions of a running system.
+This is the entry point for mage2mcp documentation. The project is past the
+Phase 0 design baseline: the documents below describe a running gateway, with
+design catalogues kept alongside the implemented surface.
 
 ## Verification legend
 
@@ -30,6 +30,8 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Unified analytics](unified-analytics.md) | Cross-source metric semantics and join rules |
 | [Development plan](development-plan.md) | Phases, exit criteria, traceability matrix |
 | [Configuration](configuration.md) | Every configuration key, default, and environment override |
+| [Compatibility](compatibility.md) | Supported components, interface stability promises, version support |
+| [v0.1.0 release notes](releases/v0.1.0.md) | Draft highlights, breaking changes, upgrade and verification checklist |
 
 ## Integrations
 
