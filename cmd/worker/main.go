@@ -102,19 +102,24 @@ func run() error {
 				return err
 			}
 			lastProgress := time.Time{}
-			result, err := svc.ExecuteImportWithProgress(ctx, payload.Format, data, payload.UpdateExisting,
-				func(done, total int) {
-					if time.Since(lastProgress) < 2*time.Second {
-						return
-					}
-					lastProgress = time.Now()
-					raw, err := json.Marshal(map[string]any{
-						"progress": map[string]int{"done": done, "total": total},
-					})
-					if err == nil {
-						_ = queue.SetResult(ctx, task.ID, string(raw))
-					}
+			progress := func(done, total int) {
+				if time.Since(lastProgress) < 2*time.Second {
+					return
+				}
+				lastProgress = time.Now()
+				raw, err := json.Marshal(map[string]any{
+					"progress": map[string]int{"done": done, "total": total},
 				})
+				if err == nil {
+					_ = queue.SetResult(ctx, task.ID, string(raw))
+				}
+			}
+			var result *magento.ImportResult
+			if len(payload.OnlyRows) > 0 {
+				result, err = svc.ExecuteImportRows(ctx, payload.Format, data, payload.UpdateExisting, payload.OnlyRows)
+			} else {
+				result, err = svc.ExecuteImportWithProgress(ctx, payload.Format, data, payload.UpdateExisting, progress)
+			}
 			if err != nil {
 				return err
 			}

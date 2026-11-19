@@ -31,15 +31,16 @@ const QueueImport = "import"
 
 // JobRecord is a read-only view of a persisted job.
 type JobRecord struct {
-	ID          string     `json:"id"`
-	Kind        string     `json:"kind"`
-	State       string     `json:"state"`
-	Attempts    int        `json:"attempts"`
-	MaxAttempts int        `json:"max_attempts"`
-	ErrorCode   string     `json:"error_code,omitempty"`
-	Result      string     `json:"result,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	ID          string          `json:"id"`
+	Kind        string          `json:"kind"`
+	State       string          `json:"state"`
+	Attempts    int             `json:"attempts"`
+	MaxAttempts int             `json:"max_attempts"`
+	ErrorCode   string          `json:"error_code,omitempty"`
+	Result      string          `json:"result,omitempty"`
+	Payload     json.RawMessage `json:"-"`
+	CreatedAt   time.Time       `json:"created_at"`
+	FinishedAt  *time.Time      `json:"finished_at,omitempty"`
 }
 
 // NoopPayload is a liveness task used to verify the queue end to end.

@@ -221,10 +221,10 @@ func (q *JobQueue) GetJob(ctx context.Context, id string) (*jobs.JobRecord, erro
 	var errorCode *string
 	err := q.store.pool.QueryRow(ctx, `
 		SELECT id::text, kind, state, attempt_count, max_attempts,
-		       last_error_code, result_ref, created_at, finished_at
+		       last_error_code, result_ref, created_at, finished_at, payload
 		FROM jobs WHERE id = $1::uuid`, id).
 		Scan(&record.ID, &record.Kind, &record.State, &record.Attempts, &record.MaxAttempts,
-			&errorCode, &result, &record.CreatedAt, &finished)
+			&errorCode, &result, &record.CreatedAt, &finished, &record.Payload)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.New(errs.CodeNotFound, "job not found").WithDetail("job_id", id)

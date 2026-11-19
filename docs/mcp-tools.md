@@ -212,7 +212,7 @@ Cloudflare and GA4 tools are read-only except `cloudflare.logs.jobs`, which is `
 | `magento.import.validate` | read | Validate a CSV/JSON/XLSX import through the bounded converter and return a preview **Implemented.** |
 | `magento.import.start` | destructive | Start an async import (requires confirmation) **Implemented.** |
 | `magento.import.status` | read | Batch status by `batch_id`, counts, and per-item errors **Implemented.** |
-| `magento.import.resume` | destructive | Resume a paused or failed batch from its last checkpoint; confirmation is bound to the batch id, not the payload |
+| `magento.import.resume` | destructive | Resume a paused or failed batch from its last checkpoint; confirmation is bound to the batch id, not the payload **Implemented.** |
 | `magento.import.cancel` | write | Cancel a running import **Implemented.** |
 | `magento.import.report` | read | Export per-item results |
 
