@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.product.media.types` (read): media roles available for an attribute
+  set, so uploads use valid type codes.
+
+### Added
+
 - `magento.product.options` (read): a product's custom options with each value's
   price and price type.
 

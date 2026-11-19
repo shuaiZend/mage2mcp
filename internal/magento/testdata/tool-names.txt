@@ -74,6 +74,7 @@ magento.product.links.remove
 magento.product.media
 magento.product.media.delete
 magento.product.media.get
+magento.product.media.types
 magento.product.media.update
 magento.product.media.upload
 magento.product.options

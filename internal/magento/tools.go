@@ -109,7 +109,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newProductsBatchTool(lookup), newProductSEOTool(lookup), newCustomerAddressesTool(lookup),
 		newStockStatusBatchTool(lookup), newTierPricesTool(lookup),
 		newInventorySourcesTool(lookup), newInventoryStocksTool(lookup), newMediaGetTool(lookup),
-		newOrderSummaryTool(lookup), newProductOptionsTool(lookup),
+		newOrderSummaryTool(lookup), newProductOptionsTool(lookup), newMediaTypesTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1669,6 +1669,50 @@ func newProductOptionsTool(lookup serviceLookup) registry.Tool {
 					return nil, productOptionsOutput{}, err
 				}
 				return nil, productOptionsOutput{Options: options}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	mediaTypesToolName  = "magento.product.media.types"
+	mediaTypesToolTitle = "List Magento media types"
+
+	mediaTypesToolDescription = "Lists the media roles available for an attribute set " +
+		"(GET /rest/{store_code}/V1/products/media/types/{attributeSetName}) so media uploads use valid type codes. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	mediaTypesSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
+		"attribute_set_name": {"type": "string", "minLength": 1, "maxLength": 255}
+	}, "required": ["instance", "attribute_set_name"], "additionalProperties": false}`
+)
+
+type mediaTypesInput struct {
+	Instance         string `json:"instance"`
+	AttributeSetName string `json:"attribute_set_name"`
+}
+
+type mediaTypesOutput struct {
+	Types []MediaType `json:"types"`
+}
+
+func newMediaTypesTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(mediaTypesToolName, mediaTypesToolTitle, mediaTypesToolDescription)
+	t.Capability = "magento.product.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(mediaTypesToolName, mediaTypesToolTitle, mediaTypesToolDescription, mediaTypesSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in mediaTypesInput) (*mcp.CallToolResult, mediaTypesOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, mediaTypesOutput{}, err
+				}
+				types, err := svc.MediaTypes(ctx, in.AttributeSetName)
+				if err != nil {
+					return nil, mediaTypesOutput{}, err
+				}
+				return nil, mediaTypesOutput{Types: types}, nil
 			})
 		return nil
 	}
