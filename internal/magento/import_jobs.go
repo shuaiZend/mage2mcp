@@ -54,6 +54,7 @@ type importStartInput struct {
 	Format         string `json:"format"`
 	Data           string `json:"data_base64"`
 	UpdateExisting bool   `json:"update_existing"`
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 type importStartOutput struct {
@@ -102,7 +103,9 @@ func newImportStartTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 					return nil, importStartOutput{}, errs.New(errs.CodeInternal, "import payload could not be encoded")
 				}
 				jobID, err := queue.Enqueue(ctx, jobs.Task{
-					Kind: jobs.TypeMagentoImport, Queue: jobs.QueueImport, Payload: payload, MaxAttempts: 1,
+					Kind: jobs.TypeMagentoImport, Queue: jobs.QueueImport,
+					InstanceID: in.Instance, IdempotencyKey: in.IdempotencyKey,
+					Payload: payload, MaxAttempts: 1,
 				})
 				if err != nil {
 					return nil, importStartOutput{}, err
@@ -167,6 +170,7 @@ const (
 		"format": {"type": "string", "enum": ["csv", "json"]},
 		"data_base64": {"type": "string", "maxLength": 11184812},
 		"update_existing": {"type": "boolean", "default": false},
+		"idempotency_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$", "description": "Optional deduplication key; a repeated key returns the original job id."},
 		"confirmation_id": {"type": "string", "maxLength": 128}
 	}, "required": ["instance", "format", "data_base64"], "additionalProperties": false}`
 

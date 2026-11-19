@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
@@ -51,13 +53,52 @@ func (q *JobQueue) Enqueue(ctx context.Context, t jobs.Task) (string, error) {
 		payload = json.RawMessage("{}")
 	}
 	subject := sha256.Sum256([]byte("system"))
+	module := "platform"
+	var instanceID *string
+	if t.InstanceID != "" {
+		// The jobs table enforces module/instance consistency: a module-scoped
+		// job must name its module and instance.
+		module = strings.SplitN(t.Kind, ":", 2)[0]
+		switch module {
+		case "magento", "cloudflare", "ga4":
+		default:
+			return "", fmt.Errorf("storage: task kind %q needs a platform module prefix", t.Kind)
+		}
+		instanceID = &t.InstanceID
+	}
+	var idempotencyKey *string
+	if t.IdempotencyKey != "" {
+		idempotencyKey = &t.IdempotencyKey
+	}
+	if instanceID != nil {
+		// Jobs reference the instance registry; register a configured instance
+		// lazily so a job can carry its attribution without a separate sync step.
+		if _, err := q.store.pool.Exec(ctx, `
+			INSERT INTO datasource_instances (id, module) VALUES ($1, $2)
+			ON CONFLICT (id) DO NOTHING`, *instanceID, module); err != nil {
+			return "", fmt.Errorf("storage: register instance: %w", err)
+		}
+	}
 	var id string
 	err := q.store.pool.QueryRow(ctx, `
-		INSERT INTO jobs (module, tool, kind, queue, payload, subject_hash, max_attempts, state)
-		VALUES ('platform', $1, $1, $2, $3, $4, $5, 'queued')
+		INSERT INTO jobs (module, instance_id, tool, kind, queue, payload, subject_hash,
+		                  max_attempts, state, idempotency_key)
+		VALUES ($1, $2, $3, $3, $4, $5, $6, $7, 'queued', $8)
 		RETURNING id::text`,
-		t.Kind, queue, payload, subject[:], maxAttempts).Scan(&id)
+		module, instanceID, t.Kind, queue, payload, subject[:], maxAttempts, idempotencyKey).Scan(&id)
 	if err != nil {
+		// A repeated enqueue with the same idempotency key is not an error: the
+		// original job is returned so callers can poll it.
+		if isUniqueViolation(err) {
+			var existingID string
+			lookupErr := q.store.pool.QueryRow(ctx, `
+				SELECT id::text FROM jobs
+				WHERE kind = $1 AND idempotency_key = $2 AND ($3::text IS NULL OR instance_id = $3::text)
+				ORDER BY created_at LIMIT 1`, t.Kind, t.IdempotencyKey, instanceID).Scan(&existingID)
+			if lookupErr == nil {
+				return existingID, nil
+			}
+		}
 		return "", fmt.Errorf("storage: enqueue job: %w", err)
 	}
 	return id, nil
@@ -162,6 +203,11 @@ func (q *JobQueue) Cancel(ctx context.Context, id string) error {
 		return fmt.Errorf("storage: cancel job: %w", err)
 	}
 	return nil
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 // GetJob returns one job by id.
