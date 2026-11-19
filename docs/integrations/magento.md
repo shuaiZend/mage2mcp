@@ -179,6 +179,23 @@ Routes per [ConfigurableProduct webapi.xml](https://github.com/magento/magento2/
 
 ### 3.4 Categories and media
 
+#### Variant images
+
+Magento has no configurable-product media association endpoint: the
+`ConfigurableProduct` routes are children, options, and variations only
+(verified against `app/code/Magento/ConfigurableProduct/etc/webapi.xml`). A
+variant's image is the **child product's own gallery**, managed with the normal
+product media tools against the child SKU:
+
+1. `magento.product.media.upload` with the child SKU and base64 content;
+2. `magento.product.media.update` to set `image`/`small_image`/`thumbnail` roles
+   and the position;
+3. optionally upload the same file to the parent for its gallery.
+
+The gateway intentionally does not invent a parent-child media link: Magento's
+storefront reads the selected child's gallery, so keeping the image on the child
+is the supported path. `magento.product.media.get` reads one entry back.
+
 | Capability | Method | Path | Read/Write | Idempotent | Risk | Verification tag | Notes |
 |---|---|---|---|---|---|---|---|
 | Category tree / list / get | GET | `/V1/categories`, `/V1/categories/list`, `/V1/categories/{categoryId}` | R | Yes | Low | `[V-docs]` | Tree is large; cache it |

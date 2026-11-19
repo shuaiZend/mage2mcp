@@ -254,3 +254,25 @@ type mediaUpdateEntry struct {
 	Types    []string `json:"types,omitempty"`
 	Disabled *bool    `json:"disabled,omitempty"`
 }
+
+// GetMedia returns one gallery entry with GET /products/{sku}/media/{id}.
+func (s *Service) GetMedia(ctx context.Context, sku string, entryID int) (*MediaEntry, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento media service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return nil, err
+	}
+	if entryID <= 0 {
+		return nil, invalidf("media_id must be a positive integer")
+	}
+	raw, err := s.client.do(ctx, http.MethodGet, "/products/"+url.PathEscape(sku)+"/media/"+strconv.Itoa(entryID), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var entry MediaEntry
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media payload").WithCause(err)
+	}
+	return &entry, nil
+}

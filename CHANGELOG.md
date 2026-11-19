@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `magento.product.media.get` (read): one gallery entry with file, label,
+  position, types, and disabled flag.
+
+### Documented
+
+- Variant images: Magento has no configurable media association endpoint; the
+  supported path is uploading and role-tagging the image on the child SKU with
+  the existing media tools.
+
 ## [0.2.0] - 2026-11-19
 
 Second minor pre-release: persisted import batches with unbounded resume and
