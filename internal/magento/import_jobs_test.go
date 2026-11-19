@@ -99,6 +99,9 @@ func TestImportStartEnqueuesJob(t *testing.T) {
 	if queue.tasks[0].InstanceID != "store-us" || queue.tasks[0].IdempotencyKey != "batch-42" {
 		t.Fatalf("task identity = %+v", queue.tasks[0])
 	}
+	if queue.tasks[0].MaxAttempts != 2 {
+		t.Fatalf("max attempts = %d, want 2", queue.tasks[0].MaxAttempts)
+	}
 }
 
 func TestImportStartRejectsBadPayload(t *testing.T) {

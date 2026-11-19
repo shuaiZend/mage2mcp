@@ -105,7 +105,11 @@ func newImportStartTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 				jobID, err := queue.Enqueue(ctx, jobs.Task{
 					Kind: jobs.TypeMagentoImport, Queue: jobs.QueueImport,
 					InstanceID: in.Instance, IdempotencyKey: in.IdempotencyKey,
-					Payload: payload, MaxAttempts: 1,
+					// Retries only cover failures before or during execution (for
+					// example an upstream outage); per-row failures are reported,
+					// not retried. Re-running a batch is safe because creates skip
+					// existing SKUs and updates are set operations.
+					Payload: payload, MaxAttempts: 2,
 				})
 				if err != nil {
 					return nil, importStartOutput{}, err

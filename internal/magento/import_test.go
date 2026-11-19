@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -219,5 +220,61 @@ func TestExecuteImportProgress(t *testing.T) {
 	}
 	if len(progress) != 2 || progress[0] != [2]int{0, 3} || progress[1] != [2]int{3, 3} {
 		t.Fatalf("progress = %v", progress)
+	}
+}
+
+func TestValidateImportSEOWarnings(t *testing.T) {
+	svc := testImportService(t)
+	preview, err := svc.ValidateImport(context.Background(), "csv",
+		[]byte("sku,name\nSKU-1,Widget\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Valid != 1 || len(preview.Warnings) == 0 {
+		t.Fatalf("preview = %+v", preview)
+	}
+	fields := map[string]bool{}
+	for _, warning := range preview.Warnings {
+		fields[warning.Field] = true
+	}
+	for _, want := range []string{"description", "url_key", "meta_title", "meta_description"} {
+		if !fields[want] {
+			t.Fatalf("missing %q warning: %+v", want, preview.Warnings)
+		}
+	}
+	if preview.WarningsTruncated {
+		t.Fatal("single row must not truncate")
+	}
+}
+
+func TestValidateImportSEOWarningsComplete(t *testing.T) {
+	svc := testImportService(t)
+	description := strings.Repeat("copy ", 100)
+	title := "Blue Widget | Example Store Official"
+	metaDescription := strings.Repeat("a", 140)
+	csv := "sku,name,description,url_key,meta_title,meta_description\n" +
+		"SKU-1,Widget," + description + ",blue-widget," + title + "," + metaDescription + "\n"
+	preview, err := svc.ValidateImport(context.Background(), "csv", []byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Warnings) != 0 {
+		t.Fatalf("warnings = %+v", preview.Warnings)
+	}
+}
+
+func TestValidateImportWarningsTruncated(t *testing.T) {
+	svc := testImportService(t)
+	var builder strings.Builder
+	builder.WriteString("sku,name\n")
+	for i := 0; i < 60; i++ {
+		builder.WriteString("SKU-" + strconv.Itoa(i) + ",Widget\n")
+	}
+	preview, err := svc.ValidateImport(context.Background(), "csv", []byte(builder.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Warnings) != maxImportWarnings || !preview.WarningsTruncated {
+		t.Fatalf("warnings=%d truncated=%v", len(preview.Warnings), preview.WarningsTruncated)
 	}
 }

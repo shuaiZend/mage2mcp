@@ -42,14 +42,23 @@ type ImportRowError struct {
 	Message   string `json:"message"`
 }
 
+// ImportWarning is a non-blocking content/SEO suggestion for one row.
+type ImportWarning struct {
+	RowNumber int    `json:"row_number"`
+	Field     string `json:"field"`
+	Message   string `json:"message"`
+}
+
 // ImportPreview is the validation result. Nothing is written upstream.
 type ImportPreview struct {
-	Format  string           `json:"format"`
-	Total   int              `json:"total"`
-	Valid   int              `json:"valid"`
-	Invalid int              `json:"invalid"`
-	Errors  []ImportRowError `json:"errors,omitempty"`
-	Sample  []ImportRow      `json:"sample,omitempty"`
+	Format            string           `json:"format"`
+	Total             int              `json:"total"`
+	Valid             int              `json:"valid"`
+	Invalid           int              `json:"invalid"`
+	Errors            []ImportRowError `json:"errors,omitempty"`
+	Warnings          []ImportWarning  `json:"warnings,omitempty"`
+	WarningsTruncated bool             `json:"warnings_truncated"`
+	Sample            []ImportRow      `json:"sample,omitempty"`
 }
 
 // ValidateImport parses and validates a CSV or JSON product import.
@@ -85,11 +94,54 @@ func (s *Service) ValidateImport(_ context.Context, format string, data []byte) 
 			continue
 		}
 		preview.Valid++
+		for _, warning := range importSEOWarnings(row) {
+			if len(preview.Warnings) >= maxImportWarnings {
+				preview.WarningsTruncated = true
+				break
+			}
+			preview.Warnings = append(preview.Warnings, warning)
+		}
 		if len(preview.Sample) < 5 {
 			preview.Sample = append(preview.Sample, row)
 		}
 	}
 	return preview, nil
+}
+
+const maxImportWarnings = 200
+
+// importSEOWarnings reports missing or weak content/SEO columns without failing
+// the row: imports stay usable, but the operator sees what to improve.
+func importSEOWarnings(row ImportRow) []ImportWarning {
+	var warnings []ImportWarning
+	add := func(field, message string) {
+		warnings = append(warnings, ImportWarning{RowNumber: row.RowNumber, Field: field, Message: message})
+	}
+	description := row.Attributes["description"]
+	switch {
+	case description == "":
+		add("description", "missing description; aim for 300+ characters of unique copy")
+	case len(description) < 300:
+		add("description", "description is shorter than 300 characters")
+	}
+	if row.Attributes["url_key"] == "" {
+		add("url_key", "missing url_key; Magento can derive it, but an explicit keyword slug is safer")
+	}
+	metaTitle := row.Attributes["meta_title"]
+	switch {
+	case metaTitle == "":
+		add("meta_title", "missing meta_title; write 30-60 characters")
+	case len(metaTitle) < 30 || len(metaTitle) > 60:
+		add("meta_title", "meta_title is outside the 30-60 character range")
+	}
+	metaDescription := row.Attributes["meta_description"]
+	switch {
+	case metaDescription == "":
+		add("meta_description", "missing meta_description; write 120-160 characters")
+	case len(metaDescription) < 120 || len(metaDescription) > 160:
+		add("meta_description", "meta_description is outside the 120-160 character range")
+	}
+	return warnings
 }
 
 // DecodeImportPayload decodes a base64 import body with a size cap.
