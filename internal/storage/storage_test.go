@@ -252,7 +252,8 @@ func TestImportBatchLifecycle(t *testing.T) {
 func TestListAndGetImportBatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	id, err := store.CreateImportBatch(ctx, "store-us", "", "csv", []byte("sku\nA\n"))
+	const instance = "store-list-test"
+	id, err := store.CreateImportBatch(ctx, instance, "", "csv", []byte("sku\nA\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +262,7 @@ func TestListAndGetImportBatch(t *testing.T) {
 	if err := store.FinishImportBatch(ctx, id, result, "partial", ""); err != nil {
 		t.Fatal(err)
 	}
-	list, err := store.ListImportBatches(ctx, "store-us", 10)
+	list, err := store.ListImportBatches(ctx, instance, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,5 +278,10 @@ func TestListAndGetImportBatch(t *testing.T) {
 	}
 	if missing, err := store.GetImportBatch(ctx, "00000000-0000-0000-0000-000000000000"); err != nil || missing != nil {
 		t.Fatalf("missing batch = %+v, %v", missing, err)
+	}
+	// Default limit and empty instance filter.
+	all, err := store.ListImportBatches(ctx, "", 0)
+	if err != nil || len(all) == 0 {
+		t.Fatalf("all batches = %+v, %v", all, err)
 	}
 }

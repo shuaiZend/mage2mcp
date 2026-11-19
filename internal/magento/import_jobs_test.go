@@ -342,3 +342,82 @@ func TestImportBatchTools(t *testing.T) {
 		t.Fatalf("get payload = %s", raw)
 	}
 }
+
+func TestImportBatchToolErrors(t *testing.T) {
+	queue := &fakeImportQueue{}
+	resolver, _ := NewResolver(map[string]*Service{"store-us": testService(t, "https://shop.example.com")})
+	reg := registry.New()
+	// No batch reader: the read tools must report a configuration error.
+	if err := RegisterImportJobs(reg, resolver, queue); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	for _, call := range []struct {
+		name string
+		args map[string]any
+	}{
+		{importBatchListToolName, map[string]any{"instance": "store-us"}},
+		{importBatchGetToolName, map[string]any{"batch_id": "22222222-2222-2222-2222-222222222222"}},
+	} {
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: call.name, Arguments: call.args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.IsError {
+			t.Fatalf("%s without a store must fail", call.name)
+		}
+	}
+}
+
+func TestImportBatchNotFound(t *testing.T) {
+	queue := &fakeImportQueue{}
+	batches := &fakeBatchReader{}
+	resolver, _ := NewResolver(map[string]*Service{"store-us": testService(t, "https://shop.example.com")})
+	reg := registry.New()
+	if err := RegisterImportJobs(reg, resolver, queue, batches); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: importBatchGetToolName,
+		Arguments: map[string]any{"batch_id": "22222222-2222-2222-2222-222222222222"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatal("missing batch must be an error")
+	}
+}
