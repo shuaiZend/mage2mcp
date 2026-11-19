@@ -72,8 +72,8 @@ func newRegisteredTools(t *testing.T) (*registry.Registry, *fakeMagento) {
 
 func TestRegisterMetadata(t *testing.T) {
 	reg, _ := newRegisteredTools(t)
-	if reg.Len() != 18 {
-		t.Fatalf("registry has %d tools, want 18", reg.Len())
+	if reg.Len() != 20 {
+		t.Fatalf("registry has %d tools, want 20", reg.Len())
 	}
 	for _, name := range []string{getToolName, searchToolName} {
 		tool, ok := reg.Lookup(name)

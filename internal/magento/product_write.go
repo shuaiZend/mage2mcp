@@ -356,3 +356,18 @@ func defaultInt(value, fallback int) int {
 	}
 	return value
 }
+
+// DeleteProduct deletes one product by SKU.
+//
+// Magento returns 404 for an unknown SKU, so a repeated delete is not a
+// successful no-op; the tool is destructive and requires confirmation.
+func (s *Service) DeleteProduct(ctx context.Context, sku string) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento product service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return err
+	}
+	_, err := s.client.do(ctx, http.MethodDelete, "/products/"+url.PathEscape(sku), nil, nil)
+	return err
+}

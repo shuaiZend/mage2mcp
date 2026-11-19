@@ -184,3 +184,62 @@ func (s *Service) requireOrderService() error {
 	}
 	return nil
 }
+
+// Creditmemo is the creditmemo projection this slice exposes.
+type Creditmemo struct {
+	EntityID       int     `json:"entity_id"`
+	IncrementID    string  `json:"increment_id"`
+	OrderID        int     `json:"order_id"`
+	State          int     `json:"state"`
+	GrandTotal     float64 `json:"grand_total"`
+	Subtotal       float64 `json:"subtotal"`
+	DiscountAmount float64 `json:"discount_amount"`
+	ShippingAmount float64 `json:"shipping_amount"`
+	TaxAmount      float64 `json:"tax_amount"`
+	Adjustment     float64 `json:"adjustment"`
+	TotalQty       float64 `json:"total_qty"`
+	Currency       string  `json:"order_currency_code"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
+}
+
+// OrderCreditmemos lists the credit memos of one order.
+func (s *Service) OrderCreditmemos(ctx context.Context, orderID int) ([]Creditmemo, error) {
+	if err := s.requireOrderService(); err != nil {
+		return nil, err
+	}
+	if orderID <= 0 {
+		return nil, invalidf("order_id must be a positive integer")
+	}
+	raw, err := s.client.do(ctx, http.MethodGet, "/orders/"+strconv.Itoa(orderID)+"/creditmemos", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var creditmemos []Creditmemo
+	if err := json.Unmarshal(raw, &creditmemos); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable creditmemo payload").WithCause(err)
+	}
+	if creditmemos == nil {
+		creditmemos = []Creditmemo{}
+	}
+	return creditmemos, nil
+}
+
+// GetCreditmemo returns one credit memo by id.
+func (s *Service) GetCreditmemo(ctx context.Context, creditmemoID int) (*Creditmemo, error) {
+	if err := s.requireOrderService(); err != nil {
+		return nil, err
+	}
+	if creditmemoID <= 0 {
+		return nil, invalidf("creditmemo_id must be a positive integer")
+	}
+	raw, err := s.client.do(ctx, http.MethodGet, "/creditmemos/"+strconv.Itoa(creditmemoID), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var creditmemo Creditmemo
+	if err := json.Unmarshal(raw, &creditmemo); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable creditmemo payload").WithCause(err)
+	}
+	return &creditmemo, nil
+}

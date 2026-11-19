@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento credit memos: `magento.creditmemo.list` and `magento.creditmemo.get`.
+- `magento.product.delete`: destructive write requiring confirmation; Magento
+  returns 404 for an unknown SKU, so a repeated delete is not a no-op.
+
+### Fixed
+
+- Write tool schemas now accept `confirmation_id`. Previously only the import
+  tool declared it, so the approval retry of every other write tool failed
+  schema validation before the handler ran.
 - Magento order document reads: `magento.order.status_history`,
   `magento.invoice.list`, `magento.invoice.get`, `magento.shipment.list`, and
   `magento.shipment.get` (tracking numbers included). Booleans that Magento
