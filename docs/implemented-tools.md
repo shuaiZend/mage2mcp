@@ -55,8 +55,11 @@ Common behavior:
 | `magento.product.media.upload` | write + confirmation | 60s | Adds an image to a gallery; base64 capped at 5 MiB, MIME/filename/types validated |
 | `magento.product.media.update` | write + confirmation | 60s | Updates label/position/types/disabled of one gallery entry |
 | `magento.product.media.delete` | destructive + confirmation | 60s | Deletes one media entry from a gallery |
+| `magento.invoice.email` | write + confirmation | 60s | Sends the invoice email to the order's customer |
 | `magento.invoice.create` | write + confirmation | 60s | Invoices an order; `capture` defaults to false and does not charge |
+| `magento.shipment.email` | write + confirmation | 60s | Sends the shipment email to the order's customer |
 | `magento.shipment.create` | write + confirmation | 60s | Ships order items with up to 20 tracking numbers |
+| `magento.creditmemo.email` | write + confirmation | 60s | Sends the credit memo email to the order's customer |
 | `magento.creditmemo.create` | write + confirmation | 60s | Refund record with order-item lines and optional adjustments |
 | `magento.order.create` | write + confirmation | 60s | Places an order for an existing customer through the admin cart flow; Magento computes totals; stage-tagged failures |
 | `magento.order.comment` | write + confirmation | 60s | Adds a status-history comment; a non-empty status also transitions the order |

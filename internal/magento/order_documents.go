@@ -5,6 +5,7 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -242,4 +243,29 @@ func (s *Service) GetCreditmemo(ctx context.Context, creditmemoID int) (*Creditm
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable creditmemo payload").WithCause(err)
 	}
 	return &creditmemo, nil
+}
+
+// documentEmailPaths maps each sales document to its email endpoint.
+var documentEmailPaths = map[string]string{ // #nosec G101 -- document kinds, not credentials
+	"invoice":    "/invoices/%d/emails",
+	"shipment":   "/shipments/%d/emails",
+	"creditmemo": "/creditmemos/%d/emails",
+}
+
+// SendDocumentEmail sends a sales document email (invoice, shipment, or credit
+// memo). Magento sends to the order's customer email; the gateway never accepts
+// a recipient address.
+func (s *Service) SendDocumentEmail(ctx context.Context, kind string, documentID int) error {
+	if err := s.requireOrderService(); err != nil {
+		return err
+	}
+	path, ok := documentEmailPaths[kind]
+	if !ok {
+		return invalidf("document kind must be invoice, shipment, or creditmemo")
+	}
+	if documentID <= 0 {
+		return invalidf("document_id must be a positive integer")
+	}
+	_, err := s.client.do(ctx, http.MethodPost, fmt.Sprintf(path, documentID), nil, nil)
+	return err
 }
