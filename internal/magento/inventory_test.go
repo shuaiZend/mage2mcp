@@ -4,6 +4,7 @@ package magento
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -163,5 +164,80 @@ func TestInventorySourcesAndStocks(t *testing.T) {
 	}
 	if len(paths) != 2 || !strings.Contains(paths[0], "searchCriteria%5BpageSize%5D=100") {
 		t.Fatalf("paths = %v", paths)
+	}
+}
+
+func TestTransferSourceQty(t *testing.T) {
+	var posted sourceItemsBody
+	postedCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"items":[
+				{"sku":"SKU-1","source_code":"default","quantity":10,"status":1},
+				{"sku":"SKU-1","source_code":"warehouse","quantity":0,"status":0}
+			]}`))
+		case http.MethodPost:
+			postedCount++
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &posted)
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	if err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 3); err != nil {
+		t.Fatal(err)
+	}
+	if postedCount != 1 || len(posted.SourceItems) != 2 {
+		t.Fatalf("posted = %d %+v", postedCount, posted)
+	}
+	if posted.SourceItems[0].Quantity != 7 || posted.SourceItems[0].Status != 1 {
+		t.Fatalf("from item = %+v", posted.SourceItems[0])
+	}
+	if posted.SourceItems[1].Quantity != 3 || posted.SourceItems[1].Status != 1 {
+		t.Fatalf("to item = %+v", posted.SourceItems[1])
+	}
+}
+
+func TestTransferSourceQtyInsufficient(t *testing.T) {
+	posted := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			posted++
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"items":[{"sku":"SKU-1","source_code":"default","quantity":1,"status":1}]}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 5)
+	if errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("err = %v", err)
+	}
+	if posted != 0 {
+		t.Fatal("insufficient transfer must not write")
+	}
+}
+
+func TestTransferSourceQtyValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	cases := []struct {
+		sku, from, to string
+		qty           int
+	}{
+		{"bad sku!", "default", "warehouse", 1},
+		{"SKU-1", "BAD SOURCE", "warehouse", 1},
+		{"SKU-1", "default", "default", 1},
+		{"SKU-1", "default", "warehouse", 0},
+	}
+	for i, tc := range cases {
+		if err := svc.TransferSourceQty(ctx, tc.sku, tc.from, tc.to, tc.qty); errs.CodeOf(err) != errs.CodeInvalidArgument {
+			t.Fatalf("case %d: err = %v", i, err)
+		}
 	}
 }

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.inventory.transfer` (destructive, confirmation-gated): moves
+  quantity between two MSI sources for one SKU, refusing an insufficient source
+  and documenting that the two-row upsert is not transactional.
+
+### Added
+
 - Magento MSI reads: `magento.inventory.sources` and
   `magento.inventory.stocks` (code/name/enabled/location and stock id/name).
 

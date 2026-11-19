@@ -28,7 +28,7 @@ var writeToolNames = []string{
 	orderCommentToolName, orderHoldToolName, orderUnholdToolName,
 	categoryCreateToolName, categoryUpdateToolName, categoryAssignToolName,
 	productLinkAddToolName, productLinkRemoveToolName, invoiceCaptureToolName, orderEmailToolName,
-	mediaDeleteToolName, orderCreateToolName, tierPricesSetToolName,
+	mediaDeleteToolName, orderCreateToolName, tierPricesSetToolName, inventoryTransferToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -53,7 +53,7 @@ func TestRegisterWritesMetadata(t *testing.T) {
 			t.Fatalf("tool %q is not registered", name)
 		}
 		wantPermission := registry.PermissionWrite
-		if name == productDeleteToolName || name == mediaDeleteToolName {
+		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName {
 			wantPermission = registry.PermissionDestructive
 		}
 		if tool.Permission != wantPermission {
@@ -72,7 +72,7 @@ func TestRegisterWritesMetadata(t *testing.T) {
 			t.Fatalf("write tool %q must not set idempotentHint", name)
 		}
 		destructive := tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint
-		if name == productDeleteToolName || name == mediaDeleteToolName {
+		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName {
 			if !destructive {
 				t.Fatalf("destructive tool %q must set destructiveHint=true", name)
 			}
@@ -216,7 +216,7 @@ func TestWriteToolsThroughInMemoryTransport(t *testing.T) {
 			t.Fatalf("write tool %q must not be read-only", tool.Name)
 		}
 		destructive := tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint
-		if tool.Name == productDeleteToolName || tool.Name == mediaDeleteToolName {
+		if tool.Name == productDeleteToolName || tool.Name == mediaDeleteToolName || tool.Name == inventoryTransferToolName {
 			if !destructive {
 				t.Fatalf("destructive tool %q must set destructiveHint=true", tool.Name)
 			}
@@ -380,6 +380,7 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 		"product.media.delete":      mediaDeleteSchema,
 		"order.create":              orderCreateSchema,
 		"product.tier_prices.set":   tierPricesSetSchema,
+		"inventory.transfer":        inventoryTransferSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {

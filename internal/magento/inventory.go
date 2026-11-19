@@ -6,6 +6,8 @@ import (
 	"context"
 	"net/http"
 	"regexp"
+
+	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
 
 const (
@@ -149,4 +151,58 @@ func validateSourceItemRefs(refs []SourceItemRef) error {
 		seen[key] = struct{}{}
 	}
 	return nil
+}
+
+// TransferSourceQty moves quantity between two sources for one SKU.
+//
+// Magento has no transfer endpoint, so the gateway reads the current source
+// items, refuses an insufficient source, then upserts both rows in one batch.
+// The batch is not transactional: a failure after the write can leave one row
+// updated, so the tool is destructive and confirmation-gated.
+func (s *Service) TransferSourceQty(ctx context.Context, sku, fromSource, toSource string, qty int) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento inventory service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return err
+	}
+	if !sourceCodeRE.MatchString(fromSource) || !sourceCodeRE.MatchString(toSource) {
+		return invalidf("source codes must match %s", sourceCodeRE.String())
+	}
+	if fromSource == toSource {
+		return invalidf("from_source and to_source must differ")
+	}
+	if qty <= 0 {
+		return invalidf("quantity must be greater than zero")
+	}
+	items, err := s.SourceItems(ctx, []string{sku})
+	if err != nil {
+		return err
+	}
+	fromQty, toQty := 0, 0
+	for _, item := range items {
+		switch item.SourceCode {
+		case fromSource:
+			fromQty = int(item.Quantity)
+		case toSource:
+			toQty = int(item.Quantity)
+		}
+	}
+	if fromQty < qty {
+		return invalidf("source %q has %d units, cannot transfer %d", fromSource, fromQty, qty)
+	}
+	newFrom := fromQty - qty
+	newTo := toQty + qty
+	batch := []SourceItem{
+		{SKU: sku, SourceCode: fromSource, Quantity: newFrom, Status: statusFor(newFrom)},
+		{SKU: sku, SourceCode: toSource, Quantity: newTo, Status: statusFor(newTo)},
+	}
+	return s.AssignSourceItems(ctx, batch)
+}
+
+func statusFor(qty int) int {
+	if qty <= 0 {
+		return 0
+	}
+	return 1
 }
