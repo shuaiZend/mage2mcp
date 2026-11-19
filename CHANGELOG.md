@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `docs/mcp-tools.md` now reports implementation status: 32 of the 75 design
+  tools are marked **Implemented.**, 39 implemented tools are listed outside the
+  original catalog (renamed or added during implementation), and the remaining
+  design tools are explicitly not yet implemented.
+
 ### Added
 
 - Magento tier prices: `magento.product.tier_prices` (read) and
