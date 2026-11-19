@@ -286,6 +286,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCustomerCreateTool(lookup), newCustomerUpdateTool(lookup),
 		newMediaUpdateTool(lookup), newOrderCancelTool(lookup), newAttributeOptionCreateTool(lookup),
 		newAttributeOptionDeleteTool(lookup), newBulkProductUpdateTool(lookup), newCategoryDeleteTool(lookup),
+		newCustomerAddressCreateTool(lookup), newCustomerAddressDeleteTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -340,6 +341,8 @@ func writeToolSchemas() map[string]string {
 		attributeOptionDeleteToolName: attributeOptionDeleteSchema,
 		bulkProductUpdateToolName:     bulkProductUpdateSchema,
 		categoryDeleteToolName:        categoryDeleteSchema,
+		customerAddressCreateToolName: customerAddressCreateSchema,
+		customerAddressDeleteToolName: customerAddressDeleteSchema,
 	}
 }
 
@@ -1958,6 +1961,112 @@ func newCategoryDeleteTool(lookup serviceLookup) registry.Tool {
 				return nil, categoryDeleteOutput{}, err
 			}
 			return nil, categoryDeleteOutput{CategoryID: in.CategoryID, Deleted: true}, nil
+		})
+		return nil
+	}
+	return t
+}
+
+const (
+	customerAddressCreateToolName    = "magento.customer.addresses.create"
+	customerAddressCreateToolTitle   = "Create a Magento customer address"
+	customerAddressCreateDescription = "Magento write operation: adds an address to a customer " +
+		"(POST /rest/{store_code}/V1/customers/{id}/addresses) on the resolved instance. PII is accepted because an address requires it; " +
+		"the response is the PII-safe projection (country, region, default flags). Requires human confirmation."
+	customerAddressDeleteToolName    = "magento.customer.addresses.delete"
+	customerAddressDeleteTitle       = "Delete a Magento customer address"
+	customerAddressDeleteDescription = "Magento write operation: deletes a customer address " +
+		"(DELETE /rest/{store_code}/V1/addresses/{id}) on the resolved instance. Irreversible; requires human confirmation."
+
+	customerAddressCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"customer_id": {"type": "integer", "minimum": 1},
+		"firstname": {"type": "string", "minLength": 1, "maxLength": 255},
+		"lastname": {"type": "string", "minLength": 1, "maxLength": 255},
+		"street": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string", "minLength": 1, "maxLength": 255}},
+		"city": {"type": "string", "minLength": 1, "maxLength": 255},
+		"postcode": {"type": "string", "minLength": 1, "maxLength": 255},
+		"country_id": {"type": "string", "pattern": "^[A-Z]{2}$"},
+		"telephone": {"type": "string", "minLength": 1, "maxLength": 255},
+		"region": {"type": "string", "maxLength": 255},
+		"default_billing": {"type": "boolean", "default": false},
+		"default_shipping": {"type": "boolean", "default": false}
+	}, "required": ["instance", "customer_id", "firstname", "lastname", "street", "city", "postcode", "country_id", "telephone"], "additionalProperties": false}`
+
+	customerAddressDeleteSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"address_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "address_id"], "additionalProperties": false}`
+)
+
+type customerAddressCreateInput struct {
+	Instance        string   `json:"instance"`
+	CustomerID      int      `json:"customer_id"`
+	Firstname       string   `json:"firstname"`
+	Lastname        string   `json:"lastname"`
+	Street          []string `json:"street"`
+	City            string   `json:"city"`
+	Postcode        string   `json:"postcode"`
+	CountryID       string   `json:"country_id"`
+	Telephone       string   `json:"telephone"`
+	Region          string   `json:"region"`
+	DefaultBilling  bool     `json:"default_billing"`
+	DefaultShipping bool     `json:"default_shipping"`
+}
+
+type customerAddressCreateOutput struct {
+	Address CustomerAddress `json:"address"`
+}
+
+type customerAddressDeleteInput struct {
+	Instance  string `json:"instance"`
+	AddressID int    `json:"address_id"`
+}
+
+type customerAddressDeleteOutput struct {
+	AddressID int  `json:"address_id"`
+	Deleted   bool `json:"deleted"`
+}
+
+func newCustomerAddressCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(customerAddressCreateToolName, customerAddressCreateToolTitle, customerAddressCreateDescription, "magento.customer.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(customerAddressCreateToolName, customerAddressCreateToolTitle, customerAddressCreateDescription, customerAddressCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in customerAddressCreateInput) (*mcp.CallToolResult, customerAddressCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, customerAddressCreateOutput{}, err
+				}
+				address, err := svc.CreateCustomerAddress(ctx, in.CustomerID, CustomerAddressInput{
+					Firstname: in.Firstname, Lastname: in.Lastname, Street: in.Street,
+					City: in.City, Postcode: in.Postcode, CountryID: in.CountryID,
+					Telephone: in.Telephone, Region: in.Region,
+					DefaultBilling: in.DefaultBilling, DefaultShipping: in.DefaultShipping,
+				})
+				if err != nil {
+					return nil, customerAddressCreateOutput{}, err
+				}
+				return nil, customerAddressCreateOutput{Address: *address}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newCustomerAddressDeleteTool(lookup serviceLookup) registry.Tool {
+	t := destructiveToolMetadata(customerAddressDeleteToolName, customerAddressDeleteTitle, customerAddressDeleteDescription, "magento.customer.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: customerAddressDeleteToolName, Title: customerAddressDeleteTitle, Description: customerAddressDeleteDescription,
+			InputSchema: json.RawMessage(customerAddressDeleteSchema),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in customerAddressDeleteInput) (*mcp.CallToolResult, customerAddressDeleteOutput, error) {
+			svc, err := lookup(in.Instance)
+			if err != nil {
+				return nil, customerAddressDeleteOutput{}, err
+			}
+			if err := svc.DeleteCustomerAddress(ctx, in.AddressID); err != nil {
+				return nil, customerAddressDeleteOutput{}, err
+			}
+			return nil, customerAddressDeleteOutput{AddressID: in.AddressID, Deleted: true}, nil
 		})
 		return nil
 	}

@@ -299,3 +299,96 @@ func validateCustomerName(field, value string) error {
 	}
 	return nil
 }
+
+// CustomerAddressInput is one address to create for a customer. PII is accepted
+// because an address requires it; the response is the PII-safe projection.
+type CustomerAddressInput struct {
+	Firstname       string
+	Lastname        string
+	Street          []string
+	City            string
+	Postcode        string
+	CountryID       string
+	Telephone       string
+	Region          string
+	DefaultBilling  bool
+	DefaultShipping bool
+}
+
+// CreateCustomerAddress adds an address with
+// POST /customers/{customerId}/addresses.
+func (s *Service) CreateCustomerAddress(ctx context.Context, customerID int, in CustomerAddressInput) (*CustomerAddress, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento customer service is not configured")
+	}
+	if customerID <= 0 {
+		return nil, invalidf("customer_id must be a positive integer")
+	}
+	address := OrderAddressInput{
+		Firstname: in.Firstname, Lastname: in.Lastname, Street: in.Street,
+		City: in.City, Postcode: in.Postcode, CountryID: in.CountryID,
+		Telephone: in.Telephone, Region: in.Region,
+	}
+	if err := validateOrderAddress("address", address); err != nil {
+		return nil, err
+	}
+	body := customerAddressBody{Address: customerAddressPayload{
+		CustomerID: customerID, Firstname: in.Firstname, Lastname: in.Lastname,
+		Street: in.Street, City: in.City, Postcode: in.Postcode, CountryID: in.CountryID,
+		Telephone: in.Telephone, Region: in.Region,
+		DefaultBilling: in.DefaultBilling, DefaultShipping: in.DefaultShipping,
+	}}
+	raw, err := s.client.do(ctx, http.MethodPost, "/customers/"+strconv.Itoa(customerID)+"/addresses", nil, body)
+	if err != nil {
+		return nil, err
+	}
+	return decodeCustomerAddress(raw)
+}
+
+// DeleteCustomerAddress removes an address with DELETE /addresses/{id}.
+func (s *Service) DeleteCustomerAddress(ctx context.Context, addressID int) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento customer service is not configured")
+	}
+	if addressID <= 0 {
+		return invalidf("address_id must be a positive integer")
+	}
+	_, err := s.client.do(ctx, http.MethodDelete, "/addresses/"+strconv.Itoa(addressID), nil, nil)
+	return err
+}
+
+type customerAddressBody struct {
+	Address customerAddressPayload `json:"address"`
+}
+
+type customerAddressPayload struct {
+	CustomerID      int      `json:"customer_id,omitempty"`
+	Firstname       string   `json:"firstname,omitempty"`
+	Lastname        string   `json:"lastname,omitempty"`
+	Street          []string `json:"street,omitempty"`
+	City            string   `json:"city,omitempty"`
+	Postcode        string   `json:"postcode,omitempty"`
+	CountryID       string   `json:"country_id,omitempty"`
+	Telephone       string   `json:"telephone,omitempty"`
+	Region          string   `json:"region,omitempty"`
+	DefaultBilling  bool     `json:"default_billing,omitempty"`
+	DefaultShipping bool     `json:"default_shipping,omitempty"`
+}
+
+func decodeCustomerAddress(raw []byte) (*CustomerAddress, error) {
+	var payload struct {
+		ID              int    `json:"id"`
+		CountryID       string `json:"country_id"`
+		Region          string `json:"region"`
+		RegionID        int    `json:"region_id"`
+		DefaultBilling  bool   `json:"default_billing"`
+		DefaultShipping bool   `json:"default_shipping"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable address payload").WithCause(err)
+	}
+	return &CustomerAddress{
+		ID: payload.ID, CountryID: payload.CountryID, Region: payload.Region,
+		RegionID: payload.RegionID, DefaultBilling: payload.DefaultBilling, DefaultShipping: payload.DefaultShipping,
+	}, nil
+}

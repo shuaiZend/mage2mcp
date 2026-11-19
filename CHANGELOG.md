@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Customer address writes: `magento.customer.addresses.create` (accepts the full
+  address but returns the PII-safe projection) and
+  `magento.customer.addresses.delete` (destructive, confirmation-gated).
+
+### Added
+
 - `magento.category.delete` (destructive, confirmation-gated): deletes a
   category and its subtree; products keep existing but lose that assignment.
 

@@ -40,6 +40,8 @@ Common behavior:
 | `magento.customer.create` | write + confirmation | 60s | Creates a customer (accepts PII); response is the PII-safe projection |
 | `magento.customer.update` | write + confirmation | 60s | Partial update of email/name/group; response is PII-safe |
 | `magento.customer.addresses` | read | 30s | PII-safe address projection: country, region, and default flags only |
+| `magento.customer.addresses.create` | write + confirmation | 60s | Adds a customer address (accepts PII); response is PII-safe |
+| `magento.customer.addresses.delete` | destructive + confirmation | 60s | Deletes a customer address |
 | `magento.attribute.sets` | read | 30s | Product attribute sets (max 200) |
 | `magento.attributes.list` | read | 30s | Attributes of one attribute set |
 | `magento.attributes.options` | read | 30s | Options of a select/multiselect attribute (value_index) |
