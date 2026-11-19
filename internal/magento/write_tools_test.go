@@ -32,7 +32,7 @@ var writeToolNames = []string{
 	customerCreateToolName, customerUpdateToolName, mediaUpdateToolName, orderCancelToolName,
 	attributeOptionCreateToolName, attributeOptionDeleteToolName, bulkProductUpdateToolName,
 	categoryDeleteToolName, customerAddressCreateToolName, customerAddressDeleteToolName,
-	customerAddressUpdateToolName, bulkLinkToolName,
+	customerAddressUpdateToolName, bulkLinkToolName, bulkOptionCreateToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -67,7 +67,7 @@ func TestRegisterWritesMetadata(t *testing.T) {
 			t.Fatalf("write tool %q must require confirmation", name)
 		}
 		wantTimeout := 60 * time.Second
-		if name == bulkProductUpdateToolName || name == bulkLinkToolName {
+		if name == bulkProductUpdateToolName || name == bulkLinkToolName || name == bulkOptionCreateToolName {
 			wantTimeout = 120 * time.Second
 		}
 		if tool.Timeout != wantTimeout {
@@ -362,45 +362,46 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 	// arguments, but the JSON Schema must also allow it or the approval retry
 	// fails validation before the handler runs.
 	schemas := map[string]string{
-		"product.create":            productCreateSchema,
-		"product.update":            productUpdateSchema,
-		"configurable.create":       configurableCreateSchema,
-		"configurable.child":        configurableAddChildSchema,
-		"inventory.assign":          inventoryAssignSchema,
-		"import.execute":            importExecuteSchema,
-		"product.delete":            productDeleteSchema,
-		"configurable.remove_child": removeChildSchema,
-		"inventory.unassign":        unassignSourceItemsSchema,
-		"product.media.upload":      mediaUploadSchema,
-		"invoice.create":            invoiceCreateSchema,
-		"shipment.create":           shipmentCreateSchema,
-		"creditmemo.create":         creditmemoCreateSchema,
-		"order.comment":             orderCommentSchema,
-		"order.hold":                orderHoldSchema,
-		"order.unhold":              orderHoldSchema,
-		"category.create":           categoryCreateSchema,
-		"category.update":           categoryUpdateSchema,
-		"category.assign_product":   categoryAssignSchema,
-		"product.links.add":         productLinkAddSchema,
-		"product.links.remove":      productLinkRemoveSchema,
-		"invoice.capture":           invoiceCaptureSchema,
-		"order.email":               orderEmailSchema,
-		"product.media.delete":      mediaDeleteSchema,
-		"order.create":              orderCreateSchema,
-		"product.tier_prices.set":   tierPricesSetSchema,
-		"inventory.transfer":        inventoryTransferSchema,
-		"customer.create":           customerCreateSchema,
-		"customer.update":           customerUpdateSchema,
-		"product.media.update":      mediaUpdateSchema,
-		"order.cancel":              orderCancelSchema,
-		"attributes.options.create": attributeOptionCreateSchema,
-		"attributes.options.delete": attributeOptionDeleteSchema,
-		"products.bulk_update":      bulkProductUpdateSchema,
-		"category.delete":           categoryDeleteSchema,
-		"customer.addresses.create": customerAddressCreateSchema,
-		"customer.addresses.delete": customerAddressDeleteSchema,
-		"customer.addresses.update": customerAddressUpdateSchema,
-		"product.links.bulk":        bulkLinkSchema,
+		"product.create":                 productCreateSchema,
+		"product.update":                 productUpdateSchema,
+		"configurable.create":            configurableCreateSchema,
+		"configurable.child":             configurableAddChildSchema,
+		"inventory.assign":               inventoryAssignSchema,
+		"import.execute":                 importExecuteSchema,
+		"product.delete":                 productDeleteSchema,
+		"configurable.remove_child":      removeChildSchema,
+		"inventory.unassign":             unassignSourceItemsSchema,
+		"product.media.upload":           mediaUploadSchema,
+		"invoice.create":                 invoiceCreateSchema,
+		"shipment.create":                shipmentCreateSchema,
+		"creditmemo.create":              creditmemoCreateSchema,
+		"order.comment":                  orderCommentSchema,
+		"order.hold":                     orderHoldSchema,
+		"order.unhold":                   orderHoldSchema,
+		"category.create":                categoryCreateSchema,
+		"category.update":                categoryUpdateSchema,
+		"category.assign_product":        categoryAssignSchema,
+		"product.links.add":              productLinkAddSchema,
+		"product.links.remove":           productLinkRemoveSchema,
+		"invoice.capture":                invoiceCaptureSchema,
+		"order.email":                    orderEmailSchema,
+		"product.media.delete":           mediaDeleteSchema,
+		"order.create":                   orderCreateSchema,
+		"product.tier_prices.set":        tierPricesSetSchema,
+		"inventory.transfer":             inventoryTransferSchema,
+		"customer.create":                customerCreateSchema,
+		"customer.update":                customerUpdateSchema,
+		"product.media.update":           mediaUpdateSchema,
+		"order.cancel":                   orderCancelSchema,
+		"attributes.options.create":      attributeOptionCreateSchema,
+		"attributes.options.delete":      attributeOptionDeleteSchema,
+		"products.bulk_update":           bulkProductUpdateSchema,
+		"category.delete":                categoryDeleteSchema,
+		"customer.addresses.create":      customerAddressCreateSchema,
+		"customer.addresses.delete":      customerAddressDeleteSchema,
+		"customer.addresses.update":      customerAddressUpdateSchema,
+		"product.links.bulk":             bulkLinkSchema,
+		"attributes.options.bulk_create": bulkOptionCreateSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {

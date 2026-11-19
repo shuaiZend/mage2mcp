@@ -287,7 +287,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newMediaUpdateTool(lookup), newOrderCancelTool(lookup), newAttributeOptionCreateTool(lookup),
 		newAttributeOptionDeleteTool(lookup), newBulkProductUpdateTool(lookup), newCategoryDeleteTool(lookup),
 		newCustomerAddressCreateTool(lookup), newCustomerAddressDeleteTool(lookup),
-		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup),
+		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup), newBulkOptionCreateTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -346,6 +346,7 @@ func writeToolSchemas() map[string]string {
 		customerAddressDeleteToolName: customerAddressDeleteSchema,
 		customerAddressUpdateToolName: customerAddressUpdateSchema,
 		bulkLinkToolName:              bulkLinkSchema,
+		bulkOptionCreateToolName:      bulkOptionCreateSchema,
 	}
 }
 
@@ -2186,6 +2187,51 @@ func newBulkLinkTool(lookup serviceLookup) registry.Tool {
 					return nil, bulkLinkOutput{}, err
 				}
 				return nil, bulkLinkOutput{Result: *result}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	bulkOptionCreateToolName    = "magento.attributes.options.bulk_create"
+	bulkOptionCreateToolTitle   = "Bulk create Magento attribute options"
+	bulkOptionCreateDescription = "Magento write operation: adds up to 50 option labels to one select or multiselect attribute " +
+		"(POST /rest/{store_code}/V1/products/attributes/{code}/options, one call per label) with a per-label partial-success report. " +
+		"Duplicate labels are skipped; earlier options stay on failure. " +
+		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+
+	bulkOptionCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"attribute_code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"},
+		"labels": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "minLength": 1, "maxLength": 255}}
+	}, "required": ["instance", "attribute_code", "labels"], "additionalProperties": false}`
+)
+
+type bulkOptionCreateInput struct {
+	Instance      string   `json:"instance"`
+	AttributeCode string   `json:"attribute_code"`
+	Labels        []string `json:"labels"`
+}
+
+type bulkOptionCreateOutput struct {
+	Result OptionBulkResult `json:"result"`
+}
+
+func newBulkOptionCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(bulkOptionCreateToolName, bulkOptionCreateToolTitle, bulkOptionCreateDescription, "magento.attribute.write")
+	t.Timeout = 120 * time.Second
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(bulkOptionCreateToolName, bulkOptionCreateToolTitle, bulkOptionCreateDescription, bulkOptionCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in bulkOptionCreateInput) (*mcp.CallToolResult, bulkOptionCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, bulkOptionCreateOutput{}, err
+				}
+				result, err := svc.BulkCreateAttributeOptions(ctx, in.AttributeCode, in.Labels)
+				if err != nil {
+					return nil, bulkOptionCreateOutput{}, err
+				}
+				return nil, bulkOptionCreateOutput{Result: *result}, nil
 			})
 		return nil
 	}

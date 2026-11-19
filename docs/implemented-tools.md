@@ -47,6 +47,7 @@ Common behavior:
 | `magento.attributes.list` | read | 30s | Attributes of one attribute set |
 | `magento.attributes.options` | read | 30s | Options of a select/multiselect attribute (value_index) |
 | `magento.attributes.options.create` | write + confirmation | 60s | Adds a value to a select/multiselect attribute (variant option) |
+| `magento.attributes.options.bulk_create` | write + confirmation | 120s | Adds up to 50 labels with a per-label partial-success report |
 | `magento.attributes.options.delete` | destructive + confirmation | 60s | Deletes an option; rejected while products reference it |
 | `magento.product.media.get` | read | 30s | One gallery entry: file, label, position, types, disabled |
 | `magento.product.media` | read | 30s | Media gallery of one product |

@@ -193,3 +193,49 @@ func TestDeleteAttributeOption(t *testing.T) {
 		t.Fatalf("id err = %v", err)
 	}
 }
+
+func TestBulkCreateAttributeOptions(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 2 {
+			http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`{"label":"Green","value":"14"}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	result, err := svc.BulkCreateAttributeOptions(context.Background(), "color", []string{"Green", "Blue", "Green"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 3 || result.Created != 1 || result.Failed != 1 || len(result.Rows) != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.Rows[0].Value != "14" || result.Rows[1].Status != "failed" || calls != 2 {
+		t.Fatalf("rows = %+v calls = %d", result.Rows, calls)
+	}
+}
+
+func TestBulkCreateAttributeOptionsValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	if _, err := svc.BulkCreateAttributeOptions(ctx, "Bad Code!", []string{"Green"}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("code err = %v", err)
+	}
+	if _, err := svc.BulkCreateAttributeOptions(ctx, "color", nil); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("empty err = %v", err)
+	}
+	if _, err := svc.BulkCreateAttributeOptions(ctx, "color", []string{"Green", " "}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("blank err = %v", err)
+	}
+	tooMany := make([]string, maxBulkOptions+1)
+	for i := range tooMany {
+		tooMany[i] = "Label"
+	}
+	if _, err := svc.BulkCreateAttributeOptions(ctx, "color", tooMany); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("ceiling err = %v", err)
+	}
+}
