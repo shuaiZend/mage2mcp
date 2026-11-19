@@ -11,7 +11,7 @@ typed, audited, read-only-by-default tools.
 > unified traffic comparison. Multiple Magento stores, Cloudflare zones, and GA4
 > properties can share one gateway, with per-instance authorization and audit;
 > optional PostgreSQL-backed state, audit, and job queue complete the deployment.
-> Write tools require two-step human approval. [v0.1.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.1.0)
+> Write tools require two-step human approval. [v0.2.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.2.0)
 > is the first public pre-release (signed artifacts, SBOM, multi-arch image);
 > interfaces may still change with an ADR before 1.0.
 

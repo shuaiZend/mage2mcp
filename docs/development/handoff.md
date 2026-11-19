@@ -46,6 +46,6 @@ should do next. It is updated at the end of each development session.
 - Cloudflare Logpush inspection and raw-log querying are not implemented.
 - GA4 BigQuery export is a documented boundary, not a feature.
 - Unified analytics currently covers one scenario.
-- v0.1.0 is published as a pre-release (signed artifacts, SBOM, multi-arch GHCR
+- v0.2.0 is published as a pre-release (signed artifacts, SBOM, multi-arch GHCR
   image) and deployed on the test host. The release-workflow fixes from v0.0.1
   (allowed-action `owner/repo@*` patterns and GHCR login) remain in place.
