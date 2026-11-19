@@ -530,3 +530,64 @@ func TestUpdateConfigurableRejectsSimple(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestCreateVariations(t *testing.T) {
+	created := 0
+	linked := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/products/CFG":
+			_, _ = w.Write([]byte(`{"id":1,"sku":"CFG","name":"Parent","type_id":"configurable","price":19.99,"attribute_set_id":4}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/products/CFG-EXISTS":
+			_, _ = w.Write([]byte(`{"id":2,"sku":"CFG-EXISTS","name":"Existing","type_id":"simple","price":1,"attribute_set_id":4}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/default/V1/products/"):
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/products":
+			created++
+			_, _ = w.Write([]byte(`{"id":3,"sku":"CFG-1","name":"Parent CFG-1","type_id":"simple","price":19.99,"attribute_set_id":4}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/configurable-products/CFG/child":
+			linked++
+			_, _ = w.Write([]byte(`true`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	result, err := svc.CreateVariations(context.Background(), "CFG", []VariationInput{
+		{SKU: "CFG-1", Attributes: map[string]string{"color": "12"}},
+		{SKU: "CFG-EXISTS", Attributes: map[string]string{"color": "13"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 2 || result.Created != 1 || result.Skipped != 1 || result.Failed != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	if created != 1 || linked != 1 {
+		t.Fatalf("created=%d linked=%d", created, linked)
+	}
+}
+
+func TestCreateVariationsValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	valid := []VariationInput{{SKU: "CFG-1", Attributes: map[string]string{"color": "12"}}}
+	cases := []struct {
+		parent   string
+		variants []VariationInput
+	}{
+		{"bad sku!", valid},
+		{"CFG", nil},
+		{"CFG", []VariationInput{{SKU: "CFG-1"}}},
+		{"CFG", []VariationInput{{SKU: "CFG-1", Attributes: map[string]string{"bad code!": "12"}}}},
+		{"CFG", []VariationInput{{SKU: "CFG-1", Attributes: map[string]string{"color": " "}}}},
+		{"CFG", []VariationInput{valid[0], valid[0]}},
+	}
+	for i, tc := range cases {
+		if _, err := svc.CreateVariations(ctx, tc.parent, tc.variants); errs.CodeOf(err) != errs.CodeInvalidArgument {
+			t.Fatalf("case %d: err = %v", i, err)
+		}
+	}
+}

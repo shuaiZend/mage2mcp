@@ -35,6 +35,7 @@ var writeToolNames = []string{
 	customerAddressUpdateToolName, bulkLinkToolName, bulkOptionCreateToolName,
 	configurableUpdateToolName, invoiceEmailToolName, shipmentEmailToolName, creditmemoEmailToolName,
 	inventorySourceCreateToolName, stockSourceLinkToolName, stockSourceUnlinkToolName,
+	createVariationsToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -69,7 +70,7 @@ func TestRegisterWritesMetadata(t *testing.T) {
 			t.Fatalf("write tool %q must require confirmation", name)
 		}
 		wantTimeout := 60 * time.Second
-		if name == bulkProductUpdateToolName || name == bulkLinkToolName || name == bulkOptionCreateToolName {
+		if name == bulkProductUpdateToolName || name == bulkLinkToolName || name == bulkOptionCreateToolName || name == createVariationsToolName {
 			wantTimeout = 120 * time.Second
 		}
 		if tool.Timeout != wantTimeout {
@@ -411,6 +412,7 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 		"inventory.source_create":        inventorySourceCreateSchema,
 		"inventory.stock_source_link":    stockSourceLinkSchema,
 		"inventory.stock_source_unlink":  stockSourceUnlinkSchema,
+		"configurable.create_variations": createVariationsSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {

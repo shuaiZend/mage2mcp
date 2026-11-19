@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.configurable.create_variations` (confirmation-gated): creates simple
+  children for an existing configurable parent from explicit SKU/attribute pairs,
+  links them, skips existing SKUs (idempotent per SKU), and reports per-row
+  partial success.
+
+### Added
+
 - `magento.inventory.stock_source_unlink` (destructive, confirmation-gated):
   detaches a source from a stock; per-source quantities are kept.
 
