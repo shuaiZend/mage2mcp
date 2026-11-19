@@ -90,15 +90,13 @@ func (q *JobQueue) Enqueue(ctx context.Context, t jobs.Task) (string, error) {
 		// A repeated enqueue with the same idempotency key is not an error: the
 		// original job is returned so callers can poll it.
 		if isUniqueViolation(err) {
-			existing, lookupErr := q.store.pool.Query(ctx, `
+			var existingID string
+			lookupErr := q.store.pool.QueryRow(ctx, `
 				SELECT id::text FROM jobs
 				WHERE kind = $1 AND idempotency_key = $2 AND ($3::text IS NULL OR instance_id = $3::text)
-				ORDER BY created_at LIMIT 1`, t.Kind, t.IdempotencyKey, instanceID)
+				ORDER BY created_at LIMIT 1`, t.Kind, t.IdempotencyKey, instanceID).Scan(&existingID)
 			if lookupErr == nil {
-				var existingID string
-				if scanErr := existing.Scan(&existingID); scanErr == nil {
-					return existingID, nil
-				}
+				return existingID, nil
 			}
 		}
 		return "", fmt.Errorf("storage: enqueue job: %w", err)
