@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
+Third minor pre-release: single media reads, order summary alias, bulk product
+links and bulk attribute options, and verified documentation for variant media
+and interface limits.
+
 ### Added
 
 - `magento.attributes.options.bulk_create` (confirmation-gated): adds up to 50
@@ -413,7 +419,8 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.3.0
 [0.2.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.2.0
 [0.1.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.1.0
 [0.0.2]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.0.2
