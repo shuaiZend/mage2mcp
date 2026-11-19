@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento product search gains `price_from`/`price_to` and
+  `created_from`/`created_to` filters (decimal and date validation), and a new
+  `magento.products.get` batch read for up to 50 SKUs in one search.
 - Asynchronous import hardening: `idempotency_key` on
   `magento.import.start` (a repeated key returns the original job id via the
   queue's unique index), and the worker stores a bounded report (counts plus the

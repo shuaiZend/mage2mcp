@@ -45,6 +45,10 @@ const (
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Exact SKU filter; 1-64 characters from [A-Za-z0-9._:-]."},
 		"type_id": {"type": "string", "enum": ["simple", "configurable", "virtual", "downloadable", "bundle", "grouped"], "description": "Magento product type filter."},
 		"status": {"type": "integer", "enum": [1, 2], "description": "Magento status filter: 1 enabled, 2 disabled."},
+		"price_from": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Inclusive lower price bound as a decimal string."},
+		"price_to": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Inclusive upper price bound as a decimal string."},
+		"created_from": {"type": "string", "description": "Inclusive creation lower bound, RFC 3339 or YYYY-MM-DD."},
+		"created_to": {"type": "string", "description": "Exclusive creation upper bound, RFC 3339 or YYYY-MM-DD."},
 		"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Page size, 1-200; defaults to 50."},
 		"cursor": {"type": "string", "pattern": "` + cursorPattern + `", "description": "Zero-based row offset; must be a multiple of limit. Omit for the first page."}
 	}, "required": ["instance"], "additionalProperties": false}`
@@ -60,13 +64,17 @@ type productGetOutput struct {
 }
 
 type productSearchInput struct {
-	Instance string `json:"instance"`
-	Query    string `json:"query"`
-	SKU      string `json:"sku"`
-	TypeID   string `json:"type_id"`
-	Status   int    `json:"status"`
-	Limit    int    `json:"limit"`
-	Cursor   string `json:"cursor"`
+	Instance    string `json:"instance"`
+	Query       string `json:"query"`
+	SKU         string `json:"sku"`
+	TypeID      string `json:"type_id"`
+	Status      int    `json:"status"`
+	PriceFrom   string `json:"price_from"`
+	PriceTo     string `json:"price_to"`
+	CreatedFrom string `json:"created_from"`
+	CreatedTo   string `json:"created_to"`
+	Limit       int    `json:"limit"`
+	Cursor      string `json:"cursor"`
 }
 
 type productSearchOutput struct {
@@ -98,6 +106,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCreditmemoListTool(lookup), newCreditmemoGetTool(lookup),
 		newConfigurableChildrenTool(lookup), newAttributeOptionsTool(lookup), newCategoryProductsTool(lookup),
 		newCustomerGetTool(lookup), newCustomerSearchTool(lookup), newProductLinksTool(lookup),
+		newProductsBatchTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -156,8 +165,10 @@ func newSearchTool(lookup serviceLookup) registry.Tool {
 					return nil, productSearchOutput{}, err
 				}
 				products, total, err := svc.Search(ctx, ProductQuery{
-					SKU: in.SKU, NameContains: in.Query, TypeID: in.TypeID,
-					Status: in.Status, Limit: in.Limit, CursorOffset: offset,
+					SKU: in.SKU, NameContains: in.Query, TypeID: in.TypeID, Status: in.Status,
+					PriceFrom: in.PriceFrom, PriceTo: in.PriceTo,
+					CreatedFrom: in.CreatedFrom, CreatedTo: in.CreatedTo,
+					Limit: in.Limit, CursorOffset: offset,
 				})
 				if err != nil {
 					return nil, productSearchOutput{}, err
@@ -1234,6 +1245,49 @@ func newProductLinksTool(lookup serviceLookup) registry.Tool {
 					return nil, productLinksOutput{}, err
 				}
 				return nil, productLinksOutput{Links: links}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	productsBatchToolName  = "magento.products.get"
+	productsBatchToolTitle = "Get several Magento products"
+
+	productsBatchToolDescription = "Reads up to 50 products by SKU in one search " +
+		"(GET /rest/{store_code}/V1/products with a sku in-filter). Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	productsBatchSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"skus": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "pattern": "` + skuInputPattern + `"}, "description": "SKUs to fetch, 1-50; duplicates are ignored."}
+	}, "required": ["instance", "skus"], "additionalProperties": false}`
+)
+
+type productsBatchInput struct {
+	Instance string   `json:"instance"`
+	SKUs     []string `json:"skus"`
+}
+
+type productsBatchOutput struct {
+	Products []Product `json:"products"`
+}
+
+func newProductsBatchTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(productsBatchToolName, productsBatchToolTitle, productsBatchToolDescription)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(productsBatchToolName, productsBatchToolTitle, productsBatchToolDescription, productsBatchSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productsBatchInput) (*mcp.CallToolResult, productsBatchOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productsBatchOutput{}, err
+				}
+				products, err := svc.BatchGet(ctx, in.SKUs)
+				if err != nil {
+					return nil, productsBatchOutput{}, err
+				}
+				return nil, productsBatchOutput{Products: products}, nil
 			})
 		return nil
 	}
