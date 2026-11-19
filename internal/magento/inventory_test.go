@@ -241,3 +241,68 @@ func TestTransferSourceQtyValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateSourceAndLink(t *testing.T) {
+	var paths []string
+	var sourceBody inventorySourceBody
+	var linkBody stockSourceLinkBody
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		raw, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/default/V1/inventory/sources":
+			_ = json.Unmarshal(raw, &sourceBody)
+			_, _ = w.Write([]byte(`{"source_code":"warehouse","name":"Warehouse","enabled":true,"country_id":"GB","city":"London"}`))
+		case "/rest/default/V1/inventory/stock-source-links":
+			_ = json.Unmarshal(raw, &linkBody)
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	source, err := svc.CreateSource(context.Background(), InventorySourceInput{
+		SourceCode: "warehouse", Name: "Warehouse", Enabled: true, CountryID: "GB", City: "London",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.SourceCode != "warehouse" || !source.Enabled {
+		t.Fatalf("source = %+v", source)
+	}
+	if sourceBody.Source.SourceCode != "warehouse" || sourceBody.Source.Name != "Warehouse" {
+		t.Fatalf("body = %+v", sourceBody)
+	}
+	if err := svc.LinkStockSource(context.Background(), 1, "warehouse", 2); err != nil {
+		t.Fatal(err)
+	}
+	if len(linkBody.Links) != 1 || linkBody.Links[0].StockID != 1 || linkBody.Links[0].Position != 2 {
+		t.Fatalf("links = %+v", linkBody)
+	}
+}
+
+func TestInventorySourceValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	if _, err := svc.CreateSource(ctx, InventorySourceInput{SourceCode: "Bad Code", Name: "X"}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("code err = %v", err)
+	}
+	if _, err := svc.CreateSource(ctx, InventorySourceInput{SourceCode: "wh", Name: ""}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("name err = %v", err)
+	}
+	if _, err := svc.CreateSource(ctx, InventorySourceInput{SourceCode: "wh", Name: "X", CountryID: "gb"}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("country err = %v", err)
+	}
+	if _, err := svc.CreateSource(ctx, InventorySourceInput{SourceCode: "wh", Name: "X", Latitude: 100}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("latitude err = %v", err)
+	}
+	if err := svc.LinkStockSource(ctx, 0, "wh", 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("stock err = %v", err)
+	}
+	if err := svc.LinkStockSource(ctx, 1, "Bad Code", 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("source err = %v", err)
+	}
+	if err := svc.LinkStockSource(ctx, 1, "wh", -1); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("position err = %v", err)
+	}
+}

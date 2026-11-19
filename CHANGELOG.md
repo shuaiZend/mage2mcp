@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- MSI management: `magento.inventory.source_create` (new source with location)
+  and `magento.inventory.stock_source_link` (attach a source to a stock), both
+  confirmation-gated.
+
+### Added
+
 - Document emails: `magento.invoice.email`, `magento.shipment.email`, and
   `magento.creditmemo.email` (confirmation-gated). The recipient is the order's
   customer; the gateway never accepts an address.

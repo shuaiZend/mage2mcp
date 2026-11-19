@@ -34,6 +34,7 @@ var writeToolNames = []string{
 	categoryDeleteToolName, customerAddressCreateToolName, customerAddressDeleteToolName,
 	customerAddressUpdateToolName, bulkLinkToolName, bulkOptionCreateToolName,
 	configurableUpdateToolName, invoiceEmailToolName, shipmentEmailToolName, creditmemoEmailToolName,
+	inventorySourceCreateToolName, stockSourceLinkToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -407,6 +408,8 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 		"invoice.email":                  documentEmailSchema,
 		"shipment.email":                 documentEmailSchema,
 		"creditmemo.email":               documentEmailSchema,
+		"inventory.source_create":        inventorySourceCreateSchema,
+		"inventory.stock_source_link":    stockSourceLinkSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {
