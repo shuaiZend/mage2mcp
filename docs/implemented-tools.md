@@ -50,6 +50,8 @@ Common behavior:
 | `magento.category.assign_product` | write + confirmation | 60s | Links a product to a category |
 | `magento.product.links.add` | write + confirmation | 60s | Creates a related/upsell/crosssell link between two products |
 | `magento.product.links.remove` | write + confirmation | 60s | Deletes a related/upsell/crosssell link |
+| `magento.invoice.capture` | write + confirmation | 60s | Captures payment for an existing invoice; charges the payment method |
+| `magento.order.email` | write + confirmation | 60s | Sends the order confirmation email |
 | `magento.inventory.status` | read | 30s | Catalog quantity, in-stock flag, and backorders for one SKU |
 | `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |

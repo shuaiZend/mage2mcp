@@ -219,6 +219,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newOrderCommentTool(lookup), newOrderHoldTool(lookup, true), newOrderHoldTool(lookup, false),
 		newCategoryCreateTool(lookup), newCategoryUpdateTool(lookup), newCategoryAssignProductTool(lookup),
 		newProductLinkAddTool(lookup), newProductLinkRemoveTool(lookup),
+		newInvoiceCaptureTool(lookup), newOrderEmailTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -1125,6 +1126,84 @@ func newProductLinkRemoveTool(lookup serviceLookup) registry.Tool {
 					return nil, productLinkWriteOutput{}, err
 				}
 				return nil, productLinkWriteOutput{SKU: in.SKU, LinkType: in.LinkType, LinkedProductSKU: in.LinkedProductSKU, Applied: true}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	invoiceCaptureToolName    = "magento.invoice.capture"
+	invoiceCaptureToolTitle   = "Capture a Magento invoice"
+	invoiceCaptureDescription = "Magento write operation: captures the payment for an existing invoice " +
+		"(POST /rest/{store_code}/V1/invoices/{id}/capture) on the resolved instance. " +
+		"This charges the payment method and moves money; refunds are a separate credit memo. Requires human confirmation."
+	orderEmailToolName    = "magento.order.email"
+	orderEmailToolTitle   = "Send a Magento order email"
+	orderEmailDescription = "Magento write operation: sends the order confirmation email " +
+		"(POST /rest/{store_code}/V1/orders/{id}/emails) on the resolved instance. Requires human confirmation."
+
+	invoiceCaptureSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"invoice_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "invoice_id"], "additionalProperties": false}`
+
+	orderEmailSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"order_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "order_id"], "additionalProperties": false}`
+)
+
+type invoiceCaptureInput struct {
+	Instance  string `json:"instance"`
+	InvoiceID int    `json:"invoice_id"`
+}
+
+type invoiceCaptureOutput struct {
+	InvoiceID int  `json:"invoice_id"`
+	Captured  bool `json:"captured"`
+}
+
+type orderEmailInput struct {
+	Instance string `json:"instance"`
+	OrderID  int    `json:"order_id"`
+}
+
+type orderEmailOutput struct {
+	OrderID int  `json:"order_id"`
+	Sent    bool `json:"sent"`
+}
+
+func newInvoiceCaptureTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(invoiceCaptureToolName, invoiceCaptureToolTitle, invoiceCaptureDescription, "magento.invoice.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(invoiceCaptureToolName, invoiceCaptureToolTitle, invoiceCaptureDescription, invoiceCaptureSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in invoiceCaptureInput) (*mcp.CallToolResult, invoiceCaptureOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, invoiceCaptureOutput{}, err
+				}
+				if err := svc.CaptureInvoice(ctx, in.InvoiceID); err != nil {
+					return nil, invoiceCaptureOutput{}, err
+				}
+				return nil, invoiceCaptureOutput{InvoiceID: in.InvoiceID, Captured: true}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newOrderEmailTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(orderEmailToolName, orderEmailToolTitle, orderEmailDescription, "magento.order.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(orderEmailToolName, orderEmailToolTitle, orderEmailDescription, orderEmailSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderEmailInput) (*mcp.CallToolResult, orderEmailOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, orderEmailOutput{}, err
+				}
+				if err := svc.SendOrderEmail(ctx, in.OrderID); err != nil {
+					return nil, orderEmailOutput{}, err
+				}
+				return nil, orderEmailOutput{OrderID: in.OrderID, Sent: true}, nil
 			})
 		return nil
 	}

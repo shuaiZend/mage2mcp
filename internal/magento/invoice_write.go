@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
@@ -93,4 +94,18 @@ func validateInvoiceCreate(in InvoiceCreateInput) error {
 		seen[line.OrderItemID] = struct{}{}
 	}
 	return nil
+}
+
+// CaptureInvoice captures an existing invoice's payment with
+// POST /invoices/{id}/capture. This moves money and is irreversible from the
+// gateway's perspective; refunds are a separate operation.
+func (s *Service) CaptureInvoice(ctx context.Context, invoiceID int) error {
+	if err := s.requireOrderService(); err != nil {
+		return err
+	}
+	if invoiceID <= 0 {
+		return invalidf("invoice_id must be a positive integer")
+	}
+	_, err := s.client.do(ctx, http.MethodPost, "/invoices/"+strconv.Itoa(invoiceID)+"/capture", nil, nil)
+	return err
 }

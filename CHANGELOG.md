@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.invoice.capture` (charges the payment method for an existing invoice;
+  confirmation-gated and documented as money-moving) and `magento.order.email`
+  (sends the order confirmation email).
 - Magento product link writes: `magento.product.links.add` and
   `magento.product.links.remove` for related/upsell/cross-sell relations, with
   self-link, type, and position validation. Both require confirmation.
