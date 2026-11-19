@@ -97,7 +97,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newShipmentListTool(lookup), newShipmentGetTool(lookup),
 		newCreditmemoListTool(lookup), newCreditmemoGetTool(lookup),
 		newConfigurableChildrenTool(lookup), newAttributeOptionsTool(lookup), newCategoryProductsTool(lookup),
-		newCustomerGetTool(lookup), newCustomerSearchTool(lookup),
+		newCustomerGetTool(lookup), newCustomerSearchTool(lookup), newProductLinksTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1188,6 +1188,52 @@ func newCustomerSearchTool(lookup serviceLookup) registry.Tool {
 					return nil, customerSearchOutput{}, err
 				}
 				return nil, customerSearchOutput{Customers: customers, Total: total}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	productLinksToolName  = "magento.product.links"
+	productLinksToolTitle = "List Magento product links"
+
+	productLinksToolDescription = "Lists related, upsell, or cross-sell links of a product " +
+		"(GET /rest/{store_code}/V1/products/{sku}/links?linkType=...). Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	productLinksSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU."},
+		"link_type": {"type": "string", "enum": ["related", "upsell", "crosssell"], "description": "Link relation to list."}
+	}, "required": ["instance", "sku", "link_type"], "additionalProperties": false}`
+)
+
+type productLinksInput struct {
+	Instance string `json:"instance"`
+	SKU      string `json:"sku"`
+	LinkType string `json:"link_type"`
+}
+
+type productLinksOutput struct {
+	Links []ProductLink `json:"links"`
+}
+
+func newProductLinksTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(productLinksToolName, productLinksToolTitle, productLinksToolDescription)
+	t.Capability = "magento.product.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(productLinksToolName, productLinksToolTitle, productLinksToolDescription, productLinksSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productLinksInput) (*mcp.CallToolResult, productLinksOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productLinksOutput{}, err
+				}
+				links, err := svc.ProductLinks(ctx, in.SKU, in.LinkType)
+				if err != nil {
+					return nil, productLinksOutput{}, err
+				}
+				return nil, productLinksOutput{Links: links}, nil
 			})
 		return nil
 	}

@@ -24,6 +24,7 @@ var writeToolNames = []string{
 	productCreateToolName, productUpdateToolName, configurableCreateToolName,
 	configurableAddChildToolName, inventoryAssignToolName, importExecuteToolName,
 	productDeleteToolName, removeChildToolName, unassignSourceItemsToolName, mediaUploadToolName,
+	invoiceCreateToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -359,6 +360,7 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 		"configurable.remove_child": removeChildSchema,
 		"inventory.unassign":        unassignSourceItemsSchema,
 		"product.media.upload":      mediaUploadSchema,
+		"invoice.create":            invoiceCreateSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {

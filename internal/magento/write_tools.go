@@ -214,7 +214,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newProductCreateTool(lookup), newProductUpdateTool(lookup), newConfigurableCreateTool(lookup),
 		newConfigurableAddChildTool(lookup), newInventoryAssignTool(lookup), newImportExecuteTool(lookup),
 		newProductDeleteTool(lookup), newRemoveChildTool(lookup), newUnassignSourceItemsTool(lookup),
-		newMediaUploadTool(lookup),
+		newMediaUploadTool(lookup), newInvoiceCreateTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -626,6 +626,61 @@ func newMediaUploadTool(lookup serviceLookup) registry.Tool {
 					return nil, mediaUploadOutput{}, err
 				}
 				return nil, mediaUploadOutput{Media: *media}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	invoiceCreateToolName    = "magento.invoice.create"
+	invoiceCreateToolTitle   = "Create Magento invoice"
+	invoiceCreateDescription = "Magento write operation: creates an invoice for an order " +
+		"(POST /rest/{store_code}/V1/invoices) on the resolved instance. capture defaults to false and does not charge " +
+		"the payment method; set it to true only when the charge is intended. Requires human confirmation."
+
+	invoiceCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"order_id": {"type": "integer", "minimum": 1, "description": "Magento order entity id."},
+		"capture": {"type": "boolean", "default": false, "description": "Capture the payment; false only records the invoice."},
+		"items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object",
+			"additionalProperties": false, "required": ["order_item_id", "qty"],
+			"properties": {"order_item_id": {"type": "integer", "minimum": 1},
+				"qty": {"type": "number", "exclusiveMinimum": 0}}}}},
+		"required": ["instance", "order_id", "items"], "additionalProperties": false}`
+)
+
+type invoiceCreateInput struct {
+	Instance string `json:"instance"`
+	OrderID  int    `json:"order_id"`
+	Capture  bool   `json:"capture"`
+	Items    []struct {
+		OrderItemID int     `json:"order_item_id"`
+		Qty         float64 `json:"qty"`
+	} `json:"items"`
+}
+
+type invoiceCreateOutput struct {
+	Invoice Invoice `json:"invoice"`
+}
+
+func newInvoiceCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(invoiceCreateToolName, invoiceCreateToolTitle, invoiceCreateDescription, "magento.invoice.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(invoiceCreateToolName, invoiceCreateToolTitle, invoiceCreateDescription, invoiceCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in invoiceCreateInput) (*mcp.CallToolResult, invoiceCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, invoiceCreateOutput{}, err
+				}
+				items := make([]InvoiceLine, 0, len(in.Items))
+				for _, item := range in.Items {
+					items = append(items, InvoiceLine{OrderItemID: item.OrderItemID, Qty: item.Qty})
+				}
+				invoice, err := svc.CreateInvoice(ctx, InvoiceCreateInput{OrderID: in.OrderID, Capture: in.Capture, Items: items})
+				if err != nil {
+					return nil, invoiceCreateOutput{}, err
+				}
+				return nil, invoiceCreateOutput{Invoice: *invoice}, nil
 			})
 		return nil
 	}
