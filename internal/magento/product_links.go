@@ -38,7 +38,12 @@ func (s *Service) ProductLinks(ctx context.Context, sku, linkType string) ([]Pro
 	query.Set("linkType", linkType)
 	raw, err := s.client.do(ctx, http.MethodGet, "/products/"+url.PathEscape(sku)+"/links", query, nil)
 	if err != nil {
-		return nil, err
+		// Some deployments do not expose the links route; the product resource
+		// carries the same product_links array.
+		if errs.CodeOf(err) != errs.CodeNotFound {
+			return nil, err
+		}
+		return s.productLinksFromProduct(ctx, sku, linkType)
 	}
 	var links []ProductLink
 	if err := json.Unmarshal(raw, &links); err != nil {
@@ -187,4 +192,26 @@ func (s *Service) BulkChangeLinks(ctx context.Context, sku, linkType, action str
 		result.Rows = append(result.Rows, row)
 	}
 	return result, nil
+}
+
+// productLinksFromProduct filters the product_links array embedded in the
+// product resource when the dedicated links route is unavailable.
+func (s *Service) productLinksFromProduct(ctx context.Context, sku, linkType string) ([]ProductLink, error) {
+	raw, err := s.client.do(ctx, http.MethodGet, "/products/"+url.PathEscape(sku), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		ProductLinks []ProductLink `json:"product_links"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable product payload").WithCause(err)
+	}
+	links := make([]ProductLink, 0, len(payload.ProductLinks))
+	for _, link := range payload.ProductLinks {
+		if link.LinkType == linkType {
+			links = append(links, link)
+		}
+	}
+	return links, nil
 }

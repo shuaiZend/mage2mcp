@@ -179,6 +179,21 @@ Routes per [ConfigurableProduct webapi.xml](https://github.com/magento/magento2/
 
 ### 3.4 Categories and media
 
+#### Deployment variance
+
+Endpoint availability differs between Magento builds and hosting setups. The
+gateway keeps the tool contract stable and adapts the read path:
+
+| Read | Primary route | Fallback |
+|---|---|---|
+| Tier prices | `GET /V1/products/tier-prices?skus=` | `GET /V1/products/{sku}` (`tier_prices`) |
+| Product links | `GET /V1/products/{sku}/links?linkType=` | `GET /V1/products/{sku}` (`product_links`) |
+| Order history | `GET /V1/orders/{id}/comments` | accepts the `items` envelope or a bare array |
+| Invoice/shipment/credit-memo lists | collection endpoints with an `order_id` filter | — |
+
+Verified against `www.giztop.com` on 2026-11-20; see
+[production acceptance](../operations/production-acceptance.md).
+
 #### Variant images
 
 Magento has no configurable-product media association endpoint: the

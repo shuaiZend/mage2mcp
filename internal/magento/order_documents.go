@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
@@ -87,6 +88,12 @@ func (s *Service) OrderStatusHistory(ctx context.Context, orderID int) ([]OrderS
 	if err != nil {
 		return nil, err
 	}
+	var envelope struct {
+		Items []OrderStatusHistory `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err == nil && envelope.Items != nil {
+		return envelope.Items, nil
+	}
 	var history []OrderStatusHistory
 	if err := json.Unmarshal(raw, &history); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order history payload").WithCause(err)
@@ -105,18 +112,20 @@ func (s *Service) OrderInvoices(ctx context.Context, orderID int) ([]Invoice, er
 	if orderID <= 0 {
 		return nil, invalidf("order_id must be a positive integer")
 	}
-	raw, err := s.client.do(ctx, http.MethodGet, "/orders/"+strconv.Itoa(orderID)+"/invoices", nil, nil)
+	raw, err := s.client.do(ctx, http.MethodGet, "/invoices", orderSearchQuery(orderID), nil)
 	if err != nil {
 		return nil, err
 	}
-	var invoices []Invoice
-	if err := json.Unmarshal(raw, &invoices); err != nil {
+	var envelope struct {
+		Items []Invoice `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable invoice payload").WithCause(err)
 	}
-	if invoices == nil {
-		invoices = []Invoice{}
+	if envelope.Items == nil {
+		envelope.Items = []Invoice{}
 	}
-	return invoices, nil
+	return envelope.Items, nil
 }
 
 // GetInvoice returns one invoice by id.
@@ -146,18 +155,20 @@ func (s *Service) OrderShipments(ctx context.Context, orderID int) ([]Shipment, 
 	if orderID <= 0 {
 		return nil, invalidf("order_id must be a positive integer")
 	}
-	raw, err := s.client.do(ctx, http.MethodGet, "/orders/"+strconv.Itoa(orderID)+"/shipments", nil, nil)
+	raw, err := s.client.do(ctx, http.MethodGet, "/shipments", orderSearchQuery(orderID), nil)
 	if err != nil {
 		return nil, err
 	}
-	var shipments []Shipment
-	if err := json.Unmarshal(raw, &shipments); err != nil {
+	var envelope struct {
+		Items []Shipment `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable shipment payload").WithCause(err)
 	}
-	if shipments == nil {
-		shipments = []Shipment{}
+	if envelope.Items == nil {
+		envelope.Items = []Shipment{}
 	}
-	return shipments, nil
+	return envelope.Items, nil
 }
 
 // GetShipment returns one shipment by id.
@@ -212,18 +223,20 @@ func (s *Service) OrderCreditmemos(ctx context.Context, orderID int) ([]Creditme
 	if orderID <= 0 {
 		return nil, invalidf("order_id must be a positive integer")
 	}
-	raw, err := s.client.do(ctx, http.MethodGet, "/orders/"+strconv.Itoa(orderID)+"/creditmemos", nil, nil)
+	raw, err := s.client.do(ctx, http.MethodGet, "/creditmemos", orderSearchQuery(orderID), nil)
 	if err != nil {
 		return nil, err
 	}
-	var creditmemos []Creditmemo
-	if err := json.Unmarshal(raw, &creditmemos); err != nil {
+	var envelope struct {
+		Items []Creditmemo `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable creditmemo payload").WithCause(err)
 	}
-	if creditmemos == nil {
-		creditmemos = []Creditmemo{}
+	if envelope.Items == nil {
+		envelope.Items = []Creditmemo{}
 	}
-	return creditmemos, nil
+	return envelope.Items, nil
 }
 
 // GetCreditmemo returns one credit memo by id.
@@ -268,4 +281,14 @@ func (s *Service) SendDocumentEmail(ctx context.Context, kind string, documentID
 	}
 	_, err := s.client.do(ctx, http.MethodPost, fmt.Sprintf(path, documentID), nil, nil)
 	return err
+}
+
+// orderSearchQuery filters a sales document collection by order_id.
+func orderSearchQuery(orderID int) url.Values {
+	query := make(url.Values)
+	query.Set("searchCriteria[filter_groups][0][filters][0][field]", "order_id")
+	query.Set("searchCriteria[filter_groups][0][filters][0][value]", strconv.Itoa(orderID))
+	query.Set("searchCriteria[filter_groups][0][filters][0][condition_type]", "eq")
+	query.Set("searchCriteria[pageSize]", "100")
+	return query
 }

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Production read-only acceptance against `www.giztop.com` found four endpoint
+  differences, now handled without changing the tool contract:
+  tier prices fall back to the product resource's `tier_prices`; product links
+  fall back to `product_links`; order status history accepts the `items`
+  envelope; and invoice/shipment/credit-memo lists use the collection endpoints
+  with an `order_id` filter instead of the non-existent `/orders/{id}/...`
+  routes.
+
 ## [0.7.0] - 2026-11-20
 
 Seventh minor pre-release: the full product custom-option lifecycle (read,
