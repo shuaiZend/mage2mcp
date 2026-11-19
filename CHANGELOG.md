@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The worker prunes import batch history older than 30 days every six hours;
+  failure rows cascade with their batch, so the tables stay bounded.
+
 ### Added
 
 - Import batch reads: `magento.import.batches` (recent batches per instance) and

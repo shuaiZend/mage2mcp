@@ -42,6 +42,7 @@ MAGE2MCP_DATABASE_URL=postgres://.../mage2mcp_restore \
 
 ## Retention
 
-Audit retention defaults to 365 days. Deleting old audit partitions is an
+Import batch history is pruned by the worker after 30 days (failure rows
+cascade). Audit retention defaults to 365 days. Deleting old audit partitions is an
 operator action performed after exporting to the external sink and recording the
 archive digest; see the audit design in the architecture document.
