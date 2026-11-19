@@ -76,6 +76,7 @@ type OrderQuery struct {
 	CreatedFrom  string // RFC 3339 or YYYY-MM-DD, inclusive
 	CreatedTo    string // RFC 3339 or YYYY-MM-DD, exclusive end of day when date-only
 	StoreID      int    // store view id filter
+	CustomerID   int    // customer id filter (0 means any)
 	Limit        int    // page size 1-200; zero selects 50
 	CursorOffset int    // zero-based row offset
 }
@@ -255,6 +256,9 @@ func orderSearchCriteria(q OrderQuery) (url.Values, error) {
 	if q.StoreID < 0 {
 		return nil, invalidf("store_id must not be negative")
 	}
+	if q.CustomerID < 0 {
+		return nil, invalidf("customer_id must not be negative")
+	}
 	createdFrom, err := parseOrderTime(q.CreatedFrom, "created_from")
 	if err != nil {
 		return nil, err
@@ -294,6 +298,9 @@ func orderSearchCriteria(q OrderQuery) (url.Values, error) {
 	}
 	if q.StoreID > 0 {
 		addFilter("store_id", strconv.Itoa(q.StoreID), "eq")
+	}
+	if q.CustomerID > 0 {
+		addFilter("customer_id", strconv.Itoa(q.CustomerID), "eq")
 	}
 	return query, nil
 }

@@ -64,7 +64,7 @@ func TestSearchOrdersBuildsCriteria(t *testing.T) {
 	svc := testService(t, ts.URL)
 	orders, total, err := svc.SearchOrders(context.Background(), OrderQuery{
 		Status: "complete", IncrementID: "000000001", CreatedFrom: "2026-11-01", CreatedTo: "2026-11-30",
-		Limit: 10,
+		CustomerID: 7, Limit: 10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +82,8 @@ func TestSearchOrdersBuildsCriteria(t *testing.T) {
 		"searchCriteria[filter_groups][1][filters][0][value]":          "complete",
 		"searchCriteria[filter_groups][2][filters][0][value]":          "2026-11-01 00:00:00",
 		"searchCriteria[filter_groups][3][filters][0][condition_type]": "lt",
+		"searchCriteria[filter_groups][4][filters][0][field]":          "customer_id",
+		"searchCriteria[filter_groups][4][filters][0][value]":          "7",
 	}
 	for key, want := range checks {
 		if got := query.Get(key); got != want {

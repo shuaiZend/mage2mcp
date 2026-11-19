@@ -106,7 +106,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCreditmemoListTool(lookup), newCreditmemoGetTool(lookup),
 		newConfigurableChildrenTool(lookup), newAttributeOptionsTool(lookup), newCategoryProductsTool(lookup),
 		newCustomerGetTool(lookup), newCustomerSearchTool(lookup), newProductLinksTool(lookup),
-		newProductsBatchTool(lookup), newProductSEOTool(lookup),
+		newProductsBatchTool(lookup), newProductSEOTool(lookup), newCustomerAddressesTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -277,6 +277,7 @@ const (
 		"created_from": {"type": "string", "description": "Inclusive creation lower bound, RFC 3339 or YYYY-MM-DD."},
 		"created_to": {"type": "string", "description": "Exclusive creation upper bound, RFC 3339 or YYYY-MM-DD."},
 		"store_id": {"type": "integer", "minimum": 0, "description": "Store view id filter."},
+		"customer_id": {"type": "integer", "minimum": 0, "description": "Customer id filter; omit or 0 for any customer."},
 		"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
 		"cursor": {"type": "string", "pattern": "` + cursorPattern + `", "description": "Zero-based row offset; must be a multiple of limit."}
 	}, "required": ["instance"], "additionalProperties": false}`
@@ -305,6 +306,7 @@ type orderSearchInput struct {
 	CreatedFrom string `json:"created_from"`
 	CreatedTo   string `json:"created_to"`
 	StoreID     int    `json:"store_id"`
+	CustomerID  int    `json:"customer_id"`
 	Limit       int    `json:"limit"`
 	Cursor      string `json:"cursor"`
 }
@@ -364,7 +366,8 @@ func newOrderSearchTool(lookup serviceLookup) registry.Tool {
 				orders, total, err := svc.SearchOrders(ctx, OrderQuery{
 					Status: in.Status, State: in.State, IncrementID: in.IncrementID,
 					CreatedFrom: in.CreatedFrom, CreatedTo: in.CreatedTo, StoreID: in.StoreID,
-					Limit: in.Limit, CursorOffset: offset,
+					CustomerID: in.CustomerID,
+					Limit:      in.Limit, CursorOffset: offset,
 				})
 				if err != nil {
 					return nil, orderSearchOutput{}, err
@@ -1332,6 +1335,50 @@ func newProductSEOTool(lookup serviceLookup) registry.Tool {
 					return nil, productSEOOutput{}, err
 				}
 				return nil, productSEOOutput{Audit: *audit}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	customerAddressesToolName  = "magento.customer.addresses"
+	customerAddressesToolTitle = "List Magento customer addresses"
+
+	customerAddressesToolDescription = "Lists a customer's addresses as a PII-safe projection " +
+		"(GET /rest/{store_code}/V1/customers/{id}): country, region, and default flags only; " +
+		"name, street, city, postcode, and telephone are never returned. Read-only."
+
+	customerAddressesSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"customer_id": {"type": "integer", "minimum": 1, "description": "Magento customer id."}
+	}, "required": ["instance", "customer_id"], "additionalProperties": false}`
+)
+
+type customerAddressesInput struct {
+	Instance   string `json:"instance"`
+	CustomerID int    `json:"customer_id"`
+}
+
+type customerAddressesOutput struct {
+	Addresses []CustomerAddress `json:"addresses"`
+}
+
+func newCustomerAddressesTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(customerAddressesToolName, customerAddressesToolTitle, customerAddressesToolDescription)
+	t.Capability = "magento.customer.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(customerAddressesToolName, customerAddressesToolTitle, customerAddressesToolDescription, customerAddressesSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in customerAddressesInput) (*mcp.CallToolResult, customerAddressesOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, customerAddressesOutput{}, err
+				}
+				addresses, err := svc.CustomerAddresses(ctx, in.CustomerID)
+				if err != nil {
+					return nil, customerAddressesOutput{}, err
+				}
+				return nil, customerAddressesOutput{Addresses: addresses}, nil
 			})
 		return nil
 	}
