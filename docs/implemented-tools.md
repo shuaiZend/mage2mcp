@@ -35,6 +35,7 @@ Common behavior:
 | `magento.category.products` | read | 30s | Products assigned to a category, paginated |
 | `magento.customer.get` | read | 30s | One customer with a PII-safe projection (no email, name, or addresses) |
 | `magento.customer.search` | read | 30s | Exact-email customer lookup; response omits email, name, and addresses |
+| `magento.customer.addresses` | read | 30s | PII-safe address projection: country, region, and default flags only |
 | `magento.attribute.sets` | read | 30s | Product attribute sets (max 200) |
 | `magento.attributes.list` | read | 30s | Attributes of one attribute set |
 | `magento.attributes.options` | read | 30s | Options of a select/multiselect attribute (value_index) |
@@ -57,7 +58,7 @@ Common behavior:
 | `magento.inventory.status` | read | 30s | Catalog quantity, in-stock flag, and backorders for one SKU |
 | `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
-| `magento.order.search` | read | 30s | Orders by status, state, increment id, creation window, or store view; items omitted |
+| `magento.order.search` | read | 30s | Orders by status, state, increment id, creation window, store view, or customer id; items omitted |
 | `magento.order.status_history` | read | 30s | Status history with comment and notification flags |
 | `magento.invoice.list` | read | 30s | Invoices of one order |
 | `magento.invoice.get` | read | 30s | One invoice by id |

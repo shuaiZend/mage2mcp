@@ -91,3 +91,32 @@ func TestCustomerValidation(t *testing.T) {
 		t.Fatalf("cursor err = %v", err)
 	}
 }
+
+func TestCustomerAddressesOmitsPII(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":7,"addresses":[
+			{"id":1,"country_id":"CN","region":"Shanghai","region_id":1,"default_billing":true,"default_shipping":false,
+			 "firstname":"Ada","lastname":"Lovelace","street":["Secret Road 1"],"city":"Shanghai","postcode":"200000","telephone":"123"},
+			{"id":2,"country_id":"US","region":"California","region_id":12,"default_billing":false,"default_shipping":true}
+		]}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	addresses, err := svc.CustomerAddresses(context.Background(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 2 || addresses[0].CountryID != "CN" || !addresses[0].DefaultBilling || !addresses[1].DefaultShipping {
+		t.Fatalf("addresses = %+v", addresses)
+	}
+	raw, _ := json.Marshal(addresses)
+	for _, forbidden := range []string{"Secret Road", "200000", "telephone", "Ada", "Lovelace"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("projection leaks %q: %s", forbidden, raw)
+		}
+	}
+	if _, err := svc.CustomerAddresses(context.Background(), 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("validation err = %v", err)
+	}
+}

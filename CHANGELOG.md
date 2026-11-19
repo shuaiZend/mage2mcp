@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.customer.addresses`: PII-safe address projection (country, region,
+  default flags) for one customer.
+- `magento.order.search` gains a `customer_id` filter.
 - Import validation reports bounded SEO/content warnings (missing or short
   description, missing url_key, meta_title outside 30-60, meta_description
   outside 120-160) without failing rows.

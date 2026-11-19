@@ -61,6 +61,11 @@ Setting a field to an empty string clears it.
 decoded), optional `label` (<= 255), `position` (0-1000), and `types` (subset of
 `image`, `small_image`, `thumbnail`, `swatch_image`).
 
+## Customer addresses
+
+`magento.customer.addresses` returns country, region, and default flags only;
+name, street, city, postcode, and telephone are never returned.
+
 ## Orders and documents
 
 | Tool | Key fields |

@@ -126,3 +126,49 @@ func validateEmail(email string) error {
 	}
 	return nil
 }
+
+// CustomerAddress is a PII-safe address projection: it keeps geography and
+// defaults but omits name, street, city, postcode, and telephone.
+type CustomerAddress struct {
+	ID              int    `json:"id"`
+	CountryID       string `json:"country_id"`
+	Region          string `json:"region,omitempty"`
+	RegionID        int    `json:"region_id,omitempty"`
+	DefaultBilling  bool   `json:"default_billing"`
+	DefaultShipping bool   `json:"default_shipping"`
+}
+
+// CustomerAddresses returns the PII-safe addresses of one customer.
+func (s *Service) CustomerAddresses(ctx context.Context, customerID int) ([]CustomerAddress, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento customer service is not configured")
+	}
+	if customerID <= 0 {
+		return nil, invalidf("customer_id must be a positive integer")
+	}
+	raw, err := s.client.do(ctx, http.MethodGet, "/customers/"+strconv.Itoa(customerID), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Addresses []struct {
+			ID              int    `json:"id"`
+			CountryID       string `json:"country_id"`
+			Region          string `json:"region"`
+			RegionID        int    `json:"region_id"`
+			DefaultBilling  bool   `json:"default_billing"`
+			DefaultShipping bool   `json:"default_shipping"`
+		} `json:"addresses"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable customer payload").WithCause(err)
+	}
+	addresses := make([]CustomerAddress, 0, len(payload.Addresses))
+	for _, address := range payload.Addresses {
+		addresses = append(addresses, CustomerAddress{
+			ID: address.ID, CountryID: address.CountryID, Region: address.Region, RegionID: address.RegionID,
+			DefaultBilling: address.DefaultBilling, DefaultShipping: address.DefaultShipping,
+		})
+	}
+	return addresses, nil
+}
