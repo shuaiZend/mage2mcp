@@ -419,6 +419,39 @@ tested by asserting that no upstream request is issued after cancellation.
 | Whether unified tools should accept explicit source mappings or rely on configured SKU maps | Unified owner | Phase 5 |
 | Whether tool results should support MCP resource links for large payloads | MCP owner | Phase 2 |
 
+## Design names and implemented equivalents
+
+Some planned names shipped under a different name. These are not gaps:
+
+| Design name | Implemented as |
+|---|---|
+| `magento.product.media_list` | `magento.product.media` |
+| `magento.product.media_upload` | `magento.product.media.upload` |
+| `magento.product.media_delete` | `magento.product.media.delete` |
+| `magento.category.list` | `magento.category.tree` (children per parent) |
+| `magento.category.assign_products` | `magento.category.assign_product` |
+| `magento.attribute.list` | `magento.attributes.list` |
+| `magento.attribute.get` | `magento.attributes.list` (attributes of one set) |
+| `magento.attribute.options` | `magento.attributes.options` |
+| `magento.attribute.set_attributes` | `magento.attributes.list` |
+| `magento.configurable.get` | `magento.configurable.children` (parent + children) |
+| `magento.import.report` | `magento.import.batch` / `magento.import.status` |
+
+## Not planned
+
+| Design name | Reason |
+|---|---|
+| `magento.configurable.verify_storefront` | Requires a storefront GraphQL session and storefront configuration; the gateway is a REST admin surface by design (ADR-0022). |
+| `platform.job.get`, `platform.job.cancel` | Job inspection is exposed per feature (`magento.import.status`, `.batches`, `.batch`, `.cancel`); a generic job tool would leak the queue model. |
+| `unified.mapping.sku_propose`, `unified.mapping.sku_confirm` | SKU mapping is configured and reviewed as data (ADR and docs), not mutated at runtime by an agent. |
+
+## Roadmap (not yet implemented)
+
+The remaining design names are planned but not built: Cloudflare analytics/security
+breakdowns and Logpush jobs, the GA4 acquisition/landing-page/event/funnel
+reports, the unified analytics funnels and geography, and `magento.category.list`
+as a flat listing. They are additive and keep the same scope and naming grammar.
+
 ## Implemented tools outside this catalog
 
 These tools exist in the gateway but were not part of the original design table
