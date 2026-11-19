@@ -119,7 +119,9 @@ out=$(client create)
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no confirmation id: $out"
 approve "$cid"
-client create-retry "$cid" | grep -q "CREATED" || fail "create retry"
+out=$(client create-retry "$cid" 2>&1)
+echo "$out"
+echo "$out" | grep -q "CREATED" || fail "create retry"
 
 echo "== SEO audit =="
 client seo | grep -q "SEO SCORE" || fail "seo audit"
@@ -142,13 +144,17 @@ out=$(client configurable)
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no configurable confirmation id: $out"
 approve "$cid"
-client configurable-retry "$cid" | grep -q "CREATED CONFIGURABLE" || fail "configurable retry"
+out=$(client configurable-retry "$cid" 2>&1)
+echo "$out"
+echo "$out" | grep -q "CREATED CONFIGURABLE" || fail "configurable retry"
 
 echo "== order creation =="
 out=$(client order)
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no order confirmation id: $out"
 approve "$cid"
-client order-retry "$cid" | grep -q "ORDER 99" || fail "order retry"
+out=$(client order-retry "$cid" 2>&1)
+echo "$out"
+echo "$out" | grep -q "ORDER 99" || fail "order retry"
 
 echo "E2E PASS"
