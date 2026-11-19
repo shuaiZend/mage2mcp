@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Write arguments are validated against the tool's JSON Schema **before** a
+  confirmation is issued. Previously a malformed write could consume a human
+  approval and then fail validation on the retry; it now fails fast with
+  `invalid_argument`.
+
 ### Added
 
 - The end-to-end test now also covers configurable product creation and order

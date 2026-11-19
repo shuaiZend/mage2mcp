@@ -5,12 +5,14 @@
 package registry
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -29,6 +31,9 @@ type Tool struct {
 	RequiresConfirmation bool
 	Annotations          mcp.ToolAnnotations
 	Register             RegisterFunc
+	// ValidateInput, when set, checks raw arguments against the tool's JSON
+	// Schema before a confirmation is issued.
+	ValidateInput func(args []byte) error
 }
 
 // Permissions are the only valid scopes.
@@ -74,6 +79,47 @@ func (r *Registry) Register(t Tool) error {
 		return fmt.Errorf("registry: duplicate tool %q", t.Name)
 	}
 	r.tools[t.Name] = t
+	return nil
+}
+
+// NewInputValidator compiles a JSON Schema and returns a validator for raw
+// arguments. It is used to reject malformed write requests before asking a human
+// to approve them.
+func NewInputValidator(schemaJSON string) (func(args []byte) error, error) {
+	var schema jsonschema.Schema
+	if err := json.Unmarshal([]byte(schemaJSON), &schema); err != nil {
+		return nil, fmt.Errorf("registry: parse input schema: %w", err)
+	}
+	resolved, err := schema.Resolve(nil)
+	if err != nil {
+		return nil, fmt.Errorf("registry: resolve input schema: %w", err)
+	}
+	return func(args []byte) error {
+		var instance any
+		if len(args) == 0 {
+			instance = map[string]any{}
+		} else if err := json.Unmarshal(args, &instance); err != nil {
+			return fmt.Errorf("arguments are not a JSON object: %w", err)
+		}
+		return resolved.Validate(instance)
+	}, nil
+}
+
+// SetInputValidator compiles schemaJSON and attaches the validator to a
+// registered tool.
+func (r *Registry) SetInputValidator(name, schemaJSON string) error {
+	validator, err := NewInputValidator(schemaJSON)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tool, ok := r.tools[name]
+	if !ok {
+		return fmt.Errorf("registry: tool %q is not registered", name)
+	}
+	tool.ValidateInput = validator
+	r.tools[name] = tool
 	return nil
 }
 

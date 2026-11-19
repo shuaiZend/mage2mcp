@@ -135,6 +135,12 @@ func (o Options) enforceConfirmation(ctx context.Context, tool string, args json
 			return errs.New(errs.CodeInvalidArgument, "arguments are not a JSON object")
 		}
 	}
+	if meta.ValidateInput != nil {
+		if err := meta.ValidateInput(args); err != nil {
+			return errs.New(errs.CodeInvalidArgument, "arguments do not match the tool schema").
+				WithDetail("validation", err.Error())
+		}
+	}
 	confirmationID, _ := fields["confirmation_id"].(string)
 	if confirmationID == "" {
 		req, err := o.Confirm.Require(ctx, tool, "", meta.Permission, meta.Title, requester, args)

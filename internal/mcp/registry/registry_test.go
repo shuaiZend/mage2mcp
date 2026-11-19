@@ -95,3 +95,22 @@ func TestListIsSorted(t *testing.T) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+func TestInputValidator(t *testing.T) {
+	validator, err := NewInputValidator(`{"type":"object","required":["sku"],"additionalProperties":false,"properties":{"sku":{"type":"string"}}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validator([]byte(`{"sku":"SKU-1"}`)); err != nil {
+		t.Fatalf("valid args rejected: %v", err)
+	}
+	if err := validator([]byte(`{"sku":"SKU-1","extra":true}`)); err == nil {
+		t.Fatal("additional property accepted")
+	}
+	if err := validator([]byte(`{}`)); err == nil {
+		t.Fatal("missing required property accepted")
+	}
+	if _, err := NewInputValidator(`{not json`); err == nil {
+		t.Fatal("invalid schema accepted")
+	}
+}

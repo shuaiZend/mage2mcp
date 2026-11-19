@@ -46,6 +46,15 @@ func RegisterImportJobs(reg *registry.Registry, resolver *Resolver, queue Import
 			return err
 		}
 	}
+	for name, schema := range map[string]string{
+		importStartToolName:  importStartSchema,
+		importStatusToolName: importStatusSchema,
+		importCancelToolName: importCancelSchema,
+	} {
+		if err := reg.SetInputValidator(name, schema); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
