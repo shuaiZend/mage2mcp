@@ -108,7 +108,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCustomerGetTool(lookup), newCustomerSearchTool(lookup), newProductLinksTool(lookup),
 		newProductsBatchTool(lookup), newProductSEOTool(lookup), newCustomerAddressesTool(lookup),
 		newStockStatusBatchTool(lookup), newTierPricesTool(lookup),
-		newInventorySourcesTool(lookup), newInventoryStocksTool(lookup),
+		newInventorySourcesTool(lookup), newInventoryStocksTool(lookup), newMediaGetTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1541,6 +1541,51 @@ func newInventoryStocksTool(lookup serviceLookup) registry.Tool {
 					return nil, inventoryStocksOutput{}, err
 				}
 				return nil, inventoryStocksOutput{Stocks: stocks}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	mediaGetToolName        = "magento.product.media.get"
+	mediaGetToolTitle       = "Get a Magento media entry"
+	mediaGetToolDescription = "Returns one product gallery entry " +
+		"(GET /rest/{store_code}/V1/products/{sku}/media/{id}) with file, label, position, types, and disabled flag. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	mediaGetSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+		"media_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "sku", "media_id"], "additionalProperties": false}`
+)
+
+type mediaGetInput struct {
+	Instance string `json:"instance"`
+	SKU      string `json:"sku"`
+	MediaID  int    `json:"media_id"`
+}
+
+type mediaGetOutput struct {
+	Media MediaEntry `json:"media"`
+}
+
+func newMediaGetTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(mediaGetToolName, mediaGetToolTitle, mediaGetToolDescription)
+	t.Capability = "magento.product.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(mediaGetToolName, mediaGetToolTitle, mediaGetToolDescription, mediaGetSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in mediaGetInput) (*mcp.CallToolResult, mediaGetOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, mediaGetOutput{}, err
+				}
+				entry, err := svc.GetMedia(ctx, in.SKU, in.MediaID)
+				if err != nil {
+					return nil, mediaGetOutput{}, err
+				}
+				return nil, mediaGetOutput{Media: *entry}, nil
 			})
 		return nil
 	}

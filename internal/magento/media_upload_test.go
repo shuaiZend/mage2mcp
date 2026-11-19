@@ -145,3 +145,27 @@ func TestUpdateMediaValidation(t *testing.T) {
 		t.Fatalf("type err = %v", err)
 	}
 }
+
+func TestGetMedia(t *testing.T) {
+	var path string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":9,"file":"/e/9.jpg","label":"Main","position":1,"types":["image"],"disabled":false}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	entry, err := svc.GetMedia(context.Background(), "SKU-1", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/rest/default/V1/products/SKU-1/media/9" {
+		t.Fatalf("path = %s", path)
+	}
+	if entry.ID != 9 || entry.Label != "Main" || len(entry.Types) != 1 {
+		t.Fatalf("entry = %+v", entry)
+	}
+	if _, err := svc.GetMedia(context.Background(), "SKU-1", 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("validation err = %v", err)
+	}
+}
