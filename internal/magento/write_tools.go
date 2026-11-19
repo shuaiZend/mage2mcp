@@ -217,6 +217,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newMediaUploadTool(lookup), newInvoiceCreateTool(lookup),
 		newShipmentCreateTool(lookup), newCreditmemoCreateTool(lookup),
 		newOrderCommentTool(lookup), newOrderHoldTool(lookup, true), newOrderHoldTool(lookup, false),
+		newCategoryCreateTool(lookup), newCategoryUpdateTool(lookup), newCategoryAssignProductTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -896,6 +897,154 @@ func newOrderHoldTool(lookup serviceLookup, hold bool) registry.Tool {
 					return nil, orderActionOutput{}, err
 				}
 				return nil, orderActionOutput{OrderID: in.OrderID, Applied: true}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	categoryCreateToolName    = "magento.category.create"
+	categoryCreateToolTitle   = "Create Magento category"
+	categoryCreateDescription = "Magento write operation: creates a category under a parent " +
+		"(POST /rest/{store_code}/V1/categories) on the resolved instance. Requires human confirmation."
+	categoryUpdateToolName    = "magento.category.update"
+	categoryUpdateToolTitle   = "Update Magento category"
+	categoryUpdateDescription = "Magento write operation: updates category name, active flag, position, or menu visibility " +
+		"(PUT /rest/{store_code}/V1/categories/{id}) on the resolved instance. Requires human confirmation."
+	categoryAssignToolName    = "magento.category.assign_product"
+	categoryAssignToolTitle   = "Assign a product to a category"
+	categoryAssignDescription = "Magento write operation: links a product to a category " +
+		"(POST /rest/{store_code}/V1/categories/{id}/products) on the resolved instance. Requires human confirmation."
+
+	categoryCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"parent_id": {"type": "integer", "minimum": 1, "description": "Parent category id; 2 is Magento's default root."},
+		"name": {"type": "string", "minLength": 1, "maxLength": 255},
+		"is_active": {"type": "boolean", "default": true},
+		"position": {"type": "integer", "minimum": 0, "maximum": 10000},
+		"include_in_menu": {"type": "boolean", "default": true}
+	}, "required": ["instance", "parent_id", "name"], "additionalProperties": false}`
+
+	categoryUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"category_id": {"type": "integer", "minimum": 1},
+		"name": {"type": "string", "minLength": 1, "maxLength": 255},
+		"is_active": {"type": "boolean"},
+		"position": {"type": "integer", "minimum": 0, "maximum": 10000},
+		"include_in_menu": {"type": "boolean"}
+	}, "required": ["instance", "category_id"], "additionalProperties": false}`
+
+	categoryAssignSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"category_id": {"type": "integer", "minimum": 1},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+		"position": {"type": "integer", "minimum": 0, "maximum": 10000}
+	}, "required": ["instance", "category_id", "sku"], "additionalProperties": false}`
+)
+
+type categoryCreateInput struct {
+	Instance      string `json:"instance"`
+	ParentID      int    `json:"parent_id"`
+	Name          string `json:"name"`
+	IsActive      *bool  `json:"is_active"`
+	Position      int    `json:"position"`
+	IncludeInMenu *bool  `json:"include_in_menu"`
+}
+
+type categoryCreateOutput struct {
+	Category Category `json:"category"`
+}
+
+type categoryUpdateInput struct {
+	Instance      string  `json:"instance"`
+	CategoryID    int     `json:"category_id"`
+	Name          *string `json:"name"`
+	IsActive      *bool   `json:"is_active"`
+	Position      *int    `json:"position"`
+	IncludeInMenu *bool   `json:"include_in_menu"`
+}
+
+type categoryUpdateOutput struct {
+	Category Category `json:"category"`
+}
+
+type categoryAssignInput struct {
+	Instance   string `json:"instance"`
+	CategoryID int    `json:"category_id"`
+	SKU        string `json:"sku"`
+	Position   int    `json:"position"`
+}
+
+type categoryAssignOutput struct {
+	CategoryID int    `json:"category_id"`
+	SKU        string `json:"sku"`
+	Assigned   bool   `json:"assigned"`
+}
+
+func newCategoryCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(categoryCreateToolName, categoryCreateToolTitle, categoryCreateDescription, "magento.category.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(categoryCreateToolName, categoryCreateToolTitle, categoryCreateDescription, categoryCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryCreateInput) (*mcp.CallToolResult, categoryCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, categoryCreateOutput{}, err
+				}
+				isActive, includeInMenu := true, true
+				if in.IsActive != nil {
+					isActive = *in.IsActive
+				}
+				if in.IncludeInMenu != nil {
+					includeInMenu = *in.IncludeInMenu
+				}
+				category, err := svc.CreateCategory(ctx, CategoryCreateInput{
+					ParentID: in.ParentID, Name: in.Name, IsActive: isActive,
+					Position: in.Position, IncludeInMenu: includeInMenu,
+				})
+				if err != nil {
+					return nil, categoryCreateOutput{}, err
+				}
+				return nil, categoryCreateOutput{Category: *category}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newCategoryUpdateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(categoryUpdateToolName, categoryUpdateToolTitle, categoryUpdateDescription, "magento.category.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(categoryUpdateToolName, categoryUpdateToolTitle, categoryUpdateDescription, categoryUpdateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryUpdateInput) (*mcp.CallToolResult, categoryUpdateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, categoryUpdateOutput{}, err
+				}
+				category, err := svc.UpdateCategory(ctx, CategoryUpdateInput{
+					CategoryID: in.CategoryID, Name: in.Name, IsActive: in.IsActive,
+					Position: in.Position, IncludeInMenu: in.IncludeInMenu,
+				})
+				if err != nil {
+					return nil, categoryUpdateOutput{}, err
+				}
+				return nil, categoryUpdateOutput{Category: *category}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newCategoryAssignProductTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(categoryAssignToolName, categoryAssignToolTitle, categoryAssignDescription, "magento.category.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(categoryAssignToolName, categoryAssignToolTitle, categoryAssignDescription, categoryAssignSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryAssignInput) (*mcp.CallToolResult, categoryAssignOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, categoryAssignOutput{}, err
+				}
+				if err := svc.AssignProductToCategory(ctx, in.CategoryID, in.SKU, in.Position); err != nil {
+					return nil, categoryAssignOutput{}, err
+				}
+				return nil, categoryAssignOutput{CategoryID: in.CategoryID, SKU: in.SKU, Assigned: true}, nil
 			})
 		return nil
 	}
