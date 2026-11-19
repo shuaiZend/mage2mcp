@@ -2533,7 +2533,7 @@ func newCreateVariationsTool(lookup serviceLookup) registry.Tool {
 				}
 				variants := make([]VariationInput, 0, len(in.Variants))
 				for _, variant := range in.Variants {
-					variants = append(variants, VariationInput{SKU: variant.SKU, Attributes: variant.Attributes})
+					variants = append(variants, VariationInput(variant))
 				}
 				result, err := svc.CreateVariations(ctx, in.ParentSKU, variants)
 				if err != nil {
