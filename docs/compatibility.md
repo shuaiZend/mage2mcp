@@ -40,9 +40,9 @@ changelog entry record it (see [Upgrade](operations/upgrade.md)).
 
 | Version | Status |
 |---|---|
-| `v0.0.2` | Supported pre-release |
+| `v0.1.0` | Supported pre-release |
+| `v0.0.2` | Superseded |
 | `v0.0.1` | Superseded |
-| `v0.1.0` | Planned next pre-release |
 
 Security fixes are provided for the latest pre-release only until 1.0.
 
