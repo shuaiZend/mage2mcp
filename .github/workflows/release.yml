@@ -123,6 +123,13 @@ jobs:
             type=ref,event=tag
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+      - name: Log in to GHCR
+        if: hashFiles('Dockerfile') != ''
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push container image
         id: build
         if: hashFiles('Dockerfile') != ''
@@ -130,6 +137,8 @@ jobs:
         with:
           context: .
           push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
