@@ -108,6 +108,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCustomerGetTool(lookup), newCustomerSearchTool(lookup), newProductLinksTool(lookup),
 		newProductsBatchTool(lookup), newProductSEOTool(lookup), newCustomerAddressesTool(lookup),
 		newStockStatusBatchTool(lookup), newTierPricesTool(lookup),
+		newInventorySourcesTool(lookup), newInventoryStocksTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1468,6 +1469,78 @@ func newTierPricesTool(lookup serviceLookup) registry.Tool {
 					return nil, tierPricesOutput{}, err
 				}
 				return nil, tierPricesOutput{Prices: prices}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	inventorySourcesToolName  = "magento.inventory.sources"
+	inventorySourcesToolTitle = "List Magento inventory sources"
+	inventoryStocksToolName   = "magento.inventory.stocks"
+	inventoryStocksToolTitle  = "List Magento inventory stocks"
+
+	inventorySourcesToolDescription = "Lists the MSI inventory sources (GET /rest/{store_code}/V1/inventory/sources), " +
+		"at most 100, with code, name, enabled flag, and location fields. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	inventoryStocksToolDescription = "Lists the MSI inventory stocks (GET /rest/{store_code}/V1/inventory/stocks), " +
+		"at most 100, with stock id and name. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	instanceOnlySchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."}
+	}, "required": ["instance"], "additionalProperties": false}`
+)
+
+type inventorySourcesOutput struct {
+	Sources []InventorySource `json:"sources"`
+}
+
+type inventoryStocksOutput struct {
+	Stocks []InventoryStock `json:"stocks"`
+}
+
+func newInventorySourcesTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(inventorySourcesToolName, inventorySourcesToolTitle, inventorySourcesToolDescription)
+	t.Capability = "magento.inventory.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(inventorySourcesToolName, inventorySourcesToolTitle, inventorySourcesToolDescription, instanceOnlySchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
+				Instance string `json:"instance"`
+			}) (*mcp.CallToolResult, inventorySourcesOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, inventorySourcesOutput{}, err
+				}
+				sources, err := svc.Sources(ctx)
+				if err != nil {
+					return nil, inventorySourcesOutput{}, err
+				}
+				return nil, inventorySourcesOutput{Sources: sources}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newInventoryStocksTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(inventoryStocksToolName, inventoryStocksToolTitle, inventoryStocksToolDescription)
+	t.Capability = "magento.inventory.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(inventoryStocksToolName, inventoryStocksToolTitle, inventoryStocksToolDescription, instanceOnlySchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
+				Instance string `json:"instance"`
+			}) (*mcp.CallToolResult, inventoryStocksOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, inventoryStocksOutput{}, err
+				}
+				stocks, err := svc.Stocks(ctx)
+				if err != nil {
+					return nil, inventoryStocksOutput{}, err
+				}
+				return nil, inventoryStocksOutput{Stocks: stocks}, nil
 			})
 		return nil
 	}

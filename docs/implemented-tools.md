@@ -62,6 +62,8 @@ Common behavior:
 | `magento.inventory.status` | read | 30s | Catalog quantity, in-stock flag, and backorders for one SKU |
 | `magento.inventory.status_batch` | read | 60s | Up to 25 SKUs, each reporting its own result or error |
 | `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
+| `magento.inventory.sources` | read | 30s | MSI inventory sources with location fields |
+| `magento.inventory.stocks` | read | 30s | MSI inventory stocks |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
 | `magento.order.search` | read | 30s | Orders by status, state, increment id, creation window, store view, or customer id; items omitted |
 | `magento.order.status_history` | read | 30s | Status history with comment and notification flags |

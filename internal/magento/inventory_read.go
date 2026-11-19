@@ -140,3 +140,70 @@ func (s *Service) StockStatuses(ctx context.Context, skus []string) ([]StockStat
 	}
 	return results, nil
 }
+
+const maxInventoryList = 100
+
+// InventorySource is one MSI source.
+type InventorySource struct {
+	SourceCode string  `json:"source_code"`
+	Name       string  `json:"name"`
+	Enabled    bool    `json:"enabled"`
+	CountryID  string  `json:"country_id,omitempty"`
+	Region     string  `json:"region,omitempty"`
+	City       string  `json:"city,omitempty"`
+	Postcode   string  `json:"postcode,omitempty"`
+	Latitude   float64 `json:"latitude,omitempty"`
+	Longitude  float64 `json:"longitude,omitempty"`
+}
+
+// InventoryStock is one MSI stock (a sales channel group).
+type InventoryStock struct {
+	StockID int    `json:"stock_id"`
+	Name    string `json:"name"`
+}
+
+// Sources lists the configured inventory sources.
+func (s *Service) Sources(ctx context.Context) ([]InventorySource, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento inventory service is not configured")
+	}
+	query := make(url.Values)
+	query.Set("searchCriteria[pageSize]", strconv.Itoa(maxInventoryList))
+	raw, err := s.client.do(ctx, http.MethodGet, "/inventory/sources", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Items []InventorySource `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable inventory-source payload").WithCause(err)
+	}
+	if payload.Items == nil {
+		payload.Items = []InventorySource{}
+	}
+	return payload.Items, nil
+}
+
+// Stocks lists the configured inventory stocks.
+func (s *Service) Stocks(ctx context.Context) ([]InventoryStock, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento inventory service is not configured")
+	}
+	query := make(url.Values)
+	query.Set("searchCriteria[pageSize]", strconv.Itoa(maxInventoryList))
+	raw, err := s.client.do(ctx, http.MethodGet, "/inventory/stocks", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Items []InventoryStock `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable inventory-stock payload").WithCause(err)
+	}
+	if payload.Items == nil {
+		payload.Items = []InventoryStock{}
+	}
+	return payload.Items, nil
+}

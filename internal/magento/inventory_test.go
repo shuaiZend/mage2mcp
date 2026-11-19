@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -127,5 +128,40 @@ func TestAssignSourceItemsAcceptsExactlyOneHundred(t *testing.T) {
 	}
 	if rec.count() != 1 {
 		t.Fatalf("requests = %d, want 1", rec.count())
+	}
+}
+
+func TestInventorySourcesAndStocks(t *testing.T) {
+	var paths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/default/V1/inventory/sources":
+			_, _ = w.Write([]byte(`{"items":[{"source_code":"default","name":"Default Source","enabled":true,"country_id":"CN","city":"Shanghai","latitude":31.2,"longitude":121.5}]}`))
+		case "/rest/default/V1/inventory/stocks":
+			_, _ = w.Write([]byte(`{"items":[{"stock_id":1,"name":"Default Stock"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	sources, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 || sources[0].SourceCode != "default" || !sources[0].Enabled || sources[0].City != "Shanghai" {
+		t.Fatalf("sources = %+v", sources)
+	}
+	stocks, err := svc.Stocks(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stocks) != 1 || stocks[0].StockID != 1 || stocks[0].Name != "Default Stock" {
+		t.Fatalf("stocks = %+v", stocks)
+	}
+	if len(paths) != 2 || !strings.Contains(paths[0], "searchCriteria%5BpageSize%5D=100") {
+		t.Fatalf("paths = %v", paths)
 	}
 }

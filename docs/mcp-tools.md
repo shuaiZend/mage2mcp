@@ -195,8 +195,8 @@ Cloudflare and GA4 tools are read-only except `cloudflare.logs.jobs`, which is `
 
 | Tool | Scope | Purpose |
 |---|---|---|
-| `magento.inventory.sources` | read | List inventory sources |
-| `magento.inventory.stocks` | read | List stocks and their source links |
+| `magento.inventory.sources` | read | List inventory sources **Implemented.** |
+| `magento.inventory.stocks` | read | List stocks and their source links **Implemented.** |
 | `magento.inventory.source_items` | read | List per-source quantities for SKUs **Implemented.** |
 | `magento.inventory.assign` | write | Assign sources and quantities to products **Implemented.** |
 | `magento.inventory.unassign` | destructive | Remove sources from products (clears quantities) **Implemented.** |
