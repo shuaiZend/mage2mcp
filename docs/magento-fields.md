@@ -24,6 +24,12 @@ tools require `instance` and, after approval, `confirmation_id`.
 | `meta_title` | no | <= 255 bytes | **SEO:** 30-60 characters, keyword first, then brand. |
 | `meta_description` | no | <= 255 bytes | **SEO:** 120-160 characters with a benefit and call to action. |
 | `meta_keywords` | no | <= 255 bytes | Optional; low ranking value, keep it short. |
+| `weight` | no | decimal, <= 4 fraction digits | Shipping weight; required by carriers for physical products. |
+| `special_price` | no | decimal, <= 4 fraction digits | Promotional price; pair it with the date window. |
+| `special_from_date` | no | `YYYY-MM-DD` | Special price start. |
+| `special_to_date` | no | `YYYY-MM-DD`, not before the start | Special price end. |
+| `cost` | no | decimal, <= 4 fraction digits | Cost of goods for margin reporting. |
+| `tax_class_id` | no | integer >= 0 | `0` leaves the store default. |
 
 The SEO/content fields must not also appear in `attributes`; the gateway rejects
 duplicates. Audit existing products with `magento.product.seo`, which returns
@@ -33,7 +39,8 @@ pass/warn/fail checks and a score without generating copy.
 
 Same fields as create except `sku` is the path identifier and every field is
 optional. Unset fields are not sent, so Magento preserves the stored values.
-Setting a field to an empty string clears it. `category_ids` and `website_ids`
+Setting a field to an empty string clears it. Pricing/shipping fields use the
+same rules as create. `category_ids` and `website_ids`
 replace the product's assignments when provided; an empty array clears them and
 omitting them leaves the assignments untouched.
 

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed pricing/shipping fields on product create/update and configurable
+  children: `weight`, `special_price`, `special_from_date`, `special_to_date`,
+  `cost`, and `tax_class_id`, with decimal/date/range validation and duplicate
+  rejection against the raw attributes map.
 - `magento.product.media.delete` (destructive, confirmation-gated) and
   `magento.inventory.status_batch` (up to 25 SKUs, sequential with per-SKU
   errors because Magento has no catalog-inventory batch endpoint).
