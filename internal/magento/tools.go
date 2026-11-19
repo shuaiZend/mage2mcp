@@ -96,6 +96,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newOrderHistoryTool(lookup), newInvoiceListTool(lookup), newInvoiceGetTool(lookup),
 		newShipmentListTool(lookup), newShipmentGetTool(lookup),
 		newCreditmemoListTool(lookup), newCreditmemoGetTool(lookup),
+		newConfigurableChildrenTool(lookup), newAttributeOptionsTool(lookup), newCategoryProductsTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -948,6 +949,146 @@ func newCreditmemoGetTool(lookup serviceLookup) registry.Tool {
 					return nil, creditmemoGetOutput{}, err
 				}
 				return nil, creditmemoGetOutput{Creditmemo: *creditmemo}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	configurableChildrenToolName  = "magento.configurable.children"
+	configurableChildrenToolTitle = "List configurable children"
+	attributeOptionsToolName      = "magento.attributes.options"
+	attributeOptionsToolTitle     = "List Magento attribute options"
+	categoryProductsToolName      = "magento.category.products"
+	categoryProductsToolTitle     = "List products in a Magento category"
+
+	configurableChildrenToolDescription = "Lists the child products linked to a configurable product " +
+		"(GET /rest/{store_code}/V1/configurable-products/{sku}/children). Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	attributeOptionsToolDescription = "Lists the options of a select or multiselect attribute " +
+		"(GET /rest/{store_code}/V1/products/attributes/{code}/options); configurable variants reference options by value_index. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	categoryProductsToolDescription = "Lists the products assigned to a category " +
+		"(GET /rest/{store_code}/V1/categories/{id}/products) with pagination. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	configurableChildrenSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Configurable parent SKU."}
+	}, "required": ["instance", "parent_sku"], "additionalProperties": false}`
+
+	attributeOptionsSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"attribute_code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `", "description": "Attribute code, e.g. color."}
+	}, "required": ["instance", "attribute_code"], "additionalProperties": false}`
+
+	categoryProductsSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"category_id": {"type": "integer", "minimum": 1, "description": "Magento category id."},
+		"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Page size, 1-200."},
+		"cursor": {"type": "string", "pattern": "` + cursorPattern + `", "description": "Zero-based row offset; must be a multiple of limit."}
+	}, "required": ["instance", "category_id"], "additionalProperties": false}`
+)
+
+type configurableChildrenInput struct {
+	Instance  string `json:"instance"`
+	ParentSKU string `json:"parent_sku"`
+}
+
+type configurableChildrenOutput struct {
+	Children []Product `json:"children"`
+}
+
+type attributeOptionsInput struct {
+	Instance      string `json:"instance"`
+	AttributeCode string `json:"attribute_code"`
+}
+
+type attributeOptionsOutput struct {
+	Options []AttributeOption `json:"options"`
+}
+
+type categoryProductsInput struct {
+	Instance   string `json:"instance"`
+	CategoryID int    `json:"category_id"`
+	Limit      int    `json:"limit"`
+	Cursor     string `json:"cursor"`
+}
+
+type categoryProductsOutput struct {
+	Products []Product `json:"products"`
+	Total    int       `json:"total"`
+}
+
+func newConfigurableChildrenTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(configurableChildrenToolName, configurableChildrenToolTitle, configurableChildrenToolDescription)
+	t.Capability = "magento.configurable.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(configurableChildrenToolName, configurableChildrenToolTitle, configurableChildrenToolDescription, configurableChildrenSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in configurableChildrenInput) (*mcp.CallToolResult, configurableChildrenOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, configurableChildrenOutput{}, err
+				}
+				children, err := svc.Children(ctx, in.ParentSKU)
+				if err != nil {
+					return nil, configurableChildrenOutput{}, err
+				}
+				return nil, configurableChildrenOutput{Children: children}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newAttributeOptionsTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(attributeOptionsToolName, attributeOptionsToolTitle, attributeOptionsToolDescription)
+	t.Capability = "magento.attribute.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(attributeOptionsToolName, attributeOptionsToolTitle, attributeOptionsToolDescription, attributeOptionsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in attributeOptionsInput) (*mcp.CallToolResult, attributeOptionsOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, attributeOptionsOutput{}, err
+				}
+				options, err := svc.AttributesOptions(ctx, in.AttributeCode)
+				if err != nil {
+					return nil, attributeOptionsOutput{}, err
+				}
+				return nil, attributeOptionsOutput{Options: options}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newCategoryProductsTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(categoryProductsToolName, categoryProductsToolTitle, categoryProductsToolDescription)
+	t.Capability = "magento.category.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(categoryProductsToolName, categoryProductsToolTitle, categoryProductsToolDescription, categoryProductsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryProductsInput) (*mcp.CallToolResult, categoryProductsOutput, error) {
+				offset := 0
+				if in.Cursor != "" {
+					parsed, err := strconv.Atoi(in.Cursor)
+					if err != nil || parsed < 0 {
+						return nil, categoryProductsOutput{}, invalidf("cursor must be a non-negative decimal row offset")
+					}
+					offset = parsed
+				}
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, categoryProductsOutput{}, err
+				}
+				products, total, err := svc.CategoryProducts(ctx, in.CategoryID, in.Limit, offset)
+				if err != nil {
+					return nil, categoryProductsOutput{}, err
+				}
+				if products == nil {
+					products = []Product{}
+				}
+				return nil, categoryProductsOutput{Products: products, Total: total}, nil
 			})
 		return nil
 	}

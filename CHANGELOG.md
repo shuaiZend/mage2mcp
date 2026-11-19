@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento catalog discovery: `magento.configurable.children`,
+  `magento.attributes.options` (select option value_index for variants), and
+  `magento.category.products` (paginated products in a category).
 - Magento removal writes: `magento.configurable.remove_child` (unlink a child
   without deleting it) and `magento.inventory.unassign` (remove MSI source
   assignments for up to 100 sku/source pairs). Both require confirmation.
