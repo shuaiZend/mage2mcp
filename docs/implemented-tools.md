@@ -26,6 +26,7 @@ Common behavior:
 |---|---|---|---|
 | `magento.product.get` | read | 30s | One product by SKU |
 | `magento.products.get` | read | 30s | Up to 50 products by SKU in one search (duplicates ignored) |
+| `magento.product.tier_prices` | read | 30s | Quantity-based tier prices for one SKU |
 | `magento.product.seo` | read | 30s | Deterministic SEO/content audit (description, short description, url_key, meta_title, meta_description, meta_keywords) with a score and suggestions |
 | `magento.configurable.children` | read | 30s | Child products linked to a configurable product |
 | `magento.product.search` | read | 30s | Search by name/SKU/type/status plus price and creation windows |
@@ -79,6 +80,7 @@ Common behavior:
 | `magento.import.start` | write + confirmation | 30s | Queues a bounded import for the worker (up to 2 attempts on pre-execution failures); optional `idempotency_key` deduplicates submissions; requires the database queue |
 | `magento.import.status` | read | 30s | Job state, attempts, error code, live progress (`done`/`total`), and a bounded result report (first 100 failed rows) |
 | `magento.import.cancel` | write + confirmation | 30s | Cancels a queued or running import job |
+| `magento.product.tier_prices.set` | write + confirmation | 60s | Replaces a SKU's fixed-price tiers (1-50); omitted tiers are removed |
 | `magento.product.delete` | destructive + confirmation | 60s | Deletes one product by SKU; irreversible, 404 on unknown SKU |
 | `magento.configurable.remove_child` | write + confirmation | 60s | Unlinks a child from a configurable product; child product remains |
 | `magento.inventory.unassign` | write + confirmation | 60s | Removes MSI source assignments for up to 100 sku/source pairs |

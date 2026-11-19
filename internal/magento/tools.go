@@ -107,7 +107,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newConfigurableChildrenTool(lookup), newAttributeOptionsTool(lookup), newCategoryProductsTool(lookup),
 		newCustomerGetTool(lookup), newCustomerSearchTool(lookup), newProductLinksTool(lookup),
 		newProductsBatchTool(lookup), newProductSEOTool(lookup), newCustomerAddressesTool(lookup),
-		newStockStatusBatchTool(lookup),
+		newStockStatusBatchTool(lookup), newTierPricesTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1424,6 +1424,50 @@ func newStockStatusBatchTool(lookup serviceLookup) registry.Tool {
 					return nil, stockStatusBatchOutput{}, err
 				}
 				return nil, stockStatusBatchOutput{Items: items}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	tierPricesToolName  = "magento.product.tier_prices"
+	tierPricesToolTitle = "List Magento tier prices"
+
+	tierPricesToolDescription = "Lists the quantity-based tier prices of one product " +
+		"(GET /rest/{store_code}/V1/products/tier-prices?skus={sku}), including website, customer group, quantity, and price. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	tierPricesSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU."}
+	}, "required": ["instance", "sku"], "additionalProperties": false}`
+)
+
+type tierPricesInput struct {
+	Instance string `json:"instance"`
+	SKU      string `json:"sku"`
+}
+
+type tierPricesOutput struct {
+	Prices []TierPrice `json:"prices"`
+}
+
+func newTierPricesTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(tierPricesToolName, tierPricesToolTitle, tierPricesToolDescription)
+	t.Capability = "magento.product.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(tierPricesToolName, tierPricesToolTitle, tierPricesToolDescription, tierPricesSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in tierPricesInput) (*mcp.CallToolResult, tierPricesOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, tierPricesOutput{}, err
+				}
+				prices, err := svc.TierPrices(ctx, in.SKU)
+				if err != nil {
+					return nil, tierPricesOutput{}, err
+				}
+				return nil, tierPricesOutput{Prices: prices}, nil
 			})
 		return nil
 	}
