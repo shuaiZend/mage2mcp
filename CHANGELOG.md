@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.products.bulk_update` (confirmation-gated): applies the same status,
+  visibility, or custom attributes to up to 50 SKUs with a per-SKU partial-success
+  report; name and price are excluded, and failed SKUs are never rolled back.
+
+### Added
+
 - `magento.attributes.options.delete` (destructive, confirmation-gated): removes
   a select/multiselect option; Magento rejects the call while products reference
   it.
