@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/magento-fields.md`: field requirements, limits, and SEO guidance for
+  every Magento write tool, linked from the docs index and the tool reference.
+- Configurable creation now rejects a child value that is not one of the
+  declared `value_index` values and two children describing the same variant
+  combination, before any product is written.
 - Configurable children accept the same SEO/content fields as the parent
   (description, short_description, url_key, meta_title, meta_keywords,
   meta_description), validated and sent as custom attributes.

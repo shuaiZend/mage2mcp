@@ -104,6 +104,9 @@ Common behavior:
 |---|---|---|---|
 | `unified.traffic.compare` | read | 60s | Cloudflare requests vs GA4 sessions for a declared binding; ratio is null without sessions |
 
+Field-level requirements and SEO guidance for the Magento writes are in
+[magento-fields.md](magento-fields.md).
+
 ## Not implemented yet
 
 Customer address tools, order creation, invoice capture,
