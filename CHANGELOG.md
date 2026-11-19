@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Magento tier prices: `magento.product.tier_prices` (read) and
+  `magento.product.tier_prices.set` (confirmation-gated full replacement of a
+  SKU's fixed-price tiers, 1-50 entries, with duplicate/quantity/group
+  validation).
+
 ### Fixed
 
 - Write arguments are validated against the tool's JSON Schema **before** a

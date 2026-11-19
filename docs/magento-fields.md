@@ -31,6 +31,11 @@ tools require `instance` and, after approval, `confirmation_id`.
 | `cost` | no | decimal, <= 4 fraction digits | Cost of goods for margin reporting. |
 | `tax_class_id` | no | integer >= 0 | `0` leaves the store default. |
 
+Tier prices use their own tools: `magento.product.tier_prices` reads them and
+`magento.product.tier_prices.set` replaces them (1-50 tiers; each needs `price`,
+`customer_group`, and `quantity`, with optional `website_id`). Magento replaces
+the SKU's stored tiers, so omitted tiers are deleted.
+
 The SEO/content fields must not also appear in `attributes`; the gateway rejects
 duplicates. Audit existing products with `magento.product.seo`, which returns
 pass/warn/fail checks and a score without generating copy.

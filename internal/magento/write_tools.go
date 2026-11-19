@@ -282,7 +282,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCategoryCreateTool(lookup), newCategoryUpdateTool(lookup), newCategoryAssignProductTool(lookup),
 		newProductLinkAddTool(lookup), newProductLinkRemoveTool(lookup),
 		newInvoiceCaptureTool(lookup), newOrderEmailTool(lookup), newMediaDeleteTool(lookup),
-		newOrderCreateTool(lookup),
+		newOrderCreateTool(lookup), newTierPricesSetTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -327,6 +327,7 @@ func writeToolSchemas() map[string]string {
 		unassignSourceItemsToolName:  unassignSourceItemsSchema,
 		productLinkAddToolName:       productLinkAddSchema,
 		productLinkRemoveToolName:    productLinkRemoveSchema,
+		tierPricesSetToolName:        tierPricesSetSchema,
 	}
 }
 
@@ -1448,6 +1449,68 @@ func newOrderCreateTool(lookup serviceLookup) registry.Tool {
 					return nil, orderCreateOutput{}, err
 				}
 				return nil, orderCreateOutput{Order: *order}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	tierPricesSetToolName    = "magento.product.tier_prices.set"
+	tierPricesSetToolTitle   = "Replace Magento tier prices"
+	tierPricesSetDescription = "Magento write operation: replaces the tier prices of one product " +
+		"(POST /rest/{store_code}/V1/products/tier-prices) on the resolved instance with 1-50 fixed-price tiers. " +
+		"Magento's storage interface replaces the SKU's stored tiers, so omitted tiers are removed. Requires human confirmation."
+
+	tierPricesSetSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
+		"prices": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object",
+			"additionalProperties": false, "required": ["price", "customer_group", "quantity"],
+			"properties": {"price": {"type": "number", "exclusiveMinimum": 0},
+				"website_id": {"type": "integer", "minimum": 0},
+				"customer_group": {"type": "string", "minLength": 1, "maxLength": 64},
+				"quantity": {"type": "number", "exclusiveMinimum": 0}}}}
+	}, "required": ["instance", "sku", "prices"], "additionalProperties": false}`
+)
+
+type tierPriceWire struct {
+	Price         float64 `json:"price"`
+	WebsiteID     int     `json:"website_id"`
+	CustomerGroup string  `json:"customer_group"`
+	Quantity      float64 `json:"quantity"`
+}
+
+type tierPricesSetInput struct {
+	Instance string          `json:"instance"`
+	SKU      string          `json:"sku"`
+	Prices   []tierPriceWire `json:"prices"`
+}
+
+type tierPricesSetOutput struct {
+	SKU    string `json:"sku"`
+	Prices int    `json:"prices"`
+	Set    bool   `json:"set"`
+}
+
+func newTierPricesSetTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(tierPricesSetToolName, tierPricesSetToolTitle, tierPricesSetDescription, capabilityProductWrite)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(tierPricesSetToolName, tierPricesSetToolTitle, tierPricesSetDescription, tierPricesSetSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in tierPricesSetInput) (*mcp.CallToolResult, tierPricesSetOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, tierPricesSetOutput{}, err
+				}
+				prices := make([]TierPrice, 0, len(in.Prices))
+				for _, price := range in.Prices {
+					prices = append(prices, TierPrice{
+						SKU: in.SKU, Price: price.Price, PriceType: "fixed",
+						WebsiteID: price.WebsiteID, CustomerGroup: price.CustomerGroup, Quantity: price.Quantity,
+					})
+				}
+				if err := svc.SetTierPrices(ctx, in.SKU, prices); err != nil {
+					return nil, tierPricesSetOutput{}, err
+				}
+				return nil, tierPricesSetOutput{SKU: in.SKU, Prices: len(prices), Set: true}, nil
 			})
 		return nil
 	}
