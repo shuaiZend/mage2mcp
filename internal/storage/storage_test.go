@@ -327,3 +327,23 @@ func TestPruneImportBatchesNotOpen(t *testing.T) {
 		t.Fatal("pruning a closed store must fail")
 	}
 }
+
+func TestImportBatchStoreClosed(t *testing.T) {
+	var store *Store
+	ctx := context.Background()
+	if _, err := store.CreateImportBatch(ctx, "i", "", "csv", nil); err == nil {
+		t.Fatal("create on a closed store must fail")
+	}
+	if err := store.FinishImportBatch(ctx, "i", &jobs.ImportBatchResult{}, "failed", ""); err == nil {
+		t.Fatal("finish on a closed store must fail")
+	}
+	if _, err := store.GetImportBatchByJob(ctx, "i"); err == nil {
+		t.Fatal("get-by-job on a closed store must fail")
+	}
+	if _, err := store.ListImportBatches(ctx, "i", 10); err == nil {
+		t.Fatal("list on a closed store must fail")
+	}
+	if _, err := store.GetImportBatch(ctx, "i"); err == nil {
+		t.Fatal("get on a closed store must fail")
+	}
+}

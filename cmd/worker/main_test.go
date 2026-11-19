@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"testing"
@@ -59,5 +60,49 @@ func TestPruneImportBatchesStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("prune loop did not stop after cancellation")
+	}
+}
+
+type fakePruner struct {
+	removed int64
+	err     error
+	onCall  func()
+	calls   int
+}
+
+func (f *fakePruner) PruneImportBatches(context.Context, time.Time) (int64, error) {
+	f.calls++
+	if f.onCall != nil {
+		f.onCall()
+	}
+	return f.removed, f.err
+}
+
+func TestPruneImportBatchesLogsAndStops(t *testing.T) {
+	logger := observability.NewLogger("error", "json", io.Discard)
+	for _, tc := range []struct {
+		name   string
+		pruner *fakePruner
+	}{
+		{"removed", &fakePruner{removed: 3}},
+		{"error", &fakePruner{err: errors.New("boom")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			tc.pruner.onCall = cancel
+			done := make(chan struct{})
+			go func() {
+				pruneImportBatches(ctx, tc.pruner, logger)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("prune loop did not stop")
+			}
+			if tc.pruner.calls != 1 {
+				t.Fatalf("calls = %d", tc.pruner.calls)
+			}
+		})
 	}
 }

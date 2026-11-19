@@ -175,7 +175,12 @@ func importBatchResult(result *magento.ImportResult) *jobs.ImportBatchResult {
 
 // pruneImportBatches removes import batch history older than the retention
 // window. Failure rows cascade with their batch.
-func pruneImportBatches(ctx context.Context, store *storage.Store, logger *slog.Logger) {
+// importBatchPruner is the subset of storage used by the retention loop.
+type importBatchPruner interface {
+	PruneImportBatches(ctx context.Context, olderThan time.Time) (int64, error)
+}
+
+func pruneImportBatches(ctx context.Context, store importBatchPruner, logger *slog.Logger) {
 	const (
 		retention = 30 * 24 * time.Hour
 		interval  = 6 * time.Hour
