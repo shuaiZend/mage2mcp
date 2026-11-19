@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-19
+
+Second minor pre-release: persisted import batches with unbounded resume and
+retention, customer and address writes, bulk product updates, category deletion,
+attribute option lifecycle, media/order extras, and a broader E2E scenario.
+
 ### Added
 
 - The end-to-end test now covers bulk product updates, a failing import, resume
@@ -374,7 +380,8 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.2.0
 [0.1.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.1.0
 [0.0.2]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.0.2
 [0.0.1]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.0.1
