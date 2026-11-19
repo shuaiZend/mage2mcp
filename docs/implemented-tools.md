@@ -37,7 +37,9 @@ Common behavior:
 | `magento.attributes.list` | read | 30s | Attributes of one attribute set |
 | `magento.attributes.options` | read | 30s | Options of a select/multiselect attribute (value_index) |
 | `magento.product.media` | read | 30s | Media gallery of one product |
+| `magento.product.links` | read | 30s | Related, upsell, or cross-sell links of a product |
 | `magento.product.media.upload` | write + confirmation | 60s | Adds an image to a gallery; base64 capped at 5 MiB, MIME/filename/types validated |
+| `magento.invoice.create` | write + confirmation | 60s | Invoices an order; `capture` defaults to false and does not charge |
 | `magento.inventory.status` | read | 30s | Catalog quantity, in-stock flag, and backorders for one SKU |
 | `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
@@ -87,7 +89,7 @@ Common behavior:
 
 ## Not implemented yet
 
-Customer address tools, invoice/shipment/creditmemo creation, product links,
+Customer address tools, shipment/creditmemo creation, order creation,
 category and attribute tools, Logpush inspection, GA4 ecommerce reports, and the
 remaining unified scenarios. They are designed in [mcp-tools.md](mcp-tools.md)
 but are not registered.

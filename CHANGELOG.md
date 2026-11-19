@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.product.links` (related/upsell/cross-sell reads).
+- `magento.invoice.create`: confirmation-gated invoicing with `capture=false` by
+  default, strict order-item/quantity validation, and duplicate rejection.
 - `magento.product.media.upload`: confirmation-gated image upload with a 5 MiB
   decoded payload ceiling, MIME/filename allowlists, media-type subset and
   duplicate checks, and label/position bounds.

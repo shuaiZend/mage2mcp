@@ -12,8 +12,8 @@ No plugin is installed and the Magento database is never touched.
   bounded per-day sales summary, category reads/tree, attribute-set reads, media
   reads, stock/MSI reads, order status history, invoice/shipment/creditmemo reads,
   product deletion (destructive), configurable child unlinking, MSI source
-  unassignment, and bounded media upload — all writes require two-step
-  confirmation. Catalog discovery
+  unassignment, bounded media upload, and invoice creation (capture defaults to
+  false) — all writes require two-step confirmation. Catalog discovery
   covers attribute options and category product listings. Customer reads use a
   PII-safe projection: email, name, and addresses are never returned.
 - `Register(reg, svc)` — read tools; `RegisterWrites(reg, svc)` — write tools
