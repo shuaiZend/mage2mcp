@@ -91,7 +91,7 @@ func run() error {
 	}
 
 	reg := registry.New()
-	if err := registerModules(cfg, reg, importQueue); err != nil {
+	if err := registerModules(cfg, reg, importWiring{Queue: importQueue, Batches: store}); err != nil {
 		return err
 	}
 	confirmSvc, err := confirm.NewService(confirmStore, confirm.DefaultTTL)
@@ -240,10 +240,18 @@ func authorizeFunc(cfg config.Config, policy *rbac.Policy) func(context.Context,
 // registerModules builds one service per enabled module and registers its tools.
 // Multi-instance routing is not wired yet: a module with more than one instance
 // is a startup error rather than a silently wrong credential choice.
-func registerModules(cfg config.Config, reg *registry.Registry, importQueues ...magento.ImportQueue) error {
+// importWiring bundles the optional durable import dependencies.
+type importWiring struct {
+	Queue   magento.ImportQueue
+	Batches magento.ImportBatchReader
+}
+
+func registerModules(cfg config.Config, reg *registry.Registry, wirings ...importWiring) error {
 	var importQueue magento.ImportQueue
-	if len(importQueues) > 0 {
-		importQueue = importQueues[0]
+	var importBatches magento.ImportBatchReader
+	if len(wirings) > 0 {
+		importQueue = wirings[0].Queue
+		importBatches = wirings[0].Batches
 	}
 	var cloudflareSvc *cloudflare.Service
 	var ga4Svc *ga4.Service
@@ -267,7 +275,7 @@ func registerModules(cfg config.Config, reg *registry.Registry, importQueues ...
 			}
 		}
 		if importQueue != nil {
-			if err := magento.RegisterImportJobs(reg, resolver, importQueue); err != nil {
+			if err := magento.RegisterImportJobs(reg, resolver, importQueue, importBatches); err != nil {
 				return err
 			}
 		}

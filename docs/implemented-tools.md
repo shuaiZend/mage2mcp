@@ -94,7 +94,7 @@ Common behavior:
 | `magento.import.start` | write + confirmation | 30s | Queues a bounded import for the worker (up to 2 attempts on pre-execution failures); optional `idempotency_key` deduplicates submissions; requires the database queue |
 | `magento.import.status` | read | 30s | Job state, attempts, error code, live progress (`done`/`total`), and a bounded result report (first 100 failed rows) |
 | `magento.import.cancel` | write + confirmation | 30s | Cancels a queued or running import job |
-| `magento.import.resume` | write + confirmation | 30s | Queues a new job containing only the failed rows of a previous job (idempotent per source job) |
+| `magento.import.resume` | write + confirmation | 30s | Queues a new job containing only the failed rows of a previous job, read from the persisted batch (unbounded by the 100-row report); idempotent per source job |
 | `magento.product.tier_prices.set` | write + confirmation | 60s | Replaces a SKU's fixed-price tiers (1-50); omitted tiers are removed |
 | `magento.product.delete` | destructive + confirmation | 60s | Deletes one product by SKU; irreversible, 404 on unknown SKU |
 | `magento.configurable.remove_child` | write + confirmation | 60s | Unlinks a child from a configurable product; child product remains |

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
+	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
 	"github.com/shuaiZend/mage2mcp/internal/magento"
 	"github.com/shuaiZend/mage2mcp/internal/observability"
@@ -101,6 +102,10 @@ func run() error {
 			if err != nil {
 				return err
 			}
+			batchID, err := store.CreateImportBatch(ctx, payload.Instance, task.ID, payload.Format, data)
+			if err != nil {
+				return err
+			}
 			lastProgress := time.Time{}
 			progress := func(done, total int) {
 				if time.Since(lastProgress) < 2*time.Second {
@@ -121,7 +126,16 @@ func run() error {
 				result, err = svc.ExecuteImportWithProgress(ctx, payload.Format, data, payload.UpdateExisting, progress)
 			}
 			if err != nil {
+				_ = store.FinishImportBatch(ctx, batchID, &jobs.ImportBatchResult{}, "failed", string(errs.CodeOf(err)))
 				return err
+			}
+			batch := importBatchResult(result)
+			state := "succeeded"
+			if batch.Failed > 0 {
+				state = "partial"
+			}
+			if err := store.FinishImportBatch(ctx, batchID, batch, state, ""); err != nil {
+				logger.Error("import batch finalize failed", "batch_id", batchID, "err", err)
 			}
 			raw, err := json.Marshal(magento.CompactImportReport(result))
 			if err != nil {
@@ -137,4 +151,22 @@ func run() error {
 	}
 	logger.Info("worker stopped")
 	return nil
+}
+
+// importBatchResult converts an execution result into the persisted batch shape,
+// keeping every failed row (no report cap).
+func importBatchResult(result *magento.ImportResult) *jobs.ImportBatchResult {
+	batch := &jobs.ImportBatchResult{
+		Total: result.Total, Processed: result.Total,
+		Created: result.Created, Updated: result.Updated, Skipped: result.Skipped, Failed: result.Failed,
+	}
+	for _, row := range result.Rows {
+		if row.Status != "failed" {
+			continue
+		}
+		batch.Failures = append(batch.Failures, jobs.ImportBatchFailure{
+			RowNumber: row.RowNumber, SKU: row.SKU, Action: row.Action, Error: row.Error,
+		})
+	}
+	return batch
 }
