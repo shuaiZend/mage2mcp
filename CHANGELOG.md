@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-20
+
+Fifth minor pre-release: configurable variant option declaration and a converged
+interface scope (catalog equivalents, not-planned list, ADR-0022).
+
 ### Documented
 
 - The tool catalog now maps design names to implemented equivalents (11),
@@ -467,7 +472,8 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.3.0
 [0.2.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.2.0
