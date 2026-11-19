@@ -298,6 +298,14 @@ behaviors were not re-verified.
 | Security test corpus and severity model | [Threat model](../security/threat-model.md) |
 | Which suites block a merge | [CI/CD](ci-cd.md), Section 4 |
 
+## Tool contract tests
+
+`internal/magento/tool_contract_test.go` pins the public Magento tool names in
+`testdata/tool-names.txt` and checks that `docs/implemented-tools.md` lists
+exactly the registered tools. Renaming a tool now requires updating the golden
+file and the changelog in the same change, which makes an accidental breaking
+rename fail CI.
+
 ## End-to-end smoke test
 
 `make e2e` (`test/e2e/run.sh`) starts PostgreSQL from Compose plus a fake Magento

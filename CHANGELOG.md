@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Tool contract tests: the 90 Magento tool names are pinned in
+  `testdata/tool-names.txt`, and `docs/implemented-tools.md` is checked against
+  the registry, so an accidental rename or doc drift fails CI.
+
 ## [0.5.0] - 2026-11-20
 
 Fifth minor pre-release: configurable variant option declaration and a converged
