@@ -288,6 +288,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newAttributeOptionDeleteTool(lookup), newBulkProductUpdateTool(lookup), newCategoryDeleteTool(lookup),
 		newCustomerAddressCreateTool(lookup), newCustomerAddressDeleteTool(lookup),
 		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup), newBulkOptionCreateTool(lookup),
+		newConfigurableUpdateTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -347,6 +348,7 @@ func writeToolSchemas() map[string]string {
 		customerAddressUpdateToolName: customerAddressUpdateSchema,
 		bulkLinkToolName:              bulkLinkSchema,
 		bulkOptionCreateToolName:      bulkOptionCreateSchema,
+		configurableUpdateToolName:    productUpdateSchema,
 	}
 }
 
@@ -396,6 +398,17 @@ func newProductCreateTool(lookup serviceLookup) registry.Tool {
 	return t
 }
 
+func (in productUpdateInput) toServiceInput() UpdateProductInput {
+	return UpdateProductInput{
+		Name: in.Name, Price: in.Price, Status: in.Status, Visibility: in.Visibility, Attributes: in.Attributes,
+		Description: in.Description, ShortDescription: in.ShortDescription, URLKey: in.URLKey,
+		MetaTitle: in.MetaTitle, MetaKeywords: in.MetaKeywords, MetaDescription: in.MetaDescription,
+		CategoryIDs: in.CategoryIDs, WebsiteIDs: in.WebsiteIDs,
+		Weight: in.Weight, SpecialPrice: in.SpecialPrice, SpecialFromDate: in.SpecialFromDate,
+		SpecialToDate: in.SpecialToDate, Cost: in.Cost, TaxClassID: in.TaxClassID,
+	}
+}
+
 func newProductUpdateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(productUpdateToolName, productUpdateToolTitle, productUpdateToolDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
@@ -405,14 +418,7 @@ func newProductUpdateTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, productWriteOutput{}, err
 				}
-				product, err := svc.Update(ctx, in.SKU, UpdateProductInput{
-					Name: in.Name, Price: in.Price, Status: in.Status, Visibility: in.Visibility, Attributes: in.Attributes,
-					Description: in.Description, ShortDescription: in.ShortDescription, URLKey: in.URLKey,
-					MetaTitle: in.MetaTitle, MetaKeywords: in.MetaKeywords, MetaDescription: in.MetaDescription,
-					CategoryIDs: in.CategoryIDs, WebsiteIDs: in.WebsiteIDs,
-					Weight: in.Weight, SpecialPrice: in.SpecialPrice, SpecialFromDate: in.SpecialFromDate,
-					SpecialToDate: in.SpecialToDate, Cost: in.Cost, TaxClassID: in.TaxClassID,
-				})
+				product, err := svc.Update(ctx, in.SKU, in.toServiceInput())
 				if err != nil {
 					return nil, productWriteOutput{}, err
 				}
@@ -2232,6 +2238,35 @@ func newBulkOptionCreateTool(lookup serviceLookup) registry.Tool {
 					return nil, bulkOptionCreateOutput{}, err
 				}
 				return nil, bulkOptionCreateOutput{Result: *result}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	configurableUpdateToolName    = "magento.configurable.update"
+	configurableUpdateToolTitle   = "Update a Magento configurable product"
+	configurableUpdateDescription = "Magento write operation: updates a configurable parent's name, price, status, visibility, attributes, SEO fields, " +
+		"pricing fields, or assignments via the product update endpoint (PUT /rest/{store_code}/V1/products/{sku}). " +
+		"Refuses SKUs whose type is not configurable. The instance input is resolved by the server when only one Magento instance is configured. " +
+		"Requires human confirmation."
+)
+
+func newConfigurableUpdateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(configurableUpdateToolName, configurableUpdateToolTitle, configurableUpdateDescription, capabilityConfigurableWrite)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(configurableUpdateToolName, configurableUpdateToolTitle, configurableUpdateDescription, productUpdateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productUpdateInput) (*mcp.CallToolResult, productWriteOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productWriteOutput{}, err
+				}
+				product, err := svc.UpdateConfigurable(ctx, in.SKU, in.toServiceInput())
+				if err != nil {
+					return nil, productWriteOutput{}, err
+				}
+				return nil, productWriteOutput{Product: *product}, nil
 			})
 		return nil
 	}
