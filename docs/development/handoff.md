@@ -28,8 +28,9 @@ should do next. It is updated at the end of each development session.
    batches in `import_batches`/`import_items`, expose
    `magento.import.status/cancel/report`, and make execution resumable. The
    synchronous bounded path stays as the small-batch fast path.
-2. **Magento order reads.** Implement `GET /V1/orders` search and an aggregate
-   sales summary; this unblocks the unified ecommerce scenarios.
+2. ~~**Magento order reads.**~~ Done: `magento.order.get`, `magento.order.search`,
+   and `magento.sales.summary` are implemented; the unified ecommerce scenarios
+   can now build on them.
 3. **Unified expansion.** Channel revenue, product funnel, and decline
    correlation using the order reads, each with explicit formulas and quality
    flags.

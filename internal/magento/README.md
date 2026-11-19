@@ -8,7 +8,8 @@ No plugin is installed and the Magento database is never touched.
 - `NewClient(ClientConfig)` — bounded REST client (`/rest/{store}/V1`), OAuth
   1.0a or bearer signing, 8 MiB response cap, error taxonomy mapping.
 - `NewService(*Client)` — product reads and writes, configurable lifecycle, MSI
-  source items, bounded import validation and execution.
+  source items, bounded import validation and execution, order reads and a
+  bounded per-day sales summary.
 - `Register(reg, svc)` — read tools; `RegisterWrites(reg, svc)` — write tools
   (require confirmation and `tools.writes`).
 

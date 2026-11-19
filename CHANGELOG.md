@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Magento order interfaces: `magento.order.get` (order with line items, no
+  personal data), `magento.order.search` (status, state, increment id, creation
+  window, store view; items omitted), and `magento.sales.summary` (per-day order
+  count, grand-total revenue, and item quantity, bounded to 1000 orders with
+  explicit truncation and mixed-currency flags).
 ## [0.0.1] - 2026-11-19
 
 First public pre-release: a runnable MCP gateway with typed, audited tools
