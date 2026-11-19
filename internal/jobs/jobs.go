@@ -49,12 +49,14 @@ type NoopPayload struct {
 
 // Task is one claimed unit of work.
 type Task struct {
-	ID          string
-	Kind        string
-	Queue       string
-	Payload     json.RawMessage
-	Attempts    int
-	MaxAttempts int
+	ID             string
+	Kind           string
+	Queue          string
+	InstanceID     string
+	IdempotencyKey string
+	Payload        json.RawMessage
+	Attempts       int
+	MaxAttempts    int
 }
 
 // Queue persists and claims tasks. The PostgreSQL implementation lives in

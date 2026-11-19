@@ -75,7 +75,8 @@ func TestImportStartEnqueuesJob(t *testing.T) {
 	csv := "sku,name,type_id,price,attribute_set_id\nNEW-1,New,simple,9.99,4\n"
 	args := map[string]any{
 		"instance": "store-us", "format": "csv",
-		"data_base64": base64.StdEncoding.EncodeToString([]byte(csv)),
+		"data_base64":     base64.StdEncoding.EncodeToString([]byte(csv)),
+		"idempotency_key": "batch-42",
 	}
 	ctx := context.Background()
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: importStartToolName, Arguments: args})
@@ -94,6 +95,9 @@ func TestImportStartEnqueuesJob(t *testing.T) {
 	}
 	if payload.Instance != "store-us" || payload.Format != "csv" || payload.UpdateExisting {
 		t.Fatalf("payload = %+v", payload)
+	}
+	if queue.tasks[0].InstanceID != "store-us" || queue.tasks[0].IdempotencyKey != "batch-42" {
+		t.Fatalf("task identity = %+v", queue.tasks[0])
 	}
 }
 

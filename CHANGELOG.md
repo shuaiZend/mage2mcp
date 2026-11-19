@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Asynchronous import hardening: `idempotency_key` on
+  `magento.import.start` (a repeated key returns the original job id via the
+  queue's unique index), and the worker stores a bounded report (counts plus the
+  first 100 failed rows) instead of every row.
 - Asynchronous Magento imports: `magento.import.start` validates the batch shape
   and enqueues a `magento:import` job in the PostgreSQL queue,
   `magento.import.status` reports job state/attempts/result, and

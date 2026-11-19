@@ -186,3 +186,32 @@ func TestJobQueueResultAndLookup(t *testing.T) {
 		t.Fatalf("missing job err = %v", err)
 	}
 }
+
+func TestJobQueueIdempotentEnqueue(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	queue := NewJobQueue(store)
+	task := jobs.Task{
+		Kind: jobs.TypeMagentoImport, Queue: jobs.QueueImport,
+		InstanceID: "store-us", IdempotencyKey: "batch-1", MaxAttempts: 1,
+	}
+	first, err := queue.Enqueue(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := queue.Enqueue(ctx, task)
+	if err != nil {
+		t.Fatalf("repeat enqueue: %v", err)
+	}
+	if first != second {
+		t.Fatalf("idempotent enqueue returned %q then %q", first, second)
+	}
+	task.IdempotencyKey = "batch-2"
+	third, err := queue.Enqueue(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == first {
+		t.Fatal("a different key must create a new job")
+	}
+}

@@ -180,3 +180,26 @@ func TestExecuteImportRejectsInvalidRows(t *testing.T) {
 		t.Fatal("invalid rows must be rejected before execution")
 	}
 }
+
+func TestCompactImportReport(t *testing.T) {
+	result := &ImportResult{Total: 3, Created: 1, Failed: 2, Rows: []ImportResultRow{
+		{RowNumber: 2, SKU: "A", Action: "create", Status: "succeeded"},
+		{RowNumber: 3, SKU: "B", Action: "create", Status: "failed", Error: "boom"},
+		{RowNumber: 4, SKU: "C", Action: "update", Status: "failed", Error: "boom"},
+	}}
+	report := CompactImportReport(result)
+	if report.Total != 3 || report.Created != 1 || report.Failed != 2 || len(report.Failures) != 2 {
+		t.Fatalf("report = %+v", report)
+	}
+	if report.Failures[0].SKU != "B" || report.FailuresTruncated {
+		t.Fatalf("failures = %+v", report)
+	}
+	big := &ImportResult{Total: maxReportFailures + 5, Failed: maxReportFailures + 5}
+	for i := 0; i < maxReportFailures+5; i++ {
+		big.Rows = append(big.Rows, ImportResultRow{RowNumber: i + 2, SKU: "S", Status: "failed", Error: "x"})
+	}
+	capped := CompactImportReport(big)
+	if len(capped.Failures) != maxReportFailures || !capped.FailuresTruncated {
+		t.Fatalf("capped failures = %d truncated=%v", len(capped.Failures), capped.FailuresTruncated)
+	}
+}

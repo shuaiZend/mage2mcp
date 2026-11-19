@@ -368,3 +368,49 @@ func ValidateImportShape(format string, data []byte) (int, error) {
 	}
 	return len(rows), nil
 }
+
+const maxReportFailures = 100
+
+// ImportFailure is one failed row in a compact async report.
+type ImportFailure struct {
+	RowNumber int    `json:"row_number"`
+	SKU       string `json:"sku"`
+	Action    string `json:"action"`
+	Error     string `json:"error"`
+}
+
+// ImportReport is the bounded summary stored on an asynchronous import job.
+type ImportReport struct {
+	Total             int             `json:"total"`
+	Created           int             `json:"created"`
+	Updated           int             `json:"updated"`
+	Skipped           int             `json:"skipped"`
+	Failed            int             `json:"failed"`
+	Failures          []ImportFailure `json:"failures,omitempty"`
+	FailuresTruncated bool            `json:"failures_truncated"`
+}
+
+// CompactImportReport reduces a full execution result to a bounded report so a
+// job row never stores thousands of per-row entries.
+func CompactImportReport(result *ImportResult) *ImportReport {
+	if result == nil {
+		return &ImportReport{}
+	}
+	report := &ImportReport{
+		Total: result.Total, Created: result.Created, Updated: result.Updated,
+		Skipped: result.Skipped, Failed: result.Failed,
+	}
+	for _, row := range result.Rows {
+		if row.Status != "failed" {
+			continue
+		}
+		if len(report.Failures) >= maxReportFailures {
+			report.FailuresTruncated = true
+			break
+		}
+		report.Failures = append(report.Failures, ImportFailure{
+			RowNumber: row.RowNumber, SKU: row.SKU, Action: row.Action, Error: row.Error,
+		})
+	}
+	return report
+}

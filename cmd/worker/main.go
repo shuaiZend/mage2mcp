@@ -104,9 +104,9 @@ func run() error {
 			if err != nil {
 				return err
 			}
-			raw, err := json.Marshal(result)
+			raw, err := json.Marshal(magento.CompactImportReport(result))
 			if err != nil {
-				return fmt.Errorf("encode import result: %w", err)
+				return fmt.Errorf("encode import report: %w", err)
 			}
 			return queue.SetResult(ctx, task.ID, string(raw))
 		})

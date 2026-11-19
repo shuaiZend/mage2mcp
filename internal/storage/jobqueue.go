@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
@@ -51,13 +52,36 @@ func (q *JobQueue) Enqueue(ctx context.Context, t jobs.Task) (string, error) {
 		payload = json.RawMessage("{}")
 	}
 	subject := sha256.Sum256([]byte("system"))
+	var instanceID *string
+	if t.InstanceID != "" {
+		instanceID = &t.InstanceID
+	}
+	var idempotencyKey *string
+	if t.IdempotencyKey != "" {
+		idempotencyKey = &t.IdempotencyKey
+	}
 	var id string
 	err := q.store.pool.QueryRow(ctx, `
-		INSERT INTO jobs (module, tool, kind, queue, payload, subject_hash, max_attempts, state)
-		VALUES ('platform', $1, $1, $2, $3, $4, $5, 'queued')
+		INSERT INTO jobs (module, instance_id, tool, kind, queue, payload, subject_hash,
+		                  max_attempts, state, idempotency_key)
+		VALUES ('platform', $1, $2, $2, $3, $4, $5, $6, 'queued', $7)
 		RETURNING id::text`,
-		t.Kind, queue, payload, subject[:], maxAttempts).Scan(&id)
+		instanceID, t.Kind, queue, payload, subject[:], maxAttempts, idempotencyKey).Scan(&id)
 	if err != nil {
+		// A repeated enqueue with the same idempotency key is not an error: the
+		// original job is returned so callers can poll it.
+		if isUniqueViolation(err) {
+			existing, lookupErr := q.store.pool.Query(ctx, `
+				SELECT id::text FROM jobs
+				WHERE kind = $1 AND idempotency_key = $2 AND ($3::text IS NULL OR instance_id = $3::text)
+				ORDER BY created_at LIMIT 1`, t.Kind, t.IdempotencyKey, instanceID)
+			if lookupErr == nil {
+				var existingID string
+				if scanErr := existing.Scan(&existingID); scanErr == nil {
+					return existingID, nil
+				}
+			}
+		}
 		return "", fmt.Errorf("storage: enqueue job: %w", err)
 	}
 	return id, nil
@@ -165,6 +189,11 @@ func (q *JobQueue) Cancel(ctx context.Context, id string) error {
 }
 
 // GetJob returns one job by id.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
 func (q *JobQueue) GetJob(ctx context.Context, id string) (*jobs.JobRecord, error) {
 	if q == nil || q.store == nil || q.store.pool == nil {
 		return nil, fmt.Errorf("storage: job queue not configured")
