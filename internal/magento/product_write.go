@@ -51,6 +51,16 @@ type CreateProductInput struct {
 	CategoryIDs    []int
 	Attributes     map[string]string
 	Quantity       *int
+
+	// SEO and content fields. They map to the standard Magento attributes
+	// description, short_description, url_key, meta_title, meta_keywords, and
+	// meta_description.
+	Description      string
+	ShortDescription string
+	URLKey           string
+	MetaTitle        string
+	MetaKeywords     string
+	MetaDescription  string
 }
 
 // UpdateProductInput is a partial product update: nil fields are not sent, so
@@ -62,6 +72,13 @@ type UpdateProductInput struct {
 	Status     *int
 	Visibility *int
 	Attributes map[string]string
+
+	Description      *string
+	ShortDescription *string
+	URLKey           *string
+	MetaTitle        *string
+	MetaKeywords     *string
+	MetaDescription  *string
 }
 
 type productAttribute struct {
@@ -174,6 +191,12 @@ func buildCreatePayload(in CreateProductInput) (productPayload, error) {
 	if err != nil {
 		return productPayload{}, err
 	}
+	seo, err := seoAttributes(in.Description, in.ShortDescription, in.URLKey,
+		in.MetaTitle, in.MetaKeywords, in.MetaDescription)
+	if err != nil {
+		return productPayload{}, err
+	}
+	attributes = append(attributes, seo...)
 	payload := productPayload{
 		SKU: in.SKU, Name: strings.TrimSpace(in.Name), AttributeSetID: in.AttributeSetID,
 		TypeID: in.TypeID, Price: in.Price, Status: in.Status, Visibility: in.Visibility,
@@ -194,6 +217,12 @@ func buildUpdatePayload(sku string, in UpdateProductInput) (productPayload, erro
 	if err != nil {
 		return productPayload{}, err
 	}
+	updateSEO := []*string{in.Description, in.ShortDescription, in.URLKey, in.MetaTitle, in.MetaKeywords, in.MetaDescription}
+	seo, err := seoAttributesFromPointers(updateSEO)
+	if err != nil {
+		return productPayload{}, err
+	}
+	attributes = append(attributes, seo...)
 	payload := productPayload{SKU: sku, CustomAttributes: attributes}
 	if in.Name != nil {
 		if err := validateProductName(*in.Name); err != nil {
@@ -219,7 +248,14 @@ func buildUpdatePayload(sku string, in UpdateProductInput) (productPayload, erro
 		}
 		payload.Visibility = *in.Visibility
 	}
-	if payload.Name == "" && payload.Price == "" && payload.Status == 0 && payload.Visibility == 0 && len(attributes) == 0 {
+	seoProvided := false
+	for _, value := range updateSEO {
+		if value != nil {
+			seoProvided = true
+			break
+		}
+	}
+	if payload.Name == "" && payload.Price == "" && payload.Status == 0 && payload.Visibility == 0 && len(attributes) == 0 && !seoProvided {
 		return productPayload{}, invalidf("update requires at least one of name, price, status, visibility, or attributes")
 	}
 	return payload, nil
@@ -275,6 +311,13 @@ func validateProductFields(in CreateProductInput) error {
 	}
 	if in.Quantity != nil && *in.Quantity < 0 {
 		return invalidf("quantity must not be negative")
+	}
+	if err := validateSEOValues(in.Description, in.ShortDescription, in.URLKey,
+		in.MetaTitle, in.MetaKeywords, in.MetaDescription); err != nil {
+		return err
+	}
+	if err := ensureNoSEODuplicates(in.Attributes); err != nil {
+		return err
 	}
 	_, err := customAttributes(in.Attributes)
 	return err
@@ -370,4 +413,115 @@ func (s *Service) DeleteProduct(ctx context.Context, sku string) error {
 	}
 	_, err := s.client.do(ctx, http.MethodDelete, "/products/"+url.PathEscape(sku), nil, nil)
 	return err
+}
+
+const (
+	maxDescriptionBytes      = 65535
+	maxShortDescriptionBytes = 2048
+	maxMetaBytes             = 255
+)
+
+var urlKeyRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,254}$`)
+
+var seoAttributeOrder = []string{
+	"description", "short_description", "url_key", "meta_title", "meta_keywords", "meta_description",
+}
+
+// validateSEOValues checks content and SEO field bounds. Lengths follow the
+// Magento column sizes; the tool descriptions carry the recommended values for
+// search results (meta_title about 60 characters, meta_description 120-160).
+func validateSEOValues(description, shortDescription, urlKey, metaTitle, metaKeywords, metaDescription string) error {
+	checks := []struct {
+		code  string
+		value string
+		max   int
+	}{
+		{"description", description, maxDescriptionBytes},
+		{"short_description", shortDescription, maxShortDescriptionBytes},
+		{"meta_title", metaTitle, maxMetaBytes},
+		{"meta_keywords", metaKeywords, maxMetaBytes},
+		{"meta_description", metaDescription, maxMetaBytes},
+	}
+	for _, check := range checks {
+		if err := validateSEOAttribute(check.code, check.value); err != nil {
+			return err
+		}
+	}
+	if urlKey != "" && !urlKeyRE.MatchString(urlKey) {
+		return invalidf("url_key must be lowercase letters, digits, and hyphens, starting with a letter or digit")
+	}
+	return nil
+}
+
+// validateSEOAttribute checks one SEO/content attribute; import validation
+// reuses it for CSV/JSON rows.
+func validateSEOAttribute(code, value string) error {
+	if value == "" {
+		return nil
+	}
+	var limit int
+	switch code {
+	case "description":
+		limit = maxDescriptionBytes
+	case "short_description":
+		limit = maxShortDescriptionBytes
+	case "url_key":
+		if !urlKeyRE.MatchString(value) {
+			return invalidf("url_key must be lowercase letters, digits, and hyphens")
+		}
+		return nil
+	case "meta_title", "meta_keywords", "meta_description":
+		limit = maxMetaBytes
+	default:
+		return nil
+	}
+	if len(value) > limit {
+		return invalidf("%s must be at most %d bytes", code, limit)
+	}
+	for _, r := range value {
+		if r == '\n' || r == '\r' || r == '\t' {
+			continue
+		}
+		if unicode.IsControl(r) {
+			return invalidf("%s must not contain control characters", code)
+		}
+	}
+	return nil
+}
+
+func ensureNoSEODuplicates(attributes map[string]string) error {
+	for _, code := range seoAttributeOrder {
+		if _, exists := attributes[code]; exists {
+			return invalidf("%s must be set through its dedicated field, not the attributes map", code)
+		}
+	}
+	return nil
+}
+
+func seoAttributes(description, shortDescription, urlKey, metaTitle, metaKeywords, metaDescription string) ([]productAttribute, error) {
+	return seoAttributesFromPointers([]*string{
+		stringPtrIfSet(description), stringPtrIfSet(shortDescription), stringPtrIfSet(urlKey),
+		stringPtrIfSet(metaTitle), stringPtrIfSet(metaKeywords), stringPtrIfSet(metaDescription),
+	})
+}
+
+func seoAttributesFromPointers(values []*string) ([]productAttribute, error) {
+	out := make([]productAttribute, 0, len(values))
+	for i, code := range seoAttributeOrder {
+		if i >= len(values) || values[i] == nil {
+			continue
+		}
+		if err := validateSEOAttribute(code, *values[i]); err != nil {
+			return nil, err
+		}
+		out = append(out, productAttribute{AttributeCode: code, Value: *values[i]})
+	}
+	return out, nil
+}
+
+func stringPtrIfSet(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
