@@ -243,3 +243,35 @@ func (s *Service) CategoryProducts(ctx context.Context, categoryID, limit, offse
 	}
 	return payload.Items, payload.TotalCount, nil
 }
+
+// CreateAttributeOption adds a value to a select/multiselect attribute with
+// POST /products/attributes/{code}/options.
+func (s *Service) CreateAttributeOption(ctx context.Context, attributeCode, label string) (*AttributeOption, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento catalog service is not configured")
+	}
+	if !attributeCodeRE.MatchString(attributeCode) {
+		return nil, invalidf("attribute code must match %s", attributeCodeRE.String())
+	}
+	if err := validateCategoryName(label); err != nil {
+		return nil, invalidf("option label must be 1-255 bytes without control characters")
+	}
+	body := attributeOptionBody{Option: attributeOptionPayload{Label: label}}
+	raw, err := s.client.do(ctx, http.MethodPost, "/products/attributes/"+url.PathEscape(attributeCode)+"/options", nil, body)
+	if err != nil {
+		return nil, err
+	}
+	var option AttributeOption
+	if err := json.Unmarshal(raw, &option); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable attribute-option payload").WithCause(err)
+	}
+	return &option, nil
+}
+
+type attributeOptionBody struct {
+	Option attributeOptionPayload `json:"option"`
+}
+
+type attributeOptionPayload struct {
+	Label string `json:"label"`
+}
