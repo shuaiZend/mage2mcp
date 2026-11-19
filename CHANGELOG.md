@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.category.delete` (destructive, confirmation-gated): deletes a
+  category and its subtree; products keep existing but lose that assignment.
+
+### Added
+
 - `magento.products.bulk_update` (confirmation-gated): applies the same status,
   visibility, or custom attributes to up to 50 SKUs with a per-SKU partial-success
   report; name and price are excluded, and failed SKUs are never rolled back.

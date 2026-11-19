@@ -162,3 +162,18 @@ func validateCategoryFields(parentID int, name string, position int) error {
 	}
 	return nil
 }
+
+// DeleteCategory removes a category with DELETE /categories/{id}.
+//
+// Magento deletes the category and its subtree; products in the subtree lose
+// that assignment but are not deleted. The call is destructive and irreversible.
+func (s *Service) DeleteCategory(ctx context.Context, categoryID int) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento catalog service is not configured")
+	}
+	if categoryID <= 0 {
+		return invalidf("category_id must be a positive integer")
+	}
+	_, err := s.client.do(ctx, http.MethodDelete, "/categories/"+strconv.Itoa(categoryID), nil, nil)
+	return err
+}

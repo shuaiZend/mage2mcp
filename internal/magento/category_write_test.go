@@ -126,3 +126,23 @@ func TestCategoryWriteValidation(t *testing.T) {
 		t.Fatalf("assign sku err = %v", err)
 	}
 }
+
+func TestDeleteCategory(t *testing.T) {
+	var method, path string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`true`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	if err := svc.DeleteCategory(context.Background(), 12); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodDelete || path != "/rest/default/V1/categories/12" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if err := svc.DeleteCategory(context.Background(), 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("validation err = %v", err)
+	}
+}
