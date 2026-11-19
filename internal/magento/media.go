@@ -185,3 +185,72 @@ func (s *Service) DeleteMedia(ctx context.Context, sku string, entryID int) erro
 	_, err := s.client.do(ctx, http.MethodDelete, path, nil, nil)
 	return err
 }
+
+// MediaUpdateInput is a partial media-entry update; nil fields are omitted.
+type MediaUpdateInput struct {
+	Label    *string
+	Position *int
+	Types    []string
+	Disabled *bool
+}
+
+// UpdateMedia changes one gallery entry with PUT /products/{sku}/media/{id}.
+func (s *Service) UpdateMedia(ctx context.Context, sku string, entryID int, in MediaUpdateInput) (*MediaEntry, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento media service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return nil, err
+	}
+	if entryID <= 0 {
+		return nil, invalidf("media_id must be a positive integer")
+	}
+	if in.Label == nil && in.Position == nil && in.Types == nil && in.Disabled == nil {
+		return nil, invalidf("at least one field must be provided to update")
+	}
+	if in.Label != nil {
+		if len(*in.Label) > maxMediaLabelBytes || strings.ContainsFunc(*in.Label, unicode.IsControl) {
+			return nil, invalidf("label must be at most %d bytes without control characters", maxMediaLabelBytes)
+		}
+	}
+	if in.Position != nil && (*in.Position < 0 || *in.Position > maxMediaPosition) {
+		return nil, invalidf("position must be between 0 and %d", maxMediaPosition)
+	}
+	if in.Types != nil {
+		seen := make(map[string]bool, len(in.Types))
+		for _, mediaType := range in.Types {
+			if !mediaTypes[mediaType] {
+				return nil, invalidf("types must be a subset of image, small_image, thumbnail, swatch_image")
+			}
+			if seen[mediaType] {
+				return nil, invalidf("media types must not repeat")
+			}
+			seen[mediaType] = true
+		}
+	}
+	entry := mediaUpdateEntry{ID: entryID, Label: in.Label, Position: in.Position, Types: in.Types, Disabled: in.Disabled}
+	body := mediaUpdateBody{Entry: entry}
+	raw, err := s.client.do(ctx, http.MethodPut, "/products/"+url.PathEscape(sku)+"/media/"+strconv.Itoa(entryID), nil, body)
+	if err != nil {
+		return nil, err
+	}
+	var updated MediaEntry
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &updated); err != nil {
+			return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media payload").WithCause(err)
+		}
+	}
+	return &updated, nil
+}
+
+type mediaUpdateBody struct {
+	Entry mediaUpdateEntry `json:"entry"`
+}
+
+type mediaUpdateEntry struct {
+	ID       int      `json:"id"`
+	Label    *string  `json:"label,omitempty"`
+	Position *int     `json:"position,omitempty"`
+	Types    []string `json:"types,omitempty"`
+	Disabled *bool    `json:"disabled,omitempty"`
+}

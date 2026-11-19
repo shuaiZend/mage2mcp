@@ -284,6 +284,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newInvoiceCaptureTool(lookup), newOrderEmailTool(lookup), newMediaDeleteTool(lookup),
 		newOrderCreateTool(lookup), newTierPricesSetTool(lookup), newInventoryTransferTool(lookup),
 		newCustomerCreateTool(lookup), newCustomerUpdateTool(lookup),
+		newMediaUpdateTool(lookup), newOrderCancelTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -332,6 +333,8 @@ func writeToolSchemas() map[string]string {
 		inventoryTransferToolName:    inventoryTransferSchema,
 		customerCreateToolName:       customerCreateSchema,
 		customerUpdateToolName:       customerUpdateSchema,
+		mediaUpdateToolName:          mediaUpdateSchema,
+		orderCancelToolName:          orderCancelSchema,
 	}
 }
 
@@ -1675,6 +1678,98 @@ func newCustomerUpdateTool(lookup serviceLookup) registry.Tool {
 				}
 				return nil, customerUpdateOutput{Customer: *customer}, nil
 			})
+		return nil
+	}
+	return t
+}
+
+const (
+	mediaUpdateToolName    = "magento.product.media.update"
+	mediaUpdateToolTitle   = "Update product media"
+	mediaUpdateDescription = "Magento write operation: updates one gallery entry (label, position, types, disabled) " +
+		"(PUT /rest/{store_code}/V1/products/{sku}/media/{id}) on the resolved instance. Unset fields are omitted. Requires human confirmation."
+	orderCancelToolName    = "magento.order.cancel"
+	orderCancelToolTitle   = "Cancel a Magento order"
+	orderCancelDescription = "Magento write operation: cancels an order " +
+		"(POST /rest/{store_code}/V1/orders/{id}/cancel) on the resolved instance. Irreversible; Magento rejects it when the order is not cancellable. " +
+		"Requires human confirmation."
+
+	mediaUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
+		"media_id": {"type": "integer", "minimum": 1},
+		"label": {"type": "string", "maxLength": 255},
+		"position": {"type": "integer", "minimum": 0, "maximum": 1000},
+		"types": {"type": "array", "items": {"type": "string", "enum": ["image", "small_image", "thumbnail", "swatch_image"]}, "maxItems": 4},
+		"disabled": {"type": "boolean"}
+	}, "required": ["instance", "sku", "media_id"], "additionalProperties": false}`
+
+	orderCancelSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"order_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "order_id"], "additionalProperties": false}`
+)
+
+type mediaUpdateInput struct {
+	Instance string   `json:"instance"`
+	SKU      string   `json:"sku"`
+	MediaID  int      `json:"media_id"`
+	Label    *string  `json:"label"`
+	Position *int     `json:"position"`
+	Types    []string `json:"types"`
+	Disabled *bool    `json:"disabled"`
+}
+
+type mediaUpdateOutput struct {
+	Media MediaEntry `json:"media"`
+}
+
+type orderCancelInput struct {
+	Instance string `json:"instance"`
+	OrderID  int    `json:"order_id"`
+}
+
+type orderCancelOutput struct {
+	OrderID  int  `json:"order_id"`
+	Canceled bool `json:"canceled"`
+}
+
+func newMediaUpdateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(mediaUpdateToolName, mediaUpdateToolTitle, mediaUpdateDescription, capabilityProductWrite)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(mediaUpdateToolName, mediaUpdateToolTitle, mediaUpdateDescription, mediaUpdateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in mediaUpdateInput) (*mcp.CallToolResult, mediaUpdateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, mediaUpdateOutput{}, err
+				}
+				media, err := svc.UpdateMedia(ctx, in.SKU, in.MediaID, MediaUpdateInput{
+					Label: in.Label, Position: in.Position, Types: in.Types, Disabled: in.Disabled,
+				})
+				if err != nil {
+					return nil, mediaUpdateOutput{}, err
+				}
+				return nil, mediaUpdateOutput{Media: *media}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newOrderCancelTool(lookup serviceLookup) registry.Tool {
+	t := destructiveToolMetadata(orderCancelToolName, orderCancelToolTitle, orderCancelDescription, "magento.order.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: orderCancelToolName, Title: orderCancelToolTitle, Description: orderCancelDescription,
+			InputSchema: json.RawMessage(orderCancelSchema),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in orderCancelInput) (*mcp.CallToolResult, orderCancelOutput, error) {
+			svc, err := lookup(in.Instance)
+			if err != nil {
+				return nil, orderCancelOutput{}, err
+			}
+			if err := svc.CancelOrder(ctx, in.OrderID); err != nil {
+				return nil, orderCancelOutput{}, err
+			}
+			return nil, orderCancelOutput{OrderID: in.OrderID, Canceled: true}, nil
+		})
 		return nil
 	}
 	return t

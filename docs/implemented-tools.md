@@ -46,6 +46,7 @@ Common behavior:
 | `magento.product.media` | read | 30s | Media gallery of one product |
 | `magento.product.links` | read | 30s | Related, upsell, or cross-sell links of a product |
 | `magento.product.media.upload` | write + confirmation | 60s | Adds an image to a gallery; base64 capped at 5 MiB, MIME/filename/types validated |
+| `magento.product.media.update` | write + confirmation | 60s | Updates label/position/types/disabled of one gallery entry |
 | `magento.product.media.delete` | destructive + confirmation | 60s | Deletes one media entry from a gallery |
 | `magento.invoice.create` | write + confirmation | 60s | Invoices an order; `capture` defaults to false and does not charge |
 | `magento.shipment.create` | write + confirmation | 60s | Ships order items with up to 20 tracking numbers |
@@ -54,6 +55,7 @@ Common behavior:
 | `magento.order.comment` | write + confirmation | 60s | Adds a status-history comment; a non-empty status also transitions the order |
 | `magento.order.hold` | write + confirmation | 60s | Places an order on hold |
 | `magento.order.unhold` | write + confirmation | 60s | Releases an order hold |
+| `magento.order.cancel` | destructive + confirmation | 60s | Cancels a cancellable order; irreversible |
 | `magento.category.create` | write + confirmation | 60s | Creates a category under a parent |
 | `magento.category.update` | write + confirmation | 60s | Partial update of name/active/position/menu visibility |
 | `magento.category.assign_product` | write + confirmation | 60s | Links a product to a category |

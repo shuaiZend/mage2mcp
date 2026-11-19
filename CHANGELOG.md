@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `magento.product.media.update` (label/position/types/disabled of one gallery
+  entry) and `magento.order.cancel` (destructive, confirmation-gated;
+  irreversible and only allowed while the order is cancellable).
+
 ## [0.1.0] - 2026-11-19
 
 First minor pre-release: the Magento surface is broad (77 tools), writes are
