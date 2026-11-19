@@ -40,10 +40,19 @@ services:
 YAML
 echo "== postgres =="
 docker compose -f "$ROOT/docker-compose.yml" -f "$WORK/compose.override.yml" up -d postgres
-for _ in $(seq 1 30); do
-  if docker compose -f "$ROOT/docker-compose.yml" -f "$WORK/compose.override.yml" exec -T postgres pg_isready -U mage2mcp >/dev/null 2>&1; then break; fi
+pg_ready=0
+for _ in $(seq 1 60); do
+  if docker compose -f "$ROOT/docker-compose.yml" -f "$WORK/compose.override.yml" exec -T postgres pg_isready -U mage2mcp >/dev/null 2>&1; then
+    pg_ready=1
+    break
+  fi
   sleep 1
 done
+if [[ "$pg_ready" != "1" ]]; then
+  echo "E2E FAIL: postgres did not become ready"
+  docker compose -f "$ROOT/docker-compose.yml" -f "$WORK/compose.override.yml" logs postgres | tail -30
+  exit 1
+fi
 
 cat > "$WORK/config.yaml" <<YAML
 server:
@@ -77,11 +86,19 @@ MAGENTO_PID=$!
 echo "== server =="
 "$WORK/bin/server" -config "$WORK/config.yaml" >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
-for _ in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${API_PORT}/healthz" >/dev/null 2>&1; then break; fi
+server_ready=0
+for _ in $(seq 1 60); do
+  if curl -fsS "http://127.0.0.1:${API_PORT}/healthz" >/dev/null 2>&1; then
+    server_ready=1
+    break
+  fi
   sleep 1
 done
-curl -fsS "http://127.0.0.1:${API_PORT}/healthz" >/dev/null
+if [[ "$server_ready" != "1" ]]; then
+  echo "E2E FAIL: server did not become healthy"
+  tail -30 "$WORK/server.log"
+  exit 1
+fi
 
 echo "== worker =="
 "$WORK/bin/worker" -config "$WORK/config.yaml" >"$WORK/worker.log" 2>&1 &
