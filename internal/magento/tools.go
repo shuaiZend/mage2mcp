@@ -92,6 +92,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newOrderGetTool(lookup), newOrderSearchTool(lookup), newSalesSummaryTool(lookup),
 		newCategoryGetTool(lookup), newCategoryTreeTool(lookup),
 		newAttributeSetsTool(lookup), newAttributesTool(lookup),
+		newProductMediaTool(lookup), newStockStatusTool(lookup), newSourceItemsTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -563,6 +564,129 @@ func newAttributesTool(lookup serviceLookup) registry.Tool {
 					return nil, attributesOutput{}, err
 				}
 				return nil, attributesOutput{Attributes: attributes}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	productMediaToolName  = "magento.product.media"
+	productMediaToolTitle = "Get Magento product media"
+	stockStatusToolName   = "magento.inventory.status"
+	stockStatusToolTitle  = "Get Magento stock status"
+	sourceItemsToolName   = "magento.inventory.source_items"
+	sourceItemsToolTitle  = "List Magento MSI source items"
+
+	productMediaToolDescription = "Lists the media gallery of one product " +
+		"(GET /rest/{store_code}/V1/products/{sku}/media). Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	stockStatusToolDescription = "Reads the catalog inventory status of one SKU " +
+		"(GET /rest/{store_code}/V1/stockItems/{sku}): quantity, in-stock flag, and backorders. " +
+		"On multi-source installations this is the aggregated catalog value; use source_items for per-source quantities. Read-only."
+	sourceItemsToolDescription = "Lists MSI source quantities for up to 20 SKUs " +
+		"(GET /rest/{store_code}/V1/inventory/source-items with a sku in-filter). Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	productMediaSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}
+	}, "required": ["instance", "sku"], "additionalProperties": false}`
+
+	stockStatusSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}
+	}, "required": ["instance", "sku"], "additionalProperties": false}`
+
+	sourceItemsSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"skus": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string", "pattern": "` + skuInputPattern + `"}, "description": "SKUs to look up, 1-20."}
+	}, "required": ["instance", "skus"], "additionalProperties": false}`
+)
+
+type productMediaInput struct {
+	Instance string `json:"instance"`
+	SKU      string `json:"sku"`
+}
+
+type productMediaOutput struct {
+	Media []MediaEntry `json:"media"`
+}
+
+type stockStatusInput struct {
+	Instance string `json:"instance"`
+	SKU      string `json:"sku"`
+}
+
+type stockStatusOutput struct {
+	Status StockStatus `json:"status"`
+}
+
+type sourceItemsInput struct {
+	Instance string   `json:"instance"`
+	SKUs     []string `json:"skus"`
+}
+
+type sourceItemsOutput struct {
+	Items []SourceItemRead `json:"items"`
+}
+
+func newProductMediaTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(productMediaToolName, productMediaToolTitle, productMediaToolDescription)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(productMediaToolName, productMediaToolTitle, productMediaToolDescription, productMediaSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productMediaInput) (*mcp.CallToolResult, productMediaOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productMediaOutput{}, err
+				}
+				media, err := svc.ProductMedia(ctx, in.SKU)
+				if err != nil {
+					return nil, productMediaOutput{}, err
+				}
+				return nil, productMediaOutput{Media: media}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newStockStatusTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(stockStatusToolName, stockStatusToolTitle, stockStatusToolDescription)
+	t.Capability = "magento.inventory.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(stockStatusToolName, stockStatusToolTitle, stockStatusToolDescription, stockStatusSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in stockStatusInput) (*mcp.CallToolResult, stockStatusOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, stockStatusOutput{}, err
+				}
+				status, err := svc.StockStatus(ctx, in.SKU)
+				if err != nil {
+					return nil, stockStatusOutput{}, err
+				}
+				return nil, stockStatusOutput{Status: *status}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newSourceItemsTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(sourceItemsToolName, sourceItemsToolTitle, sourceItemsToolDescription)
+	t.Capability = "magento.inventory.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(sourceItemsToolName, sourceItemsToolTitle, sourceItemsToolDescription, sourceItemsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in sourceItemsInput) (*mcp.CallToolResult, sourceItemsOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, sourceItemsOutput{}, err
+				}
+				items, err := svc.SourceItems(ctx, in.SKUs)
+				if err != nil {
+					return nil, sourceItemsOutput{}, err
+				}
+				return nil, sourceItemsOutput{Items: items}, nil
 			})
 		return nil
 	}
