@@ -111,3 +111,44 @@ func TestOrderDocumentValidation(t *testing.T) {
 		t.Fatalf("shipment err = %v", err)
 	}
 }
+
+func TestOrderCreditmemosAndGet(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/default/V1/orders/42/creditmemos":
+			_, _ = w.Write([]byte(`[{"entity_id":9,"increment_id":"000000009","order_id":42,"state":2,"grand_total":25,"total_qty":1,"order_currency_code":"USD"}]`))
+		case "/rest/default/V1/creditmemos/9":
+			_, _ = w.Write([]byte(`{"entity_id":9,"increment_id":"000000009","order_id":42,"grand_total":25,"adjustment":-5,"order_currency_code":"USD"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	creditmemos, err := svc.OrderCreditmemos(context.Background(), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(creditmemos) != 1 || creditmemos[0].GrandTotal != 25 {
+		t.Fatalf("creditmemos = %+v", creditmemos)
+	}
+	creditmemo, err := svc.GetCreditmemo(context.Background(), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creditmemo.Adjustment != -5 || creditmemo.OrderID != 42 {
+		t.Fatalf("creditmemo = %+v", creditmemo)
+	}
+}
+
+func TestCreditmemoValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	if _, err := svc.OrderCreditmemos(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("list err = %v", err)
+	}
+	if _, err := svc.GetCreditmemo(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("get err = %v", err)
+	}
+}

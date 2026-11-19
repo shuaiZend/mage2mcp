@@ -68,6 +68,7 @@ const (
 		instanceResolutionNote
 
 	instanceProp        = `"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}`
+	confirmationProp    = `"confirmation_id": {"type": "string", "maxLength": 128, "description": "Approval id from a confirmation_required response; resend the same arguments with this id to execute."}`
 	skuProp             = `"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}`
 	nameProp            = `"name": {"type": "string", "minLength": 1, "maxLength": 255}`
 	setProp             = `"attribute_set_id": {"type": "integer", "minimum": 1}`
@@ -81,11 +82,11 @@ const (
 	childAttributesProp = `"attributes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "maxLength": 255}}`
 	quantityProp        = `"quantity": {"type": "integer", "minimum": 0, "description": "Optional default-source quantity assigned after the product exists."}`
 
-	productCreateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + typeIDProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + quantityProp + `}, "required": ["instance", "sku", "name", "attribute_set_id", "type_id", "price"], "additionalProperties": false}`
-	productUpdateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + skuProp + `, ` + nameProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + attributesProp + `}, "required": ["instance", "sku"], "additionalProperties": false}`
-	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
-	configurableAddChildSchema = `{"type": "object", "properties": {` + instanceProp + `, "parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "child_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}}, "required": ["instance", "parent_sku", "child_sku"], "additionalProperties": false}`
-	inventoryAssignSchema      = `{"type": "object", "properties": {` + instanceProp + `, "items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "source_code", "quantity", "status"], "properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "source_code": {"type": "string", "pattern": "` + sourceCodeInputPattern + `"}, "quantity": {"type": "integer", "minimum": 0}, "status": {"type": "integer", "enum": [0, 1], "description": "1 in stock, 0 out of stock."}}}}}, "required": ["instance", "items"], "additionalProperties": false}`
+	productCreateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + typeIDProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + quantityProp + `}, "required": ["instance", "sku", "name", "attribute_set_id", "type_id", "price"], "additionalProperties": false}`
+	productUpdateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + attributesProp + `}, "required": ["instance", "sku"], "additionalProperties": false}`
+	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
+	configurableAddChildSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "child_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}}, "required": ["instance", "parent_sku", "child_sku"], "additionalProperties": false}`
+	inventoryAssignSchema      = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "source_code", "quantity", "status"], "properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "source_code": {"type": "string", "pattern": "` + sourceCodeInputPattern + `"}, "quantity": {"type": "integer", "minimum": 0}, "status": {"type": "integer", "enum": [0, 1], "description": "1 in stock, 0 out of stock."}}}}}, "required": ["instance", "items"], "additionalProperties": false}`
 )
 
 type productCreateInput struct {
@@ -212,6 +213,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 	tools := []registry.Tool{
 		newProductCreateTool(lookup), newProductUpdateTool(lookup), newConfigurableCreateTool(lookup),
 		newConfigurableAddChildTool(lookup), newInventoryAssignTool(lookup), newImportExecuteTool(lookup),
+		newProductDeleteTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -421,4 +423,64 @@ func newImportExecuteTool(lookup serviceLookup) registry.Tool {
 		return nil
 	}
 	return tool
+}
+
+const (
+	productDeleteToolName    = "magento.product.delete"
+	productDeleteToolTitle   = "Delete Magento product"
+	productDeleteDescription = "Magento write operation: deletes one product by SKU " +
+		"(DELETE /rest/{store_code}/V1/products/{sku}) on the resolved instance. " +
+		"Destructive and irreversible: configurable children, links, and reviews are removed with it, " +
+		"and Magento returns 404 for an unknown SKU so a repeated delete is not a no-op. Requires human confirmation."
+
+	productDeleteSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `},
+		"required": ["instance", "sku"], "additionalProperties": false}`
+)
+
+type productDeleteInput struct {
+	Instance string `json:"instance"`
+	SKU      string `json:"sku"`
+}
+
+type productDeleteOutput struct {
+	SKU     string `json:"sku"`
+	Deleted bool   `json:"deleted"`
+}
+
+func destructiveToolMetadata(name, title, description, capability string) registry.Tool {
+	return registry.Tool{
+		Name: name, Title: title, Description: description,
+		Capability: capability, Permission: registry.PermissionDestructive, Timeout: writeToolTimeout,
+		RequiresConfirmation: true,
+		Annotations: mcp.ToolAnnotations{
+			ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue(),
+		},
+	}
+}
+
+func destructiveTrue() *bool {
+	value := true
+	return &value
+}
+
+func newProductDeleteTool(lookup serviceLookup) registry.Tool {
+	t := destructiveToolMetadata(productDeleteToolName, productDeleteToolTitle, productDeleteDescription, capabilityProductWrite)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: productDeleteToolName, Title: productDeleteToolTitle, Description: productDeleteDescription,
+			InputSchema: json.RawMessage(productDeleteSchema),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in productDeleteInput) (*mcp.CallToolResult, productDeleteOutput, error) {
+			svc, err := lookup(in.Instance)
+			if err != nil {
+				return nil, productDeleteOutput{}, err
+			}
+			if err := svc.DeleteProduct(ctx, in.SKU); err != nil {
+				return nil, productDeleteOutput{}, err
+			}
+			return nil, productDeleteOutput{SKU: in.SKU, Deleted: true}, nil
+		})
+		return nil
+	}
+	return t
 }

@@ -23,6 +23,7 @@ import (
 var writeToolNames = []string{
 	productCreateToolName, productUpdateToolName, configurableCreateToolName,
 	configurableAddChildToolName, inventoryAssignToolName, importExecuteToolName,
+	productDeleteToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -46,8 +47,12 @@ func TestRegisterWritesMetadata(t *testing.T) {
 		if !ok {
 			t.Fatalf("tool %q is not registered", name)
 		}
-		if tool.Permission != registry.PermissionWrite {
-			t.Fatalf("tool %q permission = %q, want write", name, tool.Permission)
+		wantPermission := registry.PermissionWrite
+		if name == productDeleteToolName {
+			wantPermission = registry.PermissionDestructive
+		}
+		if tool.Permission != wantPermission {
+			t.Fatalf("tool %q permission = %q, want %q", name, tool.Permission, wantPermission)
 		}
 		if !tool.RequiresConfirmation {
 			t.Fatalf("write tool %q must require confirmation", name)
@@ -61,7 +66,15 @@ func TestRegisterWritesMetadata(t *testing.T) {
 		if tool.Annotations.IdempotentHint {
 			t.Fatalf("write tool %q must not set idempotentHint", name)
 		}
-		if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
+		destructive := tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint
+		if name == productDeleteToolName {
+			if !destructive {
+				t.Fatalf("destructive tool %q must set destructiveHint=true", name)
+			}
+			if tool.Permission != registry.PermissionDestructive {
+				t.Fatalf("destructive tool %q permission = %q", name, tool.Permission)
+			}
+		} else if destructive {
 			t.Fatalf("write tool %q must set destructiveHint=false", name)
 		}
 		if tool.Capability == "" {
@@ -153,6 +166,8 @@ func TestWriteToolsThroughInMemoryTransport(t *testing.T) {
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/child"):
 			_, _ = io.WriteString(w, `true`)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/rest/default/V1/products/"):
+			_, _ = io.WriteString(w, `true`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -195,7 +210,12 @@ func TestWriteToolsThroughInMemoryTransport(t *testing.T) {
 		if tool.Annotations == nil || tool.Annotations.ReadOnlyHint {
 			t.Fatalf("write tool %q must not be read-only", tool.Name)
 		}
-		if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
+		destructive := tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint
+		if tool.Name == productDeleteToolName {
+			if !destructive {
+				t.Fatalf("destructive tool %q must set destructiveHint=true", tool.Name)
+			}
+		} else if destructive {
 			t.Fatalf("write tool %q must set destructiveHint=false", tool.Name)
 		}
 		if tool.InputSchema == nil {
@@ -321,5 +341,31 @@ func TestWriteToolsThroughInMemoryTransport(t *testing.T) {
 	}
 	if calls.Load() != before {
 		t.Fatal("schema-invalid price must not reach the upstream")
+	}
+}
+
+func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
+	// The confirmation middleware consumes confirmation_id from the raw
+	// arguments, but the JSON Schema must also allow it or the approval retry
+	// fails validation before the handler runs.
+	schemas := map[string]string{
+		"product.create":      productCreateSchema,
+		"product.update":      productUpdateSchema,
+		"configurable.create": configurableCreateSchema,
+		"configurable.child":  configurableAddChildSchema,
+		"inventory.assign":    inventoryAssignSchema,
+		"import.execute":      importExecuteSchema,
+		"product.delete":      productDeleteSchema,
+	}
+	for name, schema := range schemas {
+		var doc struct {
+			Properties map[string]any `json:"properties"`
+		}
+		if err := json.Unmarshal([]byte(schema), &doc); err != nil {
+			t.Fatalf("%s schema is not valid JSON: %v", name, err)
+		}
+		if _, ok := doc.Properties["confirmation_id"]; !ok {
+			t.Fatalf("%s schema does not accept confirmation_id", name)
+		}
 	}
 }

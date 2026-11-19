@@ -41,6 +41,8 @@ Common behavior:
 | `magento.invoice.get` | read | 30s | One invoice by id |
 | `magento.shipment.list` | read | 30s | Shipments of one order, including tracking numbers |
 | `magento.shipment.get` | read | 30s | One shipment by id |
+| `magento.creditmemo.list` | read | 30s | Credit memos of one order |
+| `magento.creditmemo.get` | read | 30s | One credit memo by id |
 | `magento.sales.summary` | read | 30s | Per-day order count, grand-total revenue, and item quantity over a bounded window (max 1000 orders, truncation reported) |
 | `magento.product.create` | write + confirmation | 60s | Simple/virtual/downloadable/bundle create with EAV attributes |
 | `magento.product.update` | write + confirmation | 60s | Merge update of provided fields |
@@ -48,6 +50,7 @@ Common behavior:
 | `magento.configurable.add_child` | write + confirmation | 60s | Link one variant |
 | `magento.inventory.assign` | write + confirmation | 60s | MSI source items, at most 100 per call |
 | `magento.import.execute` | write + confirmation | 60s | Bounded batch execution with partial-success report |
+| `magento.product.delete` | destructive + confirmation | 60s | Deletes one product by SKU; irreversible, 404 on unknown SKU |
 
 ## Cloudflare (read-only)
 
@@ -76,7 +79,7 @@ Common behavior:
 
 ## Not implemented yet
 
-Write deletes (product/configurable link/inventory unassign), media upload,
+Configurable link removal, inventory unassign, media upload,
 category and attribute tools, Logpush inspection, GA4 ecommerce reports, and the
 remaining unified scenarios. They are designed in [mcp-tools.md](mcp-tools.md)
 but are not registered.

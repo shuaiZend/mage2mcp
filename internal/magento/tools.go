@@ -95,6 +95,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newProductMediaTool(lookup), newStockStatusTool(lookup), newSourceItemsTool(lookup),
 		newOrderHistoryTool(lookup), newInvoiceListTool(lookup), newInvoiceGetTool(lookup),
 		newShipmentListTool(lookup), newShipmentGetTool(lookup),
+		newCreditmemoListTool(lookup), newCreditmemoGetTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -873,6 +874,80 @@ func newShipmentGetTool(lookup serviceLookup) registry.Tool {
 					return nil, shipmentGetOutput{}, err
 				}
 				return nil, shipmentGetOutput{Shipment: *shipment}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	creditmemoListToolName  = "magento.creditmemo.list"         // #nosec G101 -- Magento credit memo, not a credential
+	creditmemoListToolTitle = "List Magento order credit memos" // #nosec G101 -- Magento credit memo
+	creditmemoGetToolName   = "magento.creditmemo.get"          // #nosec G101 -- Magento credit memo
+	creditmemoGetToolTitle  = "Get Magento credit memo"         // #nosec G101 -- Magento credit memo
+
+	creditmemoListToolDescription = "Lists the credit memos of one order " +
+		"(GET /rest/{store_code}/V1/orders/{id}/creditmemos) with totals and quantities. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	creditmemoGetToolDescription = "Reads one credit memo by id " +
+		"(GET /rest/{store_code}/V1/creditmemos/{id}) with totals and quantities. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	creditmemoIDSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"creditmemo_id": {"type": "integer", "minimum": 1, "description": "Magento credit memo entity id."}
+	}, "required": ["instance", "creditmemo_id"], "additionalProperties": false}`
+)
+
+type creditmemoListOutput struct {
+	Creditmemos []Creditmemo `json:"creditmemos"`
+}
+
+type creditmemoGetInput struct {
+	Instance     string `json:"instance"`
+	CreditmemoID int    `json:"creditmemo_id"`
+}
+
+type creditmemoGetOutput struct {
+	Creditmemo Creditmemo `json:"creditmemo"`
+}
+
+func newCreditmemoListTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(creditmemoListToolName, creditmemoListToolTitle, creditmemoListToolDescription)
+	t.Capability = "magento.creditmemo.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(creditmemoListToolName, creditmemoListToolTitle, creditmemoListToolDescription, orderIDOnlySchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderIDInput) (*mcp.CallToolResult, creditmemoListOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, creditmemoListOutput{}, err
+				}
+				creditmemos, err := svc.OrderCreditmemos(ctx, in.OrderID)
+				if err != nil {
+					return nil, creditmemoListOutput{}, err
+				}
+				return nil, creditmemoListOutput{Creditmemos: creditmemos}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newCreditmemoGetTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(creditmemoGetToolName, creditmemoGetToolTitle, creditmemoGetToolDescription)
+	t.Capability = "magento.creditmemo.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(creditmemoGetToolName, creditmemoGetToolTitle, creditmemoGetToolDescription, creditmemoIDSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in creditmemoGetInput) (*mcp.CallToolResult, creditmemoGetOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, creditmemoGetOutput{}, err
+				}
+				creditmemo, err := svc.GetCreditmemo(ctx, in.CreditmemoID)
+				if err != nil {
+					return nil, creditmemoGetOutput{}, err
+				}
+				return nil, creditmemoGetOutput{Creditmemo: *creditmemo}, nil
 			})
 		return nil
 	}
