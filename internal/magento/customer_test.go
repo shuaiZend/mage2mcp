@@ -280,3 +280,54 @@ func TestCustomerAddressWriteValidation(t *testing.T) {
 		t.Fatalf("customer id err = %v", err)
 	}
 }
+
+func TestUpdateCustomerAddressPartial(t *testing.T) {
+	var method, path string
+	var body map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":5,"country_id":"GB","default_billing":false,"default_shipping":true}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	shipping := true
+	address, err := svc.UpdateCustomerAddress(context.Background(), 7, 5, CustomerAddressUpdateInput{DefaultShipping: &shipping})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPut || path != "/rest/default/V1/customers/7/addresses/5" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	payload, _ := body["address"].(map[string]any)
+	if payload["default_shipping"] != true {
+		t.Fatalf("body = %+v", payload)
+	}
+	if _, ok := payload["city"]; ok {
+		t.Fatal("unset city must be omitted")
+	}
+	if !address.DefaultShipping || address.ID != 5 {
+		t.Fatalf("address = %+v", address)
+	}
+}
+
+func TestUpdateCustomerAddressValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	if _, err := svc.UpdateCustomerAddress(ctx, 0, 5, CustomerAddressUpdateInput{}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("ids err = %v", err)
+	}
+	if _, err := svc.UpdateCustomerAddress(ctx, 7, 5, CustomerAddressUpdateInput{}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("empty err = %v", err)
+	}
+	badCountry := "gb"
+	if _, err := svc.UpdateCustomerAddress(ctx, 7, 5, CustomerAddressUpdateInput{CountryID: &badCountry}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("country err = %v", err)
+	}
+	emptyStreet := []string{}
+	if _, err := svc.UpdateCustomerAddress(ctx, 7, 5, CustomerAddressUpdateInput{Street: &emptyStreet}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("street err = %v", err)
+	}
+}

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.customer.addresses.update` (confirmation-gated): partial address
+  update including the default billing/shipping flags, with a PII-safe response.
+
+### Added
+
 - Customer address writes: `magento.customer.addresses.create` (accepts the full
   address but returns the PII-safe projection) and
   `magento.customer.addresses.delete` (destructive, confirmation-gated).
