@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento product link writes: `magento.product.links.add` and
+  `magento.product.links.remove` for related/upsell/cross-sell relations, with
+  self-link, type, and position validation. Both require confirmation.
 - Magento category writes: `magento.category.create`,
   `magento.category.update` (partial update; at least one field required), and
   `magento.category.assign_product`. All are confirmation-gated with name,

@@ -218,6 +218,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newShipmentCreateTool(lookup), newCreditmemoCreateTool(lookup),
 		newOrderCommentTool(lookup), newOrderHoldTool(lookup, true), newOrderHoldTool(lookup, false),
 		newCategoryCreateTool(lookup), newCategoryUpdateTool(lookup), newCategoryAssignProductTool(lookup),
+		newProductLinkAddTool(lookup), newProductLinkRemoveTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -1045,6 +1046,85 @@ func newCategoryAssignProductTool(lookup serviceLookup) registry.Tool {
 					return nil, categoryAssignOutput{}, err
 				}
 				return nil, categoryAssignOutput{CategoryID: in.CategoryID, SKU: in.SKU, Assigned: true}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	productLinkAddToolName    = "magento.product.links.add"
+	productLinkAddToolTitle   = "Add a Magento product link"
+	productLinkAddDescription = "Magento write operation: creates a related, upsell, or cross-sell link between two products " +
+		"(POST /rest/{store_code}/V1/products/{sku}/links) on the resolved instance. Requires human confirmation."
+	productLinkRemoveToolName    = "magento.product.links.remove"
+	productLinkRemoveToolTitle   = "Remove a Magento product link"
+	productLinkRemoveDescription = "Magento write operation: deletes a related, upsell, or cross-sell link " +
+		"(DELETE /rest/{store_code}/V1/products/{sku}/links/{type}/{linkedSku}) on the resolved instance. Requires human confirmation."
+
+	productLinkAddSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+		"link_type": {"type": "string", "enum": ["related", "upsell", "crosssell"]},
+		"linked_product_sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+		"position": {"type": "integer", "minimum": 0, "maximum": 10000}
+	}, "required": ["instance", "sku", "link_type", "linked_product_sku"], "additionalProperties": false}`
+
+	productLinkRemoveSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+		"link_type": {"type": "string", "enum": ["related", "upsell", "crosssell"]},
+		"linked_product_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}
+	}, "required": ["instance", "sku", "link_type", "linked_product_sku"], "additionalProperties": false}`
+)
+
+type productLinkWriteInput struct {
+	Instance         string `json:"instance"`
+	SKU              string `json:"sku"`
+	LinkType         string `json:"link_type"`
+	LinkedProductSKU string `json:"linked_product_sku"`
+	Position         int    `json:"position"`
+}
+
+type productLinkWriteOutput struct {
+	SKU              string `json:"sku"`
+	LinkType         string `json:"link_type"`
+	LinkedProductSKU string `json:"linked_product_sku"`
+	Applied          bool   `json:"applied"`
+}
+
+func newProductLinkAddTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(productLinkAddToolName, productLinkAddToolTitle, productLinkAddDescription, capabilityProductWrite)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(productLinkAddToolName, productLinkAddToolTitle, productLinkAddDescription, productLinkAddSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productLinkWriteInput) (*mcp.CallToolResult, productLinkWriteOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productLinkWriteOutput{}, err
+				}
+				if err := svc.AddProductLink(ctx, ProductLinkInput{
+					SKU: in.SKU, LinkType: in.LinkType, LinkedProductSKU: in.LinkedProductSKU, Position: in.Position,
+				}); err != nil {
+					return nil, productLinkWriteOutput{}, err
+				}
+				return nil, productLinkWriteOutput{SKU: in.SKU, LinkType: in.LinkType, LinkedProductSKU: in.LinkedProductSKU, Applied: true}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newProductLinkRemoveTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(productLinkRemoveToolName, productLinkRemoveToolTitle, productLinkRemoveDescription, capabilityProductWrite)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(productLinkRemoveToolName, productLinkRemoveToolTitle, productLinkRemoveDescription, productLinkRemoveSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productLinkWriteInput) (*mcp.CallToolResult, productLinkWriteOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, productLinkWriteOutput{}, err
+				}
+				if err := svc.RemoveProductLink(ctx, in.SKU, in.LinkType, in.LinkedProductSKU); err != nil {
+					return nil, productLinkWriteOutput{}, err
+				}
+				return nil, productLinkWriteOutput{SKU: in.SKU, LinkType: in.LinkType, LinkedProductSKU: in.LinkedProductSKU, Applied: true}, nil
 			})
 		return nil
 	}

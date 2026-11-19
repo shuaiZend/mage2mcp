@@ -48,3 +48,72 @@ func (s *Service) ProductLinks(ctx context.Context, sku, linkType string) ([]Pro
 	}
 	return links, nil
 }
+
+const maxLinkPosition = 10000
+
+// ProductLinkInput is one link creation request.
+type ProductLinkInput struct {
+	SKU              string `json:"sku"`
+	LinkType         string `json:"link_type"`
+	LinkedProductSKU string `json:"linked_product_sku"`
+	Position         int    `json:"position"`
+}
+
+// AddProductLink creates a relation with POST /products/{sku}/links.
+func (s *Service) AddProductLink(ctx context.Context, in ProductLinkInput) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento product service is not configured")
+	}
+	if err := validateProductLink(in); err != nil {
+		return err
+	}
+	body := productLinkBody{Entity: in}
+	_, err := s.client.do(ctx, http.MethodPost, "/products/"+url.PathEscape(in.SKU)+"/links", nil, body)
+	return err
+}
+
+// RemoveProductLink deletes a relation with
+// DELETE /products/{sku}/links/{type}/{linkedSku}.
+func (s *Service) RemoveProductLink(ctx context.Context, sku, linkType, linkedSKU string) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento product service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return err
+	}
+	if err := validateSKU(linkedSKU); err != nil {
+		return err
+	}
+	if sku == linkedSKU {
+		return invalidf("a product cannot link to itself")
+	}
+	if !linkTypes[linkType] {
+		return invalidf("link_type must be related, upsell, or crosssell")
+	}
+	path := "/products/" + url.PathEscape(sku) + "/links/" + url.PathEscape(linkType) + "/" + url.PathEscape(linkedSKU)
+	_, err := s.client.do(ctx, http.MethodDelete, path, nil, nil)
+	return err
+}
+
+type productLinkBody struct {
+	Entity ProductLinkInput `json:"entity"`
+}
+
+func validateProductLink(in ProductLinkInput) error {
+	if err := validateSKU(in.SKU); err != nil {
+		return err
+	}
+	if err := validateSKU(in.LinkedProductSKU); err != nil {
+		return err
+	}
+	if in.SKU == in.LinkedProductSKU {
+		return invalidf("a product cannot link to itself")
+	}
+	if !linkTypes[in.LinkType] {
+		return invalidf("link_type must be related, upsell, or crosssell")
+	}
+	if in.Position < 0 || in.Position > maxLinkPosition {
+		return invalidf("position must be between 0 and %d", maxLinkPosition)
+	}
+	return nil
+}
