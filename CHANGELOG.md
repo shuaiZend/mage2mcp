@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.attributes.options.create` (confirmation-gated): adds a select or
+  multiselect option, which is how configurable variant values are introduced.
+
+### Added
+
 - `magento.product.media.update` (label/position/types/disabled of one gallery
   entry) and `magento.order.cancel` (destructive, confirmation-gated;
   irreversible and only allowed while the order is cancellable).

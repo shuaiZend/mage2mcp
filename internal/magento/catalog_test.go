@@ -4,6 +4,8 @@ package magento
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -128,5 +130,43 @@ func TestCatalogValidation(t *testing.T) {
 	}
 	if _, err := svc.Attributes(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("attribute set err = %v", err)
+	}
+}
+
+func TestCreateAttributeOption(t *testing.T) {
+	var method, path string
+	var body attributeOptionBody
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"label":"Green","value":"14"}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	option, err := svc.CreateAttributeOption(context.Background(), "color", "Green")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPost || path != "/rest/default/V1/products/attributes/color/options" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if body.Option.Label != "Green" {
+		t.Fatalf("body = %+v", body)
+	}
+	if option.Label != "Green" || option.Value != "14" {
+		t.Fatalf("option = %+v", option)
+	}
+}
+
+func TestCreateAttributeOptionValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	if _, err := svc.CreateAttributeOption(ctx, "Bad Code!", "Green"); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("code err = %v", err)
+	}
+	if _, err := svc.CreateAttributeOption(ctx, "color", ""); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("label err = %v", err)
 	}
 }

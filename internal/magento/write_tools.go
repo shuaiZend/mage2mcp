@@ -284,7 +284,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newInvoiceCaptureTool(lookup), newOrderEmailTool(lookup), newMediaDeleteTool(lookup),
 		newOrderCreateTool(lookup), newTierPricesSetTool(lookup), newInventoryTransferTool(lookup),
 		newCustomerCreateTool(lookup), newCustomerUpdateTool(lookup),
-		newMediaUpdateTool(lookup), newOrderCancelTool(lookup),
+		newMediaUpdateTool(lookup), newOrderCancelTool(lookup), newAttributeOptionCreateTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -304,37 +304,38 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 // writeToolSchemas maps each write tool to its JSON Schema.
 func writeToolSchemas() map[string]string {
 	return map[string]string{
-		productCreateToolName:        productCreateSchema,
-		productUpdateToolName:        productUpdateSchema,
-		productDeleteToolName:        productDeleteSchema,
-		configurableCreateToolName:   configurableCreateSchema,
-		configurableAddChildToolName: configurableAddChildSchema,
-		inventoryAssignToolName:      inventoryAssignSchema,
-		importExecuteToolName:        importExecuteSchema,
-		mediaUploadToolName:          mediaUploadSchema,
-		mediaDeleteToolName:          mediaDeleteSchema,
-		invoiceCreateToolName:        invoiceCreateSchema,
-		invoiceCaptureToolName:       invoiceCaptureSchema,
-		shipmentCreateToolName:       shipmentCreateSchema,
-		creditmemoCreateToolName:     creditmemoCreateSchema,
-		orderCommentToolName:         orderCommentSchema,
-		orderHoldToolName:            orderHoldSchema,
-		orderUnholdToolName:          orderHoldSchema,
-		orderEmailToolName:           orderEmailSchema,
-		orderCreateToolName:          orderCreateSchema,
-		categoryCreateToolName:       categoryCreateSchema,
-		categoryUpdateToolName:       categoryUpdateSchema,
-		categoryAssignToolName:       categoryAssignSchema,
-		removeChildToolName:          removeChildSchema,
-		unassignSourceItemsToolName:  unassignSourceItemsSchema,
-		productLinkAddToolName:       productLinkAddSchema,
-		productLinkRemoveToolName:    productLinkRemoveSchema,
-		tierPricesSetToolName:        tierPricesSetSchema,
-		inventoryTransferToolName:    inventoryTransferSchema,
-		customerCreateToolName:       customerCreateSchema,
-		customerUpdateToolName:       customerUpdateSchema,
-		mediaUpdateToolName:          mediaUpdateSchema,
-		orderCancelToolName:          orderCancelSchema,
+		productCreateToolName:         productCreateSchema,
+		productUpdateToolName:         productUpdateSchema,
+		productDeleteToolName:         productDeleteSchema,
+		configurableCreateToolName:    configurableCreateSchema,
+		configurableAddChildToolName:  configurableAddChildSchema,
+		inventoryAssignToolName:       inventoryAssignSchema,
+		importExecuteToolName:         importExecuteSchema,
+		mediaUploadToolName:           mediaUploadSchema,
+		mediaDeleteToolName:           mediaDeleteSchema,
+		invoiceCreateToolName:         invoiceCreateSchema,
+		invoiceCaptureToolName:        invoiceCaptureSchema,
+		shipmentCreateToolName:        shipmentCreateSchema,
+		creditmemoCreateToolName:      creditmemoCreateSchema,
+		orderCommentToolName:          orderCommentSchema,
+		orderHoldToolName:             orderHoldSchema,
+		orderUnholdToolName:           orderHoldSchema,
+		orderEmailToolName:            orderEmailSchema,
+		orderCreateToolName:           orderCreateSchema,
+		categoryCreateToolName:        categoryCreateSchema,
+		categoryUpdateToolName:        categoryUpdateSchema,
+		categoryAssignToolName:        categoryAssignSchema,
+		removeChildToolName:           removeChildSchema,
+		unassignSourceItemsToolName:   unassignSourceItemsSchema,
+		productLinkAddToolName:        productLinkAddSchema,
+		productLinkRemoveToolName:     productLinkRemoveSchema,
+		tierPricesSetToolName:         tierPricesSetSchema,
+		inventoryTransferToolName:     inventoryTransferSchema,
+		customerCreateToolName:        customerCreateSchema,
+		customerUpdateToolName:        customerUpdateSchema,
+		mediaUpdateToolName:           mediaUpdateSchema,
+		orderCancelToolName:           orderCancelSchema,
+		attributeOptionCreateToolName: attributeOptionCreateSchema,
 	}
 }
 
@@ -1770,6 +1771,49 @@ func newOrderCancelTool(lookup serviceLookup) registry.Tool {
 			}
 			return nil, orderCancelOutput{OrderID: in.OrderID, Canceled: true}, nil
 		})
+		return nil
+	}
+	return t
+}
+
+const (
+	attributeOptionCreateToolName    = "magento.attributes.options.create"
+	attributeOptionCreateToolTitle   = "Create a Magento attribute option"
+	attributeOptionCreateDescription = "Magento write operation: adds a value to a select or multiselect attribute " +
+		"(POST /rest/{store_code}/V1/products/attributes/{code}/options) on the resolved instance. " +
+		"Useful for adding configurable variant values before creating the product. Requires human confirmation."
+
+	attributeOptionCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"attribute_code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"},
+		"label": {"type": "string", "minLength": 1, "maxLength": 255}
+	}, "required": ["instance", "attribute_code", "label"], "additionalProperties": false}`
+)
+
+type attributeOptionCreateInput struct {
+	Instance      string `json:"instance"`
+	AttributeCode string `json:"attribute_code"`
+	Label         string `json:"label"`
+}
+
+type attributeOptionCreateOutput struct {
+	Option AttributeOption `json:"option"`
+}
+
+func newAttributeOptionCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(attributeOptionCreateToolName, attributeOptionCreateToolTitle, attributeOptionCreateDescription, "magento.attribute.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(attributeOptionCreateToolName, attributeOptionCreateToolTitle, attributeOptionCreateDescription, attributeOptionCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in attributeOptionCreateInput) (*mcp.CallToolResult, attributeOptionCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, attributeOptionCreateOutput{}, err
+				}
+				option, err := svc.CreateAttributeOption(ctx, in.AttributeCode, in.Label)
+				if err != nil {
+					return nil, attributeOptionCreateOutput{}, err
+				}
+				return nil, attributeOptionCreateOutput{Option: *option}, nil
+			})
 		return nil
 	}
 	return t
