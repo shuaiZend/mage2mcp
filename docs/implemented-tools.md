@@ -51,6 +51,8 @@ Common behavior:
 | `magento.inventory.assign` | write + confirmation | 60s | MSI source items, at most 100 per call |
 | `magento.import.execute` | write + confirmation | 60s | Bounded batch execution with partial-success report |
 | `magento.product.delete` | destructive + confirmation | 60s | Deletes one product by SKU; irreversible, 404 on unknown SKU |
+| `magento.configurable.remove_child` | write + confirmation | 60s | Unlinks a child from a configurable product; child product remains |
+| `magento.inventory.unassign` | write + confirmation | 60s | Removes MSI source assignments for up to 100 sku/source pairs |
 
 ## Cloudflare (read-only)
 
@@ -79,7 +81,7 @@ Common behavior:
 
 ## Not implemented yet
 
-Configurable link removal, inventory unassign, media upload,
+Media upload, customer/address tools, invoice/shipment/creditmemo creation,
 category and attribute tools, Logpush inspection, GA4 ecommerce reports, and the
 remaining unified scenarios. They are designed in [mcp-tools.md](mcp-tools.md)
 but are not registered.

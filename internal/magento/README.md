@@ -11,7 +11,8 @@ No plugin is installed and the Magento database is never touched.
   source items, bounded import validation and execution, order reads and a
   bounded per-day sales summary, category reads/tree, attribute-set reads, media
   reads, stock/MSI reads, order status history, invoice/shipment/creditmemo reads,
-  and product deletion (destructive, confirmation required).
+  product deletion (destructive), configurable child unlinking, and MSI source
+  unassignment — all writes require two-step confirmation.
 - `Register(reg, svc)` — read tools; `RegisterWrites(reg, svc)` — write tools
   (require confirmation and `tools.writes`).
 
