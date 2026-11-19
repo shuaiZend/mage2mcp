@@ -30,7 +30,7 @@ var writeToolNames = []string{
 	productLinkAddToolName, productLinkRemoveToolName, invoiceCaptureToolName, orderEmailToolName,
 	mediaDeleteToolName, orderCreateToolName, tierPricesSetToolName, inventoryTransferToolName,
 	customerCreateToolName, customerUpdateToolName, mediaUpdateToolName, orderCancelToolName,
-	attributeOptionCreateToolName, attributeOptionDeleteToolName,
+	attributeOptionCreateToolName, attributeOptionDeleteToolName, bulkProductUpdateToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -64,8 +64,12 @@ func TestRegisterWritesMetadata(t *testing.T) {
 		if !tool.RequiresConfirmation {
 			t.Fatalf("write tool %q must require confirmation", name)
 		}
-		if tool.Timeout != 60*time.Second {
-			t.Fatalf("tool %q timeout = %s, want 60s", name, tool.Timeout)
+		wantTimeout := 60 * time.Second
+		if name == bulkProductUpdateToolName {
+			wantTimeout = 120 * time.Second
+		}
+		if tool.Timeout != wantTimeout {
+			t.Fatalf("tool %q timeout = %s, want %s", name, tool.Timeout, wantTimeout)
 		}
 		if tool.Annotations.ReadOnlyHint {
 			t.Fatalf("write tool %q must not set readOnlyHint", name)
@@ -389,6 +393,7 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 		"order.cancel":              orderCancelSchema,
 		"attributes.options.create": attributeOptionCreateSchema,
 		"attributes.options.delete": attributeOptionDeleteSchema,
+		"products.bulk_update":      bulkProductUpdateSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {

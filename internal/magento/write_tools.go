@@ -285,7 +285,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newOrderCreateTool(lookup), newTierPricesSetTool(lookup), newInventoryTransferTool(lookup),
 		newCustomerCreateTool(lookup), newCustomerUpdateTool(lookup),
 		newMediaUpdateTool(lookup), newOrderCancelTool(lookup), newAttributeOptionCreateTool(lookup),
-		newAttributeOptionDeleteTool(lookup),
+		newAttributeOptionDeleteTool(lookup), newBulkProductUpdateTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -338,6 +338,7 @@ func writeToolSchemas() map[string]string {
 		orderCancelToolName:           orderCancelSchema,
 		attributeOptionCreateToolName: attributeOptionCreateSchema,
 		attributeOptionDeleteToolName: attributeOptionDeleteSchema,
+		bulkProductUpdateToolName:     bulkProductUpdateSchema,
 	}
 }
 
@@ -1863,6 +1864,56 @@ func newAttributeOptionDeleteTool(lookup serviceLookup) registry.Tool {
 			}
 			return nil, attributeOptionDeleteOutput{AttributeCode: in.AttributeCode, OptionID: in.OptionID, Deleted: true}, nil
 		})
+		return nil
+	}
+	return t
+}
+
+const (
+	bulkProductUpdateToolName    = "magento.products.bulk_update"
+	bulkProductUpdateToolTitle   = "Bulk update Magento products"
+	bulkProductUpdateDescription = "Magento write operation: applies the same status, visibility, or custom attributes to up to 50 products " +
+		"(one PUT per SKU) on the resolved instance. Partial success: failed SKUs are reported per row and earlier updates are not rolled back. " +
+		"Name and price are not part of the bulk update. Requires human confirmation."
+
+	bulkProductUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"skus": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "pattern": "` + skuInputPattern + `"}},
+		"status": {"type": "integer", "enum": [1, 2]},
+		"visibility": {"type": "integer", "enum": [1, 2, 3, 4]},
+		"attributes": {"type": "object", "additionalProperties": {"type": "string", "maxLength": 255}}
+	}, "required": ["instance", "skus"], "additionalProperties": false}`
+)
+
+type bulkProductUpdateInput struct {
+	Instance   string            `json:"instance"`
+	SKUs       []string          `json:"skus"`
+	Status     *int              `json:"status"`
+	Visibility *int              `json:"visibility"`
+	Attributes map[string]string `json:"attributes"`
+}
+
+type bulkProductUpdateOutput struct {
+	Result BulkUpdateResult `json:"result"`
+}
+
+func newBulkProductUpdateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(bulkProductUpdateToolName, bulkProductUpdateToolTitle, bulkProductUpdateDescription, capabilityProductWrite)
+	t.Timeout = 120 * time.Second
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(bulkProductUpdateToolName, bulkProductUpdateToolTitle, bulkProductUpdateDescription, bulkProductUpdateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in bulkProductUpdateInput) (*mcp.CallToolResult, bulkProductUpdateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, bulkProductUpdateOutput{}, err
+				}
+				result, err := svc.BulkUpdateProducts(ctx, in.SKUs, UpdateProductInput{
+					Status: in.Status, Visibility: in.Visibility, Attributes: in.Attributes,
+				})
+				if err != nil {
+					return nil, bulkProductUpdateOutput{}, err
+				}
+				return nil, bulkProductUpdateOutput{Result: *result}, nil
+			})
 		return nil
 	}
 	return t

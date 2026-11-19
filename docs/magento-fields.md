@@ -42,6 +42,10 @@ pass/warn/fail checks and a score without generating copy.
 
 ## Product update (`magento.product.update`)
 
+Bulk updates use `magento.products.bulk_update`: the same `status`, `visibility`,
+or `attributes` are applied to up to 50 SKUs, one PUT per SKU, with a
+per-SKU partial-success report. Name and price are intentionally excluded.
+
 Same fields as create except `sku` is the path identifier and every field is
 optional. Unset fields are not sent, so Magento preserves the stored values.
 Setting a field to an empty string clears it. Pricing/shipping fields use the

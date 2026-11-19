@@ -82,6 +82,7 @@ Common behavior:
 | `magento.sales.summary` | read | 30s | Per-day order count, grand-total revenue, and item quantity over a bounded window (max 1000 orders, truncation reported) |
 | `magento.product.create` | write + confirmation | 60s | Simple/virtual/downloadable/bundle create with EAV attributes plus description, short_description, url_key, meta_title, meta_keywords, meta_description (SEO guidance in the schema) |
 | `magento.product.update` | write + confirmation | 60s | Merge update of provided fields, including SEO/content fields and category/website reassignment |
+| `magento.products.bulk_update` | write + confirmation | 120s | Same status/visibility/attributes update for up to 50 SKUs with a per-SKU partial-success report |
 | `magento.configurable.create` | write + confirmation | 60s | Children → parent options → links; staged non-atomic errors; parent and children support SEO/content fields |
 | `magento.configurable.add_child` | write + confirmation | 60s | Link one variant |
 | `magento.inventory.assign` | write + confirmation | 60s | MSI source items, at most 100 per call |
