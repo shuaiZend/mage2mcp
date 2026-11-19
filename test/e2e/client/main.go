@@ -112,6 +112,14 @@ func callTool(name string, args map[string]any) (*toolResult, error) {
 		"params": map[string]any{"name": name, "arguments": args}})
 }
 
+func resultText(result *toolResult) string {
+	var parts []string
+	for _, item := range result.Content {
+		parts = append(parts, item.Text)
+	}
+	return strings.Join(parts, " | ")
+}
+
 func errorDetails(result *toolResult) (string, map[string]any) {
 	var structured struct {
 		Code    string         `json:"code"`
@@ -197,7 +205,7 @@ func main() {
 		result, err := callTool("magento.product.create", args)
 		if err != nil || result.IsError {
 			code, _ := errorDetails(result)
-			fmt.Println("CREATE RETRY FAIL:", err, code, string(result.StructuredContent))
+			fmt.Println("CREATE RETRY FAIL:", err, code, string(result.StructuredContent), resultText(result))
 			os.Exit(1)
 		}
 		fmt.Println("CREATED", string(result.StructuredContent))
@@ -313,7 +321,7 @@ func main() {
 		result, err := callTool("magento.configurable.create", args)
 		if err != nil || result.IsError {
 			code, _ := errorDetails(result)
-			fmt.Println("CONFIGURABLE RETRY FAIL:", err, code, string(result.StructuredContent))
+			fmt.Println("CONFIGURABLE RETRY FAIL:", err, code, string(result.StructuredContent), resultText(result))
 			os.Exit(1)
 		}
 		fmt.Println("CREATED CONFIGURABLE", string(result.StructuredContent))
@@ -335,7 +343,7 @@ func main() {
 		result, err := callTool("magento.order.create", args)
 		if err != nil || result.IsError {
 			code, _ := errorDetails(result)
-			fmt.Println("ORDER RETRY FAIL:", err, code, string(result.StructuredContent))
+			fmt.Println("ORDER RETRY FAIL:", err, code, string(result.StructuredContent), resultText(result))
 			os.Exit(1)
 		}
 		var out struct {
