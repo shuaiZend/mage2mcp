@@ -75,6 +75,11 @@ func main() {
 			for _, attr := range body.Product.CustomAttributes {
 				attrs[attr.Code] = fmt.Sprint(attr.Value)
 			}
+			if strings.Contains(body.Product.SKU, "FAIL") {
+				mu.Unlock()
+				writeJSON(w, 400, map[string]string{"message": "simulated create failure"})
+				return
+			}
 			products[body.Product.SKU] = attrs
 			mu.Unlock()
 			writeJSON(w, 200, productJSON(body.Product.SKU))

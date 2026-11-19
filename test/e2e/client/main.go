@@ -388,6 +388,122 @@ func main() {
 		}
 		code, _ := errorDetails(result)
 		fmt.Println("MISMATCH RETRY CODE", code)
+	case "bulk":
+		result, err := callTool("magento.products.bulk_update", map[string]any{
+			"instance": instance, "skus": []string{"E2E-1", "E2E-2"}, "status": 2,
+		})
+		if err != nil {
+			fmt.Println("BULK FAIL:", err)
+			os.Exit(1)
+		}
+		code, details := errorDetails(result)
+		if code == "confirmation_required" {
+			fmt.Println("CONFIRMATION", details["confirmation_id"])
+			return
+		}
+		fmt.Println("UNEXPECTED", code)
+	case "bulk-retry":
+		result, err := callTool("magento.products.bulk_update", map[string]any{
+			"instance": instance, "skus": []string{"E2E-1", "E2E-2"}, "status": 2,
+			"confirmation_id": os.Args[2],
+		})
+		if err != nil || result.IsError {
+			fmt.Println("BULK RETRY FAIL:", err, string(result.StructuredContent))
+			os.Exit(1)
+		}
+		var out struct {
+			Result struct {
+				Updated int `json:"updated"`
+				Failed  int `json:"failed"`
+			} `json:"result"`
+		}
+		_ = json.Unmarshal(result.StructuredContent, &out)
+		fmt.Printf("BULK updated=%d failed=%d\n", out.Result.Updated, out.Result.Failed)
+	case "import-fail":
+		csv := "sku,name,type_id,price,attribute_set_id\nE2E-3,Good,simple,9.99,4\nE2E-FAIL-1,Bad,simple,9.99,4\n"
+		args := map[string]any{"instance": instance, "format": "csv", "data_base64": base64.StdEncoding.EncodeToString([]byte(csv))}
+		result, err := callTool("magento.import.start", args)
+		if err != nil {
+			fmt.Println("IMPORT FAIL START:", err)
+			os.Exit(1)
+		}
+		code, details := errorDetails(result)
+		if code == "confirmation_required" {
+			fmt.Println("CONFIRMATION", details["confirmation_id"])
+			return
+		}
+		fmt.Println("UNEXPECTED", code)
+	case "import-fail-retry":
+		csv := "sku,name,type_id,price,attribute_set_id\nE2E-3,Good,simple,9.99,4\nE2E-FAIL-1,Bad,simple,9.99,4\n"
+		args := map[string]any{"instance": instance, "format": "csv",
+			"data_base64": base64.StdEncoding.EncodeToString([]byte(csv)), "confirmation_id": os.Args[2]}
+		result, err := callTool("magento.import.start", args)
+		if err != nil || result.IsError {
+			fmt.Println("IMPORT FAIL RETRY:", err, string(result.StructuredContent))
+			os.Exit(1)
+		}
+		var out struct {
+			JobID string `json:"job_id"`
+		}
+		_ = json.Unmarshal(result.StructuredContent, &out)
+		fmt.Println("JOB", out.JobID)
+	case "resume":
+		result, err := callTool("magento.import.resume", map[string]any{"job_id": os.Args[2]})
+		if err != nil {
+			fmt.Println("RESUME FAIL:", err)
+			os.Exit(1)
+		}
+		code, details := errorDetails(result)
+		if code == "confirmation_required" {
+			fmt.Println("CONFIRMATION", details["confirmation_id"])
+			return
+		}
+		fmt.Println("UNEXPECTED", code)
+	case "resume-retry":
+		result, err := callTool("magento.import.resume", map[string]any{"job_id": os.Args[2], "confirmation_id": os.Args[3]})
+		if err != nil || result.IsError {
+			fmt.Println("RESUME RETRY FAIL:", err, string(result.StructuredContent))
+			os.Exit(1)
+		}
+		var out struct {
+			JobID string `json:"job_id"`
+			Rows  int    `json:"rows"`
+		}
+		_ = json.Unmarshal(result.StructuredContent, &out)
+		fmt.Printf("RESUMED %s rows=%d\n", out.JobID, out.Rows)
+	case "batches":
+		result, err := callTool("magento.import.batches", map[string]any{"instance": instance, "limit": 10})
+		if err != nil || result.IsError {
+			fmt.Println("BATCHES FAIL:", err, string(result.StructuredContent))
+			os.Exit(1)
+		}
+		var out struct {
+			Batches []struct {
+				ID     string `json:"id"`
+				State  string `json:"state"`
+				Failed int    `json:"failed"`
+			} `json:"batches"`
+		}
+		_ = json.Unmarshal(result.StructuredContent, &out)
+		fmt.Printf("BATCHES %d\n", len(out.Batches))
+		if len(out.Batches) > 0 {
+			fmt.Printf("BATCH %s failed=%d\n", out.Batches[0].ID, out.Batches[0].Failed)
+		}
+	case "batch-get":
+		result, err := callTool("magento.import.batch", map[string]any{"batch_id": os.Args[2]})
+		if err != nil || result.IsError {
+			fmt.Println("BATCH GET FAIL:", err, string(result.StructuredContent))
+			os.Exit(1)
+		}
+		var out struct {
+			Batch struct {
+				Failures []struct {
+					SKU string `json:"sku"`
+				} `json:"failures"`
+			} `json:"batch"`
+		}
+		_ = json.Unmarshal(result.StructuredContent, &out)
+		fmt.Printf("BATCH_FAILURES %d\n", len(out.Batch.Failures))
 	case "import-status":
 		jobID := os.Args[2]
 		deadline := time.Now().Add(90 * time.Second)
