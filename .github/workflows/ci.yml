@@ -171,6 +171,47 @@ jobs:
           fi
           echo "All actions are SHA-pinned."
 
+  docker:
+    name: docker
+    needs: detect
+    if: needs.detect.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build image
+        run: docker build --build-arg VERSION=ci -t mage2mcp:ci .
+      - name: Run the container and probe it
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name mage2mcp-ci -p 18080:8080 \
+            -e MAGE2MCP_AUTH_ENABLED=false \
+            -e MAGE2MCP_DEV_INSECURE=true \
+            -e MAGE2MCP_LISTEN=0.0.0.0:8080 \
+            mage2mcp:ci
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" != "1" ]; then
+            docker logs mage2mcp-ci || true
+            echo "::error::container did not become healthy"
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:18080/healthz
+          curl -fsS http://127.0.0.1:18080/readyz
+          curl -fsS http://127.0.0.1:18080/metrics | grep -q mage2mcp_tool_calls_total
+          user="$(docker inspect -f '{{.Config.User}}' mage2mcp-ci)"
+          echo "container user: ${user}"
+          [ "${user}" = "nonroot:nonroot" ] || [ "${user}" = "65532:65532" ]
+      - name: Container logs
+        if: always()
+        run: docker logs mage2mcp-ci || true
+      - name: Clean up
+        if: always()
+        run: docker rm -f mage2mcp-ci || true
+
   external-links:
     name: external-links
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

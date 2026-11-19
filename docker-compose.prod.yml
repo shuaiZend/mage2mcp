@@ -1,0 +1,23 @@
+# Production-shaped override. Every secret and Access value is required; the
+# stack refuses to start without them. Combine with the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+  redis:
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}", "--appendonly", "yes"]
+  server:
+    environment:
+      MAGE2MCP_AUTH_ENABLED: "true"
+      MAGE2MCP_DEV_INSECURE: "false"
+      MAGE2MCP_AUTH_ISSUER: ${MAGE2MCP_AUTH_ISSUER:?set MAGE2MCP_AUTH_ISSUER}
+      MAGE2MCP_AUTH_AUDIENCE: ${MAGE2MCP_AUTH_AUDIENCE:?set MAGE2MCP_AUTH_AUDIENCE}
+      MAGE2MCP_AUTH_JWKS_URL: ${MAGE2MCP_AUTH_JWKS_URL:?set MAGE2MCP_AUTH_JWKS_URL}
+      MAGE2MCP_DATABASE_URL: "postgres://mage2mcp:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/mage2mcp?sslmode=disable"
+      MAGE2MCP_REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+  worker:
+    environment:
+      MAGE2MCP_DATABASE_URL: "postgres://mage2mcp:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/mage2mcp?sslmode=disable"
+      MAGE2MCP_REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Dockerization: a distroless image with baked configuration and a real
+  `HEALTHCHECK`, a development Compose stack that runs with one command, a
+  production override that requires every secret, and a CI job that builds the
+  image, runs it, and probes health, readiness, and metrics.
 - Phase 1 foundation: runnable MCP server on the official Go SDK with Streamable
   HTTP, tool registry enforcing the tool contract, `platform.info` tool, health
   and readiness endpoints, Prometheus metrics, structured logging with secret

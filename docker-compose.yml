@@ -1,11 +1,18 @@
-# Local development stack. Production deployments should use a managed
-# PostgreSQL and Redis, a secret manager, and Cloudflare Tunnel for ingress.
+# Local development stack: `docker compose up --build`.
+#
+# Defaults are development-only: authentication is disabled, passwords are
+# fixed placeholders, and the port is bound to loopback. Never expose this
+# stack to a network. For a production-shaped stack use:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# and provide the Access and password values from a secret manager.
 services:
   postgres:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: mage2mcp
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mage2mcp-dev}
       POSTGRES_DB: mage2mcp
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -17,11 +24,11 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}", "--appendonly", "yes"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-mage2mcp-dev}", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD:-mage2mcp-dev} ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -35,14 +42,14 @@ services:
       - "127.0.0.1:8080:8080"
     environment:
       MAGE2MCP_LISTEN: "0.0.0.0:8080"
-      MAGE2MCP_AUTH_ISSUER: ${MAGE2MCP_AUTH_ISSUER:?set MAGE2MCP_AUTH_ISSUER}
-      MAGE2MCP_AUTH_AUDIENCE: ${MAGE2MCP_AUTH_AUDIENCE:?set MAGE2MCP_AUTH_AUDIENCE}
-      MAGE2MCP_AUTH_JWKS_URL: ${MAGE2MCP_AUTH_JWKS_URL:?set MAGE2MCP_AUTH_JWKS_URL}
-      MAGE2MCP_DATABASE_URL: "postgres://mage2mcp:${POSTGRES_PASSWORD}@postgres:5432/mage2mcp?sslmode=disable"
+      MAGE2MCP_AUTH_ENABLED: ${MAGE2MCP_AUTH_ENABLED:-false}
+      MAGE2MCP_DEV_INSECURE: ${MAGE2MCP_DEV_INSECURE:-true}
+      MAGE2MCP_AUTH_ISSUER: ${MAGE2MCP_AUTH_ISSUER:-}
+      MAGE2MCP_AUTH_AUDIENCE: ${MAGE2MCP_AUTH_AUDIENCE:-}
+      MAGE2MCP_AUTH_JWKS_URL: ${MAGE2MCP_AUTH_JWKS_URL:-}
+      MAGE2MCP_DATABASE_URL: "postgres://mage2mcp:${POSTGRES_PASSWORD:-mage2mcp-dev}@postgres:5432/mage2mcp?sslmode=disable"
       MAGE2MCP_REDIS_ADDR: "redis:6379"
-      MAGE2MCP_REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
-    volumes:
-      - ./config.yaml:/etc/mage2mcp/config.yaml:ro
+      MAGE2MCP_REDIS_PASSWORD: ${REDIS_PASSWORD:-mage2mcp-dev}
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,10 +59,11 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "/usr/local/bin/mage2mcp", "-help"]
-      interval: 30s
+      test: ["CMD", "/usr/local/bin/mage2mcp-server", "-healthcheck"]
+      interval: 15s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 10s
 
   worker:
     build:
@@ -65,11 +73,9 @@ services:
     entrypoint: ["/usr/local/bin/mage2mcp-worker"]
     command: ["-config", "/etc/mage2mcp/config.yaml"]
     environment:
-      MAGE2MCP_DATABASE_URL: "postgres://mage2mcp:${POSTGRES_PASSWORD}@postgres:5432/mage2mcp?sslmode=disable"
+      MAGE2MCP_DATABASE_URL: "postgres://mage2mcp:${POSTGRES_PASSWORD:-mage2mcp-dev}@postgres:5432/mage2mcp?sslmode=disable"
       MAGE2MCP_REDIS_ADDR: "redis:6379"
-      MAGE2MCP_REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
-    volumes:
-      - ./config.yaml:/etc/mage2mcp/config.yaml:ro
+      MAGE2MCP_REDIS_PASSWORD: ${REDIS_PASSWORD:-mage2mcp-dev}
     depends_on:
       postgres:
         condition: service_healthy

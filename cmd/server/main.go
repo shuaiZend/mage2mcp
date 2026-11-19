@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -46,8 +47,18 @@ func main() {
 
 func run() error {
 	var configPath string
+	var healthcheck, devInsecure bool
 	flag.StringVar(&configPath, "config", "config.yaml", "path to the YAML configuration")
+	flag.BoolVar(&healthcheck, "healthcheck", false, "probe the local /healthz endpoint and exit")
+	flag.BoolVar(&devInsecure, "dev-insecure", false, "allow authentication to be disabled on a non-loopback listener (local containers only)")
 	flag.Parse()
+
+	if healthcheck {
+		return runHealthcheck()
+	}
+	if !devInsecure && strings.EqualFold(os.Getenv("MAGE2MCP_DEV_INSECURE"), "true") {
+		devInsecure = true
+	}
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -114,7 +125,7 @@ func run() error {
 		return err
 	}
 
-	authMiddleware, err := buildAuth(cfg, logger)
+	authMiddleware, err := buildAuth(cfg, logger, devInsecure)
 	if err != nil {
 		return err
 	}
@@ -157,12 +168,12 @@ func run() error {
 	return httpServer.Shutdown(shutdownCtx)
 }
 
-func buildAuth(cfg config.Config, logger *slog.Logger) (func(http.Handler) http.Handler, error) {
+func buildAuth(cfg config.Config, logger *slog.Logger, devInsecure bool) (func(http.Handler) http.Handler, error) {
 	if !cfg.Auth.Enabled {
-		if !isLoopbackListen(cfg.Server.Listen) {
-			return nil, fmt.Errorf("auth is disabled but server.listen %q is not loopback; refusing to start", cfg.Server.Listen)
+		if !isLoopbackListen(cfg.Server.Listen) && !devInsecure {
+			return nil, fmt.Errorf("auth is disabled but server.listen %q is not loopback; set -dev-insecure or MAGE2MCP_DEV_INSECURE=true for local containers only", cfg.Server.Listen)
 		}
-		logger.Warn("authentication disabled: development mode only, loopback listener")
+		logger.Warn("authentication disabled: development only, never expose this listener")
 		return nil, nil
 	}
 	verifier, err := jwt.NewVerifier(jwt.Config{
@@ -408,6 +419,40 @@ func magentoSigner(credential string) (magento.Signer, error) {
 		return magento.NewOAuth1Signer(parts[0], parts[1], parts[2], parts[3])
 	}
 	return nil, fmt.Errorf("unsupported credential form; use bearer:<token> or oauth1:<key>:<secret>:<token>:<token-secret>")
+}
+
+// runHealthcheck probes the local /healthz endpoint. Distroless images have no
+// shell or curl, so the binary is the container health probe.
+func runHealthcheck() error {
+	listen := os.Getenv("MAGE2MCP_LISTEN")
+	if listen == "" {
+		listen = "127.0.0.1:8080"
+	}
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("healthcheck: invalid MAGE2MCP_LISTEN %q: %w", listen, err)
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return fmt.Errorf("healthcheck: invalid port %q", port)
+	}
+	// Always probe the loopback interface: the healthcheck never follows a
+	// caller-supplied host, so it cannot be turned into an SSRF primitive.
+	url := "http://127.0.0.1:" + port + "/healthz"                                         // #nosec G704 -- fixed loopback host, validated numeric port
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil) // #nosec G704 -- fixed loopback host
+	if err != nil {
+		return fmt.Errorf("healthcheck: build request: %w", err)
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req) // #nosec G704 -- fixed loopback host and validated numeric port
+	if err != nil {
+		return fmt.Errorf("healthcheck: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthcheck: /healthz returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func isLoopbackListen(listen string) bool {

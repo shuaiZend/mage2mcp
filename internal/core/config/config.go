@@ -156,6 +156,9 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("MAGE2MCP_AUTH_JWKS_URL"); v != "" {
 		c.Auth.JWKSURL = v
 	}
+	if v := os.Getenv("MAGE2MCP_AUTH_ENABLED"); v != "" {
+		c.Auth.Enabled = v == "true" || v == "1"
+	}
 	if v := os.Getenv("MAGE2MCP_LOG_LEVEL"); v != "" {
 		c.Log.Level = v
 	}

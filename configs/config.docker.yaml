@@ -1,0 +1,40 @@
+# Configuration baked into the container image at /etc/mage2mcp/config.yaml.
+#
+# Values come from environment variables at runtime. Authentication is enabled
+# by default; for a local container only, set MAGE2MCP_AUTH_ENABLED=false and
+# MAGE2MCP_DEV_INSECURE=true.
+server:
+  listen: "0.0.0.0:8080"
+  public_url: "${MAGE2MCP_PUBLIC_URL}"
+  shutdown_grace: 10s
+  max_body_bytes: 1048576
+
+auth:
+  enabled: true
+  issuer: "${MAGE2MCP_AUTH_ISSUER}"
+  audience: "${MAGE2MCP_AUTH_AUDIENCE}"
+  jwks_url: "${MAGE2MCP_AUTH_JWKS_URL}"
+
+log:
+  level: "${MAGE2MCP_LOG_LEVEL}"
+  format: "json"
+
+tools:
+  writes: false
+
+database:
+  url: "${MAGE2MCP_DATABASE_URL}"
+  max_conns: 10
+
+redis:
+  addr: "${MAGE2MCP_REDIS_ADDR}"
+  password: "${MAGE2MCP_REDIS_PASSWORD}"
+  db: 0
+
+datasources:
+  magento:
+    enabled: false
+  cloudflare:
+    enabled: false
+  ga4:
+    enabled: false

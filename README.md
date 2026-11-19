@@ -47,8 +47,34 @@ curl -s localhost:8080/readyz
 
 The MCP endpoint is `POST /mcp` (Streamable HTTP). In production, run behind a
 Cloudflare Tunnel and keep authentication enabled with the `MAGE2MCP_AUTH_*`
-environment variables. Docker users can run `docker compose up` after setting the
-required variables in `.env`.
+environment variables.
+
+### Docker
+
+The image bakes a container configuration and probes its own `/healthz` (the
+distroless image has no shell):
+
+```bash
+# Local stack (development defaults: auth disabled, loopback port, fixed dev passwords)
+docker compose up --build
+
+# Or a single container
+docker build -t mage2mcp .
+docker run --rm -p 127.0.0.1:8080:8080 \
+  -e MAGE2MCP_AUTH_ENABLED=false -e MAGE2MCP_DEV_INSECURE=true mage2mcp
+
+curl -s localhost:8080/healthz
+curl -s localhost:8080/readyz
+```
+
+For a production-shaped stack every secret and Access value is required:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+Never expose the development stack to a network: it runs with authentication
+disabled and fixed placeholder passwords.
 
 ### High-risk operations
 

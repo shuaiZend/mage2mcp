@@ -19,17 +19,39 @@ Without PostgreSQL the server keeps audit and confirmations in memory: writes
 stay disabled and audit is lost on restart. That mode is for local development
 only.
 
-## Docker Compose
+## Docker
+
+The image is a multi-stage build producing static server, worker, and admin
+binaries on a distroless non-root base. It bakes
+`configs/config.docker.yaml` at `/etc/mage2mcp/config.yaml`, so no file mount is
+required, and declares a `HEALTHCHECK` that runs `mage2mcp-server -healthcheck`
+(the image has no shell or curl).
 
 ```bash
-cp .env.example .env          # fill in the Access values and passwords
-cp configs/config.example.yaml config.yaml
-docker compose up -d
+# Local development stack (auth disabled, loopback port, dev passwords)
+docker compose up --build
 curl -s localhost:8080/healthz
+
+# Production-shaped stack: every secret and Access value is required
+export POSTGRES_PASSWORD=... REDIS_PASSWORD=...
+export MAGE2MCP_AUTH_ISSUER=https://team.cloudflareaccess.com
+export MAGE2MCP_AUTH_AUDIENCE=...
+export MAGE2MCP_AUTH_JWKS_URL=https://team.cloudflareaccess.com/cdn-cgi/access/certs
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-The Compose file binds the server to `127.0.0.1:8080`, runs it read-only with
-`no-new-privileges`, and wires PostgreSQL and Redis with health checks.
+Both stacks bind the server to `127.0.0.1:8080`, run it read-only with
+`no-new-privileges`, and wire PostgreSQL and Redis with health checks. The
+development stack must never be exposed to a network: it disables authentication
+and uses fixed placeholder passwords.
+
+For a single container:
+
+```bash
+docker build -t mage2mcp .
+docker run --rm -p 127.0.0.1:8080:8080 \
+  -e MAGE2MCP_AUTH_ENABLED=false -e MAGE2MCP_DEV_INSECURE=true mage2mcp
+```
 
 ## Cloudflare Tunnel
 
