@@ -90,6 +90,8 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 	for _, tool := range []registry.Tool{
 		newGetTool(lookup), newSearchTool(lookup), newImportValidateTool(lookup),
 		newOrderGetTool(lookup), newOrderSearchTool(lookup), newSalesSummaryTool(lookup),
+		newCategoryGetTool(lookup), newCategoryTreeTool(lookup),
+		newAttributeSetsTool(lookup), newAttributesTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -397,4 +399,172 @@ func parseSummaryTime(value, field string) (time.Time, error) {
 		return t, nil
 	}
 	return time.Time{}, invalidf("%s must be an RFC 3339 timestamp or YYYY-MM-DD date", field)
+}
+
+const (
+	categoryGetToolName    = "magento.category.get"
+	categoryGetToolTitle   = "Get Magento category"
+	categoryTreeToolName   = "magento.category.tree"
+	categoryTreeToolTitle  = "Magento category tree"
+	attributeSetsToolName  = "magento.attribute.sets"
+	attributeSetsToolTitle = "List Magento attribute sets"
+	attributesToolName     = "magento.attributes.list"
+	attributesToolTitle    = "List Magento attribute-set attributes"
+
+	categoryGetToolDescription = "Reads one category from the configured Magento 2 REST API " +
+		"(GET /rest/{store_code}/V1/categories/{id}). Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	categoryTreeToolDescription = "Reads the category subtree under a root category " +
+		"(GET /rest/{store_code}/V1/categories?rootCategoryId&depth), nested up to depth 1-5. " +
+		"Read-only. The instance input is resolved by the server when only one Magento instance is configured."
+	attributeSetsToolDescription = "Lists the product attribute sets " +
+		"(GET /rest/{store_code}/V1/products/attribute-sets/sets/list), at most 200. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	attributesToolDescription = "Lists the attributes of one product attribute set " +
+		"(GET /rest/{store_code}/V1/products/attribute-sets/{setId}/attributes). Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	categoryGetSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"category_id": {"type": "integer", "minimum": 1, "description": "Magento category id."}
+	}, "required": ["instance", "category_id"], "additionalProperties": false}`
+
+	categoryTreeSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"root_id": {"type": "integer", "minimum": 1, "default": 2, "description": "Root category id; Magento's default root is 2."},
+		"depth": {"type": "integer", "minimum": 1, "maximum": 5, "default": 2, "description": "Tree depth, 1-5."}
+	}, "required": ["instance"], "additionalProperties": false}`
+
+	attributeSetsSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."}
+	}, "required": ["instance"], "additionalProperties": false}`
+
+	attributesSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"attribute_set_id": {"type": "integer", "minimum": 1, "description": "Attribute set id, e.g. 4 for Default."}
+	}, "required": ["instance", "attribute_set_id"], "additionalProperties": false}`
+)
+
+type categoryGetInput struct {
+	Instance   string `json:"instance"`
+	CategoryID int    `json:"category_id"`
+}
+
+type categoryGetOutput struct {
+	Category Category `json:"category"`
+}
+
+type categoryTreeInput struct {
+	Instance string `json:"instance"`
+	RootID   int    `json:"root_id"`
+	Depth    int    `json:"depth"`
+}
+
+type categoryTreeOutput struct {
+	Roots []Category `json:"roots"`
+}
+
+type attributeSetsInput struct {
+	Instance string `json:"instance"`
+}
+
+type attributeSetsOutput struct {
+	AttributeSets []AttributeSet `json:"attribute_sets"`
+}
+
+type attributesInput struct {
+	Instance       string `json:"instance"`
+	AttributeSetID int    `json:"attribute_set_id"`
+}
+
+type attributesOutput struct {
+	Attributes []Attribute `json:"attributes"`
+}
+
+func newCategoryGetTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(categoryGetToolName, categoryGetToolTitle, categoryGetToolDescription)
+	t.Capability = "magento.category.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(categoryGetToolName, categoryGetToolTitle, categoryGetToolDescription, categoryGetSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryGetInput) (*mcp.CallToolResult, categoryGetOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, categoryGetOutput{}, err
+				}
+				category, err := svc.GetCategory(ctx, in.CategoryID)
+				if err != nil {
+					return nil, categoryGetOutput{}, err
+				}
+				return nil, categoryGetOutput{Category: *category}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newCategoryTreeTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(categoryTreeToolName, categoryTreeToolTitle, categoryTreeToolDescription)
+	t.Capability = "magento.category.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(categoryTreeToolName, categoryTreeToolTitle, categoryTreeToolDescription, categoryTreeSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryTreeInput) (*mcp.CallToolResult, categoryTreeOutput, error) {
+				rootID := in.RootID
+				if rootID == 0 {
+					rootID = 2
+				}
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, categoryTreeOutput{}, err
+				}
+				roots, err := svc.CategoryTree(ctx, rootID, in.Depth)
+				if err != nil {
+					return nil, categoryTreeOutput{}, err
+				}
+				return nil, categoryTreeOutput{Roots: roots}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newAttributeSetsTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(attributeSetsToolName, attributeSetsToolTitle, attributeSetsToolDescription)
+	t.Capability = "magento.attribute.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(attributeSetsToolName, attributeSetsToolTitle, attributeSetsToolDescription, attributeSetsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in attributeSetsInput) (*mcp.CallToolResult, attributeSetsOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, attributeSetsOutput{}, err
+				}
+				sets, err := svc.AttributeSets(ctx)
+				if err != nil {
+					return nil, attributeSetsOutput{}, err
+				}
+				return nil, attributeSetsOutput{AttributeSets: sets}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newAttributesTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(attributesToolName, attributesToolTitle, attributesToolDescription)
+	t.Capability = "magento.attribute.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(attributesToolName, attributesToolTitle, attributesToolDescription, attributesSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in attributesInput) (*mcp.CallToolResult, attributesOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, attributesOutput{}, err
+				}
+				attributes, err := svc.Attributes(ctx, in.AttributeSetID)
+				if err != nil {
+					return nil, attributesOutput{}, err
+				}
+				return nil, attributesOutput{Attributes: attributes}, nil
+			})
+		return nil
+	}
+	return t
 }

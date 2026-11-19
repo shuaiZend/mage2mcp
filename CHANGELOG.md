@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento catalog interfaces: `magento.category.get`, `magento.category.tree`
+  (flattened depth-first, depth 1-5), `magento.attribute.sets`, and
+  `magento.attributes.list`, all read-only with strict id/depth validation.
 - Magento order interfaces: `magento.order.get` (order with line items, no
   personal data), `magento.order.search` (status, state, increment id, creation
   window, store view; items omitted), and `magento.sales.summary` (per-day order
