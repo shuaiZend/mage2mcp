@@ -112,6 +112,14 @@ func callTool(name string, args map[string]any) (*toolResult, error) {
 		"params": map[string]any{"name": name, "arguments": args}})
 }
 
+func resultText(result *toolResult) string {
+	var parts []string
+	for _, item := range result.Content {
+		parts = append(parts, item.Text)
+	}
+	return strings.Join(parts, " | ")
+}
+
 func errorDetails(result *toolResult) (string, map[string]any) {
 	var structured struct {
 		Code    string         `json:"code"`
@@ -136,6 +144,21 @@ func productArgs() map[string]any {
 		"meta_description": strings.Repeat("a", 140),
 		"weight":           "1.25", "special_price": "17.99", "special_from_date": "2026-11-01",
 		"special_to_date": "2026-11-30", "cost": "8.00", "tax_class_id": 2,
+	}
+}
+
+func orderArgs() map[string]any {
+	address := map[string]any{
+		"firstname": "Ada", "lastname": "Lovelace",
+		"street": []string{"1 Analytical Engine Way"}, "city": "London",
+		"postcode": "N1 9GU", "country_id": "GB", "telephone": "0123456789",
+	}
+	return map[string]any{
+		"instance": instance, "customer_id": 7,
+		"items":           []map[string]any{{"sku": "SKU-1", "qty": 2}},
+		"billing_address": address, "shipping_address": address,
+		"shipping_carrier_code": "flatrate", "shipping_method_code": "flatrate",
+		"payment_method": "checkmo",
 	}
 }
 
@@ -182,7 +205,7 @@ func main() {
 		result, err := callTool("magento.product.create", args)
 		if err != nil || result.IsError {
 			code, _ := errorDetails(result)
-			fmt.Println("CREATE RETRY FAIL:", err, code, string(result.StructuredContent))
+			fmt.Println("CREATE RETRY FAIL:", err, code, string(result.StructuredContent), resultText(result))
 			os.Exit(1)
 		}
 		fmt.Println("CREATED", string(result.StructuredContent))
@@ -248,6 +271,90 @@ func main() {
 		}
 		_ = json.Unmarshal(result.StructuredContent, &out)
 		fmt.Println("JOB", out.JobID)
+	case "configurable":
+		parent := productArgs()
+		parent["sku"] = "E2E-CFG"
+		parent["name"] = "E2E Configurable"
+		delete(parent, "type_id")
+		delete(parent, "instance")
+		parent["url_key"] = "e2e-configurable"
+		args := map[string]any{
+			"instance": instance,
+			"parent":   parent,
+			"variant_attributes": []map[string]any{{
+				"attribute_id": 93, "code": "color",
+				"values": []map[string]any{{"value_index": 12, "label": "Red"}},
+			}},
+			"children": []map[string]any{{
+				"sku": "E2E-CFG-RED", "attributes": map[string]string{"color": "12"},
+				"price": "19.99", "url_key": "e2e-configurable-red",
+			}},
+		}
+		result, err := callTool("magento.configurable.create", args)
+		if err != nil {
+			fmt.Println("CONFIGURABLE FAIL:", err)
+			os.Exit(1)
+		}
+		code, details := errorDetails(result)
+		if code == "confirmation_required" {
+			fmt.Println("CONFIRMATION", details["confirmation_id"])
+			return
+		}
+		fmt.Println("UNEXPECTED", code, string(result.StructuredContent))
+	case "configurable-retry":
+		parent := productArgs()
+		parent["sku"] = "E2E-CFG"
+		parent["name"] = "E2E Configurable"
+		delete(parent, "type_id")
+		delete(parent, "instance")
+		parent["url_key"] = "e2e-configurable"
+		args := map[string]any{
+			"instance": instance, "confirmation_id": os.Args[2],
+			"parent": parent,
+			"variant_attributes": []map[string]any{{
+				"attribute_id": 93, "code": "color",
+				"values": []map[string]any{{"value_index": 12, "label": "Red"}},
+			}},
+			"children": []map[string]any{{
+				"sku": "E2E-CFG-RED", "attributes": map[string]string{"color": "12"},
+				"price": "19.99", "url_key": "e2e-configurable-red",
+			}},
+		}
+		result, err := callTool("magento.configurable.create", args)
+		if err != nil || result.IsError {
+			code, _ := errorDetails(result)
+			fmt.Println("CONFIGURABLE RETRY FAIL:", err, code, string(result.StructuredContent), resultText(result))
+			os.Exit(1)
+		}
+		fmt.Println("CREATED CONFIGURABLE", string(result.StructuredContent))
+	case "order":
+		result, err := callTool("magento.order.create", orderArgs())
+		if err != nil {
+			fmt.Println("ORDER FAIL:", err)
+			os.Exit(1)
+		}
+		code, details := errorDetails(result)
+		if code == "confirmation_required" {
+			fmt.Println("CONFIRMATION", details["confirmation_id"])
+			return
+		}
+		fmt.Println("UNEXPECTED", code, string(result.StructuredContent))
+	case "order-retry":
+		args := orderArgs()
+		args["confirmation_id"] = os.Args[2]
+		result, err := callTool("magento.order.create", args)
+		if err != nil || result.IsError {
+			code, _ := errorDetails(result)
+			fmt.Println("ORDER RETRY FAIL:", err, code, string(result.StructuredContent), resultText(result))
+			os.Exit(1)
+		}
+		var out struct {
+			Order struct {
+				EntityID int `json:"entity_id"`
+			} `json:"order"`
+		}
+		_ = json.Unmarshal(result.StructuredContent, &out)
+		fmt.Println("ORDER", out.Order.EntityID)
 	case "import-status":
 		jobID := os.Args[2]
 		deadline := time.Now().Add(90 * time.Second)

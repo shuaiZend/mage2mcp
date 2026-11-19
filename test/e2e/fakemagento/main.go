@@ -132,6 +132,27 @@ func main() {
 			writeJSON(w, 200, []any{})
 			return
 		}
+		if strings.HasSuffix(path, "/child") && r.Method == http.MethodPost {
+			writeJSON(w, 200, true)
+			return
+		}
+		if strings.Contains(path, "/carts") && r.Method == http.MethodPost {
+			switch {
+			case strings.HasSuffix(path, "/carts"):
+				writeJSON(w, 200, 42)
+			case strings.HasSuffix(path, "/items"):
+				writeJSON(w, 200, map[string]any{"item_id": 1})
+			case strings.HasSuffix(path, "/shipping-information"):
+				writeJSON(w, 200, map[string]any{"payment_methods": []any{}})
+			case strings.HasSuffix(path, "/order"):
+				writeJSON(w, 200, map[string]any{"entity_id": 99, "increment_id": "000000099",
+					"status": "pending", "grand_total": 19.98, "total_qty_ordered": 2,
+					"order_currency_code": "USD"})
+			default:
+				writeJSON(w, 404, map[string]string{"message": "unhandled cart " + path})
+			}
+			return
+		}
 		if strings.HasPrefix(path, "/rest/default/V1/categories") {
 			writeJSON(w, 200, map[string]any{"id": 2, "name": "Default", "children_data": []any{}})
 			return

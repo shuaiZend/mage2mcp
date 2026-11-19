@@ -107,7 +107,12 @@ WORKER_PID=$!
 export E2E_ENDPOINT="http://127.0.0.1:${API_PORT}/mcp"
 export E2E_INSTANCE="store-us"
 client() { "$WORK/bin/client" "$@"; }
-approve() { "$WORK/bin/admin" -config "$WORK/config.yaml" -as e2e-reviewer approve "$1" >/dev/null; }
+approve() {
+  local out
+  out=$("$WORK/bin/admin" -config "$WORK/config.yaml" -as e2e-reviewer approve "$1" 2>&1 || true)
+  echo "approve($1): $out"
+  [[ "$out" == approved* ]] || { echo "approve failed for $1"; return 1; }
+}
 
 fail() { echo "E2E FAIL: $*"; echo "--- server ---"; tail -20 "$WORK/server.log"; echo "--- worker ---"; tail -20 "$WORK/worker.log"; exit 1; }
 
@@ -119,7 +124,9 @@ out=$(client create)
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no confirmation id: $out"
 approve "$cid"
-client create-retry "$cid" | grep -q "CREATED" || fail "create retry"
+out=$(client create-retry "$cid" 2>&1 || true)
+echo "$out"
+echo "$out" | grep -q "CREATED" || fail "create retry"
 
 echo "== SEO audit =="
 client seo | grep -q "SEO SCORE" || fail "seo audit"
@@ -128,13 +135,33 @@ echo "== import validation warnings =="
 client validate | grep -q "warnings=" || fail "import validation"
 
 echo "== asynchronous import =="
-out=$(client import-start)
+out=$(client import-start || true)
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no import confirmation id: $out"
 approve "$cid"
-job=$(client import-retry "$cid" | awk '/JOB/{print $2}')
+job=$(client import-retry "$cid" 2>&1 | awk '/JOB/{print $2}')
 [[ -n "$job" ]] || fail "no job id"
 client import-status "$job" | tee "$WORK/import-status.txt" | grep -q "JOB succeeded" || fail "import did not succeed"
 grep -q '"created":1' "$WORK/import-status.txt" || fail "import report missing created=1"
+
+echo "== configurable product =="
+out=$(client configurable || true)
+echo "$out"
+cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
+[[ -n "$cid" ]] || fail "no configurable confirmation id: $out"
+approve "$cid"
+out=$(client configurable-retry "$cid" 2>&1 || true)
+echo "$out"
+echo "$out" | grep -q "CREATED CONFIGURABLE" || fail "configurable retry"
+
+echo "== order creation =="
+out=$(client order || true)
+echo "$out"
+cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
+[[ -n "$cid" ]] || fail "no order confirmation id: $out"
+approve "$cid"
+out=$(client order-retry "$cid" 2>&1 || true)
+echo "$out"
+echo "$out" | grep -q "ORDER 99" || fail "order retry"
 
 echo "E2E PASS"
