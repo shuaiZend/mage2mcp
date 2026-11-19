@@ -87,6 +87,7 @@ Common behavior:
 | `magento.product.delete` | destructive + confirmation | 60s | Deletes one product by SKU; irreversible, 404 on unknown SKU |
 | `magento.configurable.remove_child` | write + confirmation | 60s | Unlinks a child from a configurable product; child product remains |
 | `magento.inventory.unassign` | write + confirmation | 60s | Removes MSI source assignments for up to 100 sku/source pairs |
+| `magento.inventory.transfer` | destructive + confirmation | 60s | Moves quantity between two sources for one SKU; refuses an insufficient source; not transactional |
 
 ## Cloudflare (read-only)
 

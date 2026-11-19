@@ -282,7 +282,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCategoryCreateTool(lookup), newCategoryUpdateTool(lookup), newCategoryAssignProductTool(lookup),
 		newProductLinkAddTool(lookup), newProductLinkRemoveTool(lookup),
 		newInvoiceCaptureTool(lookup), newOrderEmailTool(lookup), newMediaDeleteTool(lookup),
-		newOrderCreateTool(lookup), newTierPricesSetTool(lookup),
+		newOrderCreateTool(lookup), newTierPricesSetTool(lookup), newInventoryTransferTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -328,6 +328,7 @@ func writeToolSchemas() map[string]string {
 		productLinkAddToolName:       productLinkAddSchema,
 		productLinkRemoveToolName:    productLinkRemoveSchema,
 		tierPricesSetToolName:        tierPricesSetSchema,
+		inventoryTransferToolName:    inventoryTransferSchema,
 	}
 }
 
@@ -1512,6 +1513,61 @@ func newTierPricesSetTool(lookup serviceLookup) registry.Tool {
 				}
 				return nil, tierPricesSetOutput{SKU: in.SKU, Prices: len(prices), Set: true}, nil
 			})
+		return nil
+	}
+	return t
+}
+
+const (
+	inventoryTransferToolName    = "magento.inventory.transfer"
+	inventoryTransferToolTitle   = "Transfer Magento source quantity"
+	inventoryTransferDescription = "Magento write operation: moves quantity for one SKU from one MSI source to another " +
+		"(read source items, then upsert both rows) on the resolved instance. Refuses an insufficient source. " +
+		"The batch is not transactional, so a failure can leave one row updated; destructive and confirmation-gated."
+
+	inventoryTransferSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
+		"from_source": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
+		"to_source": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
+		"quantity": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "sku", "from_source", "to_source", "quantity"], "additionalProperties": false}`
+)
+
+type inventoryTransferInput struct {
+	Instance   string `json:"instance"`
+	SKU        string `json:"sku"`
+	FromSource string `json:"from_source"`
+	ToSource   string `json:"to_source"`
+	Quantity   int    `json:"quantity"`
+}
+
+type inventoryTransferOutput struct {
+	SKU         string `json:"sku"`
+	FromSource  string `json:"from_source"`
+	ToSource    string `json:"to_source"`
+	Quantity    int    `json:"quantity"`
+	Transferred bool   `json:"transferred"`
+}
+
+func newInventoryTransferTool(lookup serviceLookup) registry.Tool {
+	t := destructiveToolMetadata(inventoryTransferToolName, inventoryTransferToolTitle, inventoryTransferDescription, "magento.inventory.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: inventoryTransferToolName, Title: inventoryTransferToolTitle, Description: inventoryTransferDescription,
+			InputSchema: json.RawMessage(inventoryTransferSchema),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in inventoryTransferInput) (*mcp.CallToolResult, inventoryTransferOutput, error) {
+			svc, err := lookup(in.Instance)
+			if err != nil {
+				return nil, inventoryTransferOutput{}, err
+			}
+			if err := svc.TransferSourceQty(ctx, in.SKU, in.FromSource, in.ToSource, in.Quantity); err != nil {
+				return nil, inventoryTransferOutput{}, err
+			}
+			return nil, inventoryTransferOutput{
+				SKU: in.SKU, FromSource: in.FromSource, ToSource: in.ToSource,
+				Quantity: in.Quantity, Transferred: true,
+			}, nil
+		})
 		return nil
 	}
 	return t
