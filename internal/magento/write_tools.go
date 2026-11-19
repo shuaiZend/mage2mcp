@@ -287,6 +287,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newMediaUpdateTool(lookup), newOrderCancelTool(lookup), newAttributeOptionCreateTool(lookup),
 		newAttributeOptionDeleteTool(lookup), newBulkProductUpdateTool(lookup), newCategoryDeleteTool(lookup),
 		newCustomerAddressCreateTool(lookup), newCustomerAddressDeleteTool(lookup),
+		newCustomerAddressUpdateTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -343,6 +344,7 @@ func writeToolSchemas() map[string]string {
 		categoryDeleteToolName:        categoryDeleteSchema,
 		customerAddressCreateToolName: customerAddressCreateSchema,
 		customerAddressDeleteToolName: customerAddressDeleteSchema,
+		customerAddressUpdateToolName: customerAddressUpdateSchema,
 	}
 }
 
@@ -2068,6 +2070,74 @@ func newCustomerAddressDeleteTool(lookup serviceLookup) registry.Tool {
 			}
 			return nil, customerAddressDeleteOutput{AddressID: in.AddressID, Deleted: true}, nil
 		})
+		return nil
+	}
+	return t
+}
+
+const (
+	customerAddressUpdateToolName    = "magento.customer.addresses.update"
+	customerAddressUpdateTitle       = "Update a Magento customer address"
+	customerAddressUpdateDescription = "Magento write operation: partially updates a customer address " +
+		"(PUT /rest/{store_code}/V1/customers/{id}/addresses/{addressId}) on the resolved instance. Unset fields are omitted; " +
+		"the response is the PII-safe projection. Requires human confirmation."
+
+	customerAddressUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"customer_id": {"type": "integer", "minimum": 1},
+		"address_id": {"type": "integer", "minimum": 1},
+		"firstname": {"type": "string", "minLength": 1, "maxLength": 255},
+		"lastname": {"type": "string", "minLength": 1, "maxLength": 255},
+		"street": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string", "minLength": 1, "maxLength": 255}},
+		"city": {"type": "string", "minLength": 1, "maxLength": 255},
+		"postcode": {"type": "string", "minLength": 1, "maxLength": 255},
+		"country_id": {"type": "string", "pattern": "^[A-Z]{2}$"},
+		"telephone": {"type": "string", "minLength": 1, "maxLength": 255},
+		"region": {"type": "string", "maxLength": 255},
+		"default_billing": {"type": "boolean"},
+		"default_shipping": {"type": "boolean"}
+	}, "required": ["instance", "customer_id", "address_id"], "additionalProperties": false}`
+)
+
+type customerAddressUpdateInput struct {
+	Instance        string    `json:"instance"`
+	CustomerID      int       `json:"customer_id"`
+	AddressID       int       `json:"address_id"`
+	Firstname       *string   `json:"firstname"`
+	Lastname        *string   `json:"lastname"`
+	Street          *[]string `json:"street"`
+	City            *string   `json:"city"`
+	Postcode        *string   `json:"postcode"`
+	CountryID       *string   `json:"country_id"`
+	Telephone       *string   `json:"telephone"`
+	Region          *string   `json:"region"`
+	DefaultBilling  *bool     `json:"default_billing"`
+	DefaultShipping *bool     `json:"default_shipping"`
+}
+
+type customerAddressUpdateOutput struct {
+	Address CustomerAddress `json:"address"`
+}
+
+func newCustomerAddressUpdateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(customerAddressUpdateToolName, customerAddressUpdateTitle, customerAddressUpdateDescription, "magento.customer.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(customerAddressUpdateToolName, customerAddressUpdateTitle, customerAddressUpdateDescription, customerAddressUpdateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in customerAddressUpdateInput) (*mcp.CallToolResult, customerAddressUpdateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, customerAddressUpdateOutput{}, err
+				}
+				address, err := svc.UpdateCustomerAddress(ctx, in.CustomerID, in.AddressID, CustomerAddressUpdateInput{
+					Firstname: in.Firstname, Lastname: in.Lastname, Street: in.Street,
+					City: in.City, Postcode: in.Postcode, CountryID: in.CountryID,
+					Telephone: in.Telephone, Region: in.Region,
+					DefaultBilling: in.DefaultBilling, DefaultShipping: in.DefaultShipping,
+				})
+				if err != nil {
+					return nil, customerAddressUpdateOutput{}, err
+				}
+				return nil, customerAddressUpdateOutput{Address: *address}, nil
+			})
 		return nil
 	}
 	return t

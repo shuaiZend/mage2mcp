@@ -392,3 +392,100 @@ func decodeCustomerAddress(raw []byte) (*CustomerAddress, error) {
 		RegionID: payload.RegionID, DefaultBilling: payload.DefaultBilling, DefaultShipping: payload.DefaultShipping,
 	}, nil
 }
+
+// CustomerAddressUpdateInput is a partial address update; nil fields are omitted.
+type CustomerAddressUpdateInput struct {
+	Firstname       *string
+	Lastname        *string
+	Street          *[]string
+	City            *string
+	Postcode        *string
+	CountryID       *string
+	Telephone       *string
+	Region          *string
+	DefaultBilling  *bool
+	DefaultShipping *bool
+}
+
+// UpdateCustomerAddress changes an address with
+// PUT /customers/{customerId}/addresses/{addressId}.
+func (s *Service) UpdateCustomerAddress(ctx context.Context, customerID, addressID int, in CustomerAddressUpdateInput) (*CustomerAddress, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento customer service is not configured")
+	}
+	if customerID <= 0 || addressID <= 0 {
+		return nil, invalidf("customer_id and address_id must be positive integers")
+	}
+	if in.Firstname == nil && in.Lastname == nil && in.Street == nil && in.City == nil &&
+		in.Postcode == nil && in.CountryID == nil && in.Telephone == nil && in.Region == nil &&
+		in.DefaultBilling == nil && in.DefaultShipping == nil {
+		return nil, invalidf("at least one field must be provided to update")
+	}
+	payload := customerAddressPayload{CustomerID: customerID}
+	if in.Firstname != nil {
+		if err := validateCustomerName("firstname", *in.Firstname); err != nil {
+			return nil, err
+		}
+		payload.Firstname = *in.Firstname
+	}
+	if in.Lastname != nil {
+		if err := validateCustomerName("lastname", *in.Lastname); err != nil {
+			return nil, err
+		}
+		payload.Lastname = *in.Lastname
+	}
+	if in.Street != nil {
+		if len(*in.Street) == 0 || len(*in.Street) > maxAddressStreet {
+			return nil, invalidf("street must have 1-%d lines", maxAddressStreet)
+		}
+		for _, line := range *in.Street {
+			if trimmed := strings.TrimSpace(line); trimmed == "" || len(line) > maxAddressBytes {
+				return nil, invalidf("street lines must be non-empty and at most %d bytes", maxAddressBytes)
+			}
+		}
+		payload.Street = *in.Street
+	}
+	if in.City != nil {
+		if err := validateCustomerName("city", *in.City); err != nil {
+			return nil, err
+		}
+		payload.City = *in.City
+	}
+	if in.Postcode != nil {
+		if err := validateCustomerName("postcode", *in.Postcode); err != nil {
+			return nil, err
+		}
+		payload.Postcode = *in.Postcode
+	}
+	if in.CountryID != nil {
+		if len(*in.CountryID) != 2 || strings.ToUpper(*in.CountryID) != *in.CountryID {
+			return nil, invalidf("country_id must be a two-letter uppercase ISO country code")
+		}
+		payload.CountryID = *in.CountryID
+	}
+	if in.Telephone != nil {
+		if err := validateCustomerName("telephone", *in.Telephone); err != nil {
+			return nil, err
+		}
+		payload.Telephone = *in.Telephone
+	}
+	if in.Region != nil {
+		if len(*in.Region) > maxAddressBytes {
+			return nil, invalidf("region must be at most %d bytes", maxAddressBytes)
+		}
+		payload.Region = *in.Region
+	}
+	if in.DefaultBilling != nil {
+		payload.DefaultBilling = *in.DefaultBilling
+	}
+	if in.DefaultShipping != nil {
+		payload.DefaultShipping = *in.DefaultShipping
+	}
+	body := customerAddressBody{Address: payload}
+	raw, err := s.client.do(ctx, http.MethodPut,
+		"/customers/"+strconv.Itoa(customerID)+"/addresses/"+strconv.Itoa(addressID), nil, body)
+	if err != nil {
+		return nil, err
+	}
+	return decodeCustomerAddress(raw)
+}
