@@ -306,3 +306,29 @@ func TestInventorySourceValidation(t *testing.T) {
 		t.Fatalf("position err = %v", err)
 	}
 }
+
+func TestUnlinkStockSource(t *testing.T) {
+	var method, path string
+	var body stockSourceLinkBody
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	if err := svc.UnlinkStockSource(context.Background(), 1, "warehouse"); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodDelete || path != "/rest/default/V1/inventory/stock-source-links" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if len(body.Links) != 1 || body.Links[0].StockID != 1 || body.Links[0].SourceCode != "warehouse" {
+		t.Fatalf("body = %+v", body)
+	}
+	if err := svc.UnlinkStockSource(context.Background(), 0, "warehouse"); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("stock err = %v", err)
+	}
+}
