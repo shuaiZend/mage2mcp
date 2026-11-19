@@ -23,7 +23,7 @@ import (
 var writeToolNames = []string{
 	productCreateToolName, productUpdateToolName, configurableCreateToolName,
 	configurableAddChildToolName, inventoryAssignToolName, importExecuteToolName,
-	productDeleteToolName,
+	productDeleteToolName, removeChildToolName, unassignSourceItemsToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -349,13 +349,15 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 	// arguments, but the JSON Schema must also allow it or the approval retry
 	// fails validation before the handler runs.
 	schemas := map[string]string{
-		"product.create":      productCreateSchema,
-		"product.update":      productUpdateSchema,
-		"configurable.create": configurableCreateSchema,
-		"configurable.child":  configurableAddChildSchema,
-		"inventory.assign":    inventoryAssignSchema,
-		"import.execute":      importExecuteSchema,
-		"product.delete":      productDeleteSchema,
+		"product.create":            productCreateSchema,
+		"product.update":            productUpdateSchema,
+		"configurable.create":       configurableCreateSchema,
+		"configurable.child":        configurableAddChildSchema,
+		"inventory.assign":          inventoryAssignSchema,
+		"import.execute":            importExecuteSchema,
+		"product.delete":            productDeleteSchema,
+		"configurable.remove_child": removeChildSchema,
+		"inventory.unassign":        unassignSourceItemsSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {

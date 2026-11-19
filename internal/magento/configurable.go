@@ -444,3 +444,25 @@ func boundedSKUs(skus []string) string {
 	}
 	return joined
 }
+
+// RemoveChild unlinks a child product from a configurable product with
+// DELETE /configurable-products/{sku}/children/{childSku}.
+func (s *Service) RemoveChild(ctx context.Context, parentSKU, childSKU string) error {
+	if err := s.requireClient(); err != nil {
+		return err
+	}
+	if err := validateSKU(parentSKU); err != nil {
+		return err
+	}
+	if err := validateSKU(childSKU); err != nil {
+		return err
+	}
+	if parentSKU == childSKU {
+		return invalidf("a configurable product cannot be unlinked from itself")
+	}
+	path := "/configurable-products/" + url.PathEscape(parentSKU) + "/children/" + url.PathEscape(childSKU)
+	if _, err := s.client.do(ctx, http.MethodDelete, path, nil, nil); err != nil {
+		return stageFailure(stageLinks, parentSKU, err)
+	}
+	return nil
+}

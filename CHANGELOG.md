@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento removal writes: `magento.configurable.remove_child` (unlink a child
+  without deleting it) and `magento.inventory.unassign` (remove MSI source
+  assignments for up to 100 sku/source pairs). Both require confirmation.
 - Magento credit memos: `magento.creditmemo.list` and `magento.creditmemo.get`.
 - `magento.product.delete`: destructive write requiring confirmation; Magento
   returns 404 for an unknown SKU, so a repeated delete is not a no-op.

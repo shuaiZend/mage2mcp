@@ -213,7 +213,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 	tools := []registry.Tool{
 		newProductCreateTool(lookup), newProductUpdateTool(lookup), newConfigurableCreateTool(lookup),
 		newConfigurableAddChildTool(lookup), newInventoryAssignTool(lookup), newImportExecuteTool(lookup),
-		newProductDeleteTool(lookup),
+		newProductDeleteTool(lookup), newRemoveChildTool(lookup), newUnassignSourceItemsTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -480,6 +480,97 @@ func newProductDeleteTool(lookup serviceLookup) registry.Tool {
 			}
 			return nil, productDeleteOutput{SKU: in.SKU, Deleted: true}, nil
 		})
+		return nil
+	}
+	return t
+}
+
+const (
+	removeChildToolName    = "magento.configurable.remove_child"
+	removeChildToolTitle   = "Unlink a configurable child"
+	removeChildDescription = "Magento write operation: unlinks a child product from a configurable product " +
+		"(DELETE /rest/{store_code}/V1/configurable-products/{parentSku}/children/{childSku}) on the resolved instance. " +
+		"The child product itself is not deleted. Requires human confirmation."
+	unassignSourceItemsToolName    = "magento.inventory.unassign"
+	unassignSourceItemsToolTitle   = "Remove MSI source assignments"
+	unassignSourceItemsDescription = "Magento write operation: removes per-source inventory assignments " +
+		"(DELETE /rest/{store_code}/V1/inventory/source-items) on the resolved instance for at most 100 sku/source pairs. " +
+		"The product and its catalog stock status are unchanged; the assignment is removed. Requires human confirmation."
+
+	removeChildSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+		"child_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}},
+		"required": ["instance", "parent_sku", "child_sku"], "additionalProperties": false}`
+
+	unassignSourceItemsSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object",
+			"additionalProperties": false, "required": ["sku", "source_code"],
+			"properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+				"source_code": {"type": "string", "pattern": "` + sourceCodeInputPattern + `"}}}}},
+		"required": ["instance", "items"], "additionalProperties": false}`
+)
+
+type removeChildInput struct {
+	Instance  string `json:"instance"`
+	ParentSKU string `json:"parent_sku"`
+	ChildSKU  string `json:"child_sku"`
+}
+
+type removeChildOutput struct {
+	ParentSKU string `json:"parent_sku"`
+	ChildSKU  string `json:"child_sku"`
+	Unlinked  bool   `json:"unlinked"`
+}
+
+type unassignSourceItemsInput struct {
+	Instance string `json:"instance"`
+	Items    []struct {
+		SKU        string `json:"sku"`
+		SourceCode string `json:"source_code"`
+	} `json:"items"`
+}
+
+type unassignSourceItemsOutput struct {
+	Unassigned int `json:"unassigned"`
+}
+
+func newRemoveChildTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(removeChildToolName, removeChildToolTitle, removeChildDescription, capabilityProductWrite)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(removeChildToolName, removeChildToolTitle, removeChildDescription, removeChildSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in removeChildInput) (*mcp.CallToolResult, removeChildOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, removeChildOutput{}, err
+				}
+				if err := svc.RemoveChild(ctx, in.ParentSKU, in.ChildSKU); err != nil {
+					return nil, removeChildOutput{}, err
+				}
+				return nil, removeChildOutput{ParentSKU: in.ParentSKU, ChildSKU: in.ChildSKU, Unlinked: true}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newUnassignSourceItemsTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(unassignSourceItemsToolName, unassignSourceItemsToolTitle, unassignSourceItemsDescription, "magento.inventory.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(unassignSourceItemsToolName, unassignSourceItemsToolTitle, unassignSourceItemsDescription, unassignSourceItemsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in unassignSourceItemsInput) (*mcp.CallToolResult, unassignSourceItemsOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, unassignSourceItemsOutput{}, err
+				}
+				refs := make([]SourceItemRef, 0, len(in.Items))
+				for _, item := range in.Items {
+					refs = append(refs, SourceItemRef{SKU: item.SKU, SourceCode: item.SourceCode})
+				}
+				if err := svc.UnassignSourceItems(ctx, refs); err != nil {
+					return nil, unassignSourceItemsOutput{}, err
+				}
+				return nil, unassignSourceItemsOutput{Unassigned: len(refs)}, nil
+			})
 		return nil
 	}
 	return t

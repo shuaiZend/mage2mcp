@@ -90,3 +90,63 @@ func validateSourceItems(items []SourceItem) error {
 	}
 	return nil
 }
+
+// SourceItemRef identifies one SKU at one inventory source.
+type SourceItemRef struct {
+	SKU        string
+	SourceCode string
+}
+
+// sourceItemRefPayload is one sourceItems entry of the MSI unassign body.
+type sourceItemRefPayload struct {
+	SKU        string `json:"sku"`
+	SourceCode string `json:"source_code"`
+}
+
+// sourceItemsRefBody is the body of DELETE /inventory/source-items.
+type sourceItemsRefBody struct {
+	SourceItems []sourceItemRefPayload `json:"sourceItems"`
+}
+
+// UnassignSourceItems removes per-source assignments with
+// DELETE /inventory/source-items. At most 100 items are sent per call and every
+// item is validated before the request.
+func (s *Service) UnassignSourceItems(ctx context.Context, refs []SourceItemRef) error {
+	if err := s.requireClient(); err != nil {
+		return err
+	}
+	if err := validateSourceItemRefs(refs); err != nil {
+		return err
+	}
+	body := sourceItemsRefBody{SourceItems: make([]sourceItemRefPayload, 0, len(refs))}
+	for _, ref := range refs {
+		body.SourceItems = append(body.SourceItems, sourceItemRefPayload(ref))
+	}
+	_, err := s.client.do(ctx, http.MethodDelete, "/inventory/source-items", nil, body)
+	return err
+}
+
+// validateSourceItemRefs bounds and checks an unassign batch.
+func validateSourceItemRefs(refs []SourceItemRef) error {
+	if len(refs) == 0 {
+		return invalidf("at least one source item is required")
+	}
+	if len(refs) > maxSourceItemsPerCall {
+		return invalidf("at most %d source items are allowed per call", maxSourceItemsPerCall)
+	}
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if err := validateSKU(ref.SKU); err != nil {
+			return err
+		}
+		if !sourceCodeRE.MatchString(ref.SourceCode) {
+			return invalidf("source code must match %s", sourceCodeRE.String())
+		}
+		key := ref.SKU + "\x00" + ref.SourceCode
+		if _, duplicate := seen[key]; duplicate {
+			return invalidf("source item for sku %q and source %q is duplicated", ref.SKU, ref.SourceCode)
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
+}
