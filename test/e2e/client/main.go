@@ -276,6 +276,7 @@ func main() {
 		parent["sku"] = "E2E-CFG"
 		parent["name"] = "E2E Configurable"
 		delete(parent, "type_id")
+		delete(parent, "instance")
 		parent["url_key"] = "e2e-configurable"
 		args := map[string]any{
 			"instance": instance,
@@ -305,6 +306,7 @@ func main() {
 		parent["sku"] = "E2E-CFG"
 		parent["name"] = "E2E Configurable"
 		delete(parent, "type_id")
+		delete(parent, "instance")
 		parent["url_key"] = "e2e-configurable"
 		args := map[string]any{
 			"instance": instance, "confirmation_id": os.Args[2],
