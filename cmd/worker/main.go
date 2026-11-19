@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
@@ -100,7 +101,20 @@ func run() error {
 			if err != nil {
 				return err
 			}
-			result, err := svc.ExecuteImport(ctx, payload.Format, data, payload.UpdateExisting)
+			lastProgress := time.Time{}
+			result, err := svc.ExecuteImportWithProgress(ctx, payload.Format, data, payload.UpdateExisting,
+				func(done, total int) {
+					if time.Since(lastProgress) < 2*time.Second {
+						return
+					}
+					lastProgress = time.Now()
+					raw, err := json.Marshal(map[string]any{
+						"progress": map[string]int{"done": done, "total": total},
+					})
+					if err == nil {
+						_ = queue.SetResult(ctx, task.ID, string(raw))
+					}
+				})
 			if err != nil {
 				return err
 			}

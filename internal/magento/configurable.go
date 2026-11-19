@@ -51,6 +51,13 @@ type ChildProduct struct {
 	Attributes map[string]string
 	Price      string
 	Quantity   *int
+
+	Description      string
+	ShortDescription string
+	URLKey           string
+	MetaTitle        string
+	MetaKeywords     string
+	MetaDescription  string
 }
 
 // CreateConfigurableInput describes one configurable product to create.
@@ -138,6 +145,8 @@ func (s *Service) createChild(ctx context.Context, parent CreateProductInput, ch
 		SKU: child.SKU, Name: childProductName(parent.Name, child.SKU), AttributeSetID: parent.AttributeSetID,
 		TypeID: simpleTypeID, Price: price, Status: 1, Visibility: 1,
 		WebsiteIDs: parent.WebsiteIDs, Attributes: child.Attributes, Quantity: child.Quantity,
+		Description: child.Description, ShortDescription: child.ShortDescription, URLKey: child.URLKey,
+		MetaTitle: child.MetaTitle, MetaKeywords: child.MetaKeywords, MetaDescription: child.MetaDescription,
 	})
 }
 

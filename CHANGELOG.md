@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Configurable children accept the same SEO/content fields as the parent
+  (description, short_description, url_key, meta_title, meta_keywords,
+  meta_description), validated and sent as custom attributes.
+- Asynchronous import progress: `ExecuteImportWithProgress` reports done/total
+  every 25 rows, and the worker stores throttled progress on the job so
+  `magento.import.status` shows live movement before the final report.
 - SEO/content fields on Magento product writes: `description`,
   `short_description`, `url_key`, `meta_title`, `meta_keywords`, and
   `meta_description` on create, update, and the configurable parent, with
