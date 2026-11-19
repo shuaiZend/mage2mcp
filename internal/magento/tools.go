@@ -93,6 +93,8 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCategoryGetTool(lookup), newCategoryTreeTool(lookup),
 		newAttributeSetsTool(lookup), newAttributesTool(lookup),
 		newProductMediaTool(lookup), newStockStatusTool(lookup), newSourceItemsTool(lookup),
+		newOrderHistoryTool(lookup), newInvoiceListTool(lookup), newInvoiceGetTool(lookup),
+		newShipmentListTool(lookup), newShipmentGetTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -687,6 +689,190 @@ func newSourceItemsTool(lookup serviceLookup) registry.Tool {
 					return nil, sourceItemsOutput{}, err
 				}
 				return nil, sourceItemsOutput{Items: items}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	orderHistoryToolName  = "magento.order.status_history"
+	orderHistoryToolTitle = "Magento order status history"
+	invoiceListToolName   = "magento.invoice.list"
+	invoiceListToolTitle  = "List Magento order invoices"
+	invoiceGetToolName    = "magento.invoice.get"
+	invoiceGetToolTitle   = "Get Magento invoice"
+	shipmentListToolName  = "magento.shipment.list"
+	shipmentListToolTitle = "List Magento order shipments"
+	shipmentGetToolName   = "magento.shipment.get"
+	shipmentGetToolTitle  = "Get Magento shipment"
+
+	orderHistoryToolDescription = "Reads the status history of one order " +
+		"(GET /rest/{store_code}/V1/orders/{id}/comments), including status, comment, and notification flags. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	invoiceListToolDescription = "Lists the invoices of one order " +
+		"(GET /rest/{store_code}/V1/orders/{id}/invoices) with totals and quantities. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	invoiceGetToolDescription = "Reads one invoice by id " +
+		"(GET /rest/{store_code}/V1/invoices/{id}) with totals and quantities. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	shipmentListToolDescription = "Lists the shipments of one order " +
+		"(GET /rest/{store_code}/V1/orders/{id}/shipments) with total quantity and tracking numbers. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	shipmentGetToolDescription = "Reads one shipment by id " +
+		"(GET /rest/{store_code}/V1/shipments/{id}) with total quantity and tracking numbers. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	orderIDOnlySchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"order_id": {"type": "integer", "minimum": 1, "description": "Magento order entity id."}
+	}, "required": ["instance", "order_id"], "additionalProperties": false}`
+
+	invoiceIDSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"invoice_id": {"type": "integer", "minimum": 1, "description": "Magento invoice entity id."}
+	}, "required": ["instance", "invoice_id"], "additionalProperties": false}`
+
+	shipmentIDSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"shipment_id": {"type": "integer", "minimum": 1, "description": "Magento shipment entity id."}
+	}, "required": ["instance", "shipment_id"], "additionalProperties": false}`
+)
+
+type orderIDInput struct {
+	Instance string `json:"instance"`
+	OrderID  int    `json:"order_id"`
+}
+
+type orderHistoryOutput struct {
+	History []OrderStatusHistory `json:"history"`
+}
+
+type invoiceListOutput struct {
+	Invoices []Invoice `json:"invoices"`
+}
+
+type invoiceGetInput struct {
+	Instance  string `json:"instance"`
+	InvoiceID int    `json:"invoice_id"`
+}
+
+type invoiceGetOutput struct {
+	Invoice Invoice `json:"invoice"`
+}
+
+type shipmentListOutput struct {
+	Shipments []Shipment `json:"shipments"`
+}
+
+type shipmentGetInput struct {
+	Instance   string `json:"instance"`
+	ShipmentID int    `json:"shipment_id"`
+}
+
+type shipmentGetOutput struct {
+	Shipment Shipment `json:"shipment"`
+}
+
+func newOrderHistoryTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(orderHistoryToolName, orderHistoryToolTitle, orderHistoryToolDescription)
+	t.Capability = "magento.order.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(orderHistoryToolName, orderHistoryToolTitle, orderHistoryToolDescription, orderIDOnlySchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderIDInput) (*mcp.CallToolResult, orderHistoryOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, orderHistoryOutput{}, err
+				}
+				history, err := svc.OrderStatusHistory(ctx, in.OrderID)
+				if err != nil {
+					return nil, orderHistoryOutput{}, err
+				}
+				return nil, orderHistoryOutput{History: history}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newInvoiceListTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(invoiceListToolName, invoiceListToolTitle, invoiceListToolDescription)
+	t.Capability = "magento.invoice.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(invoiceListToolName, invoiceListToolTitle, invoiceListToolDescription, orderIDOnlySchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderIDInput) (*mcp.CallToolResult, invoiceListOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, invoiceListOutput{}, err
+				}
+				invoices, err := svc.OrderInvoices(ctx, in.OrderID)
+				if err != nil {
+					return nil, invoiceListOutput{}, err
+				}
+				return nil, invoiceListOutput{Invoices: invoices}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newInvoiceGetTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(invoiceGetToolName, invoiceGetToolTitle, invoiceGetToolDescription)
+	t.Capability = "magento.invoice.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(invoiceGetToolName, invoiceGetToolTitle, invoiceGetToolDescription, invoiceIDSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in invoiceGetInput) (*mcp.CallToolResult, invoiceGetOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, invoiceGetOutput{}, err
+				}
+				invoice, err := svc.GetInvoice(ctx, in.InvoiceID)
+				if err != nil {
+					return nil, invoiceGetOutput{}, err
+				}
+				return nil, invoiceGetOutput{Invoice: *invoice}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newShipmentListTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(shipmentListToolName, shipmentListToolTitle, shipmentListToolDescription)
+	t.Capability = "magento.shipment.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(shipmentListToolName, shipmentListToolTitle, shipmentListToolDescription, orderIDOnlySchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderIDInput) (*mcp.CallToolResult, shipmentListOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, shipmentListOutput{}, err
+				}
+				shipments, err := svc.OrderShipments(ctx, in.OrderID)
+				if err != nil {
+					return nil, shipmentListOutput{}, err
+				}
+				return nil, shipmentListOutput{Shipments: shipments}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newShipmentGetTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(shipmentGetToolName, shipmentGetToolTitle, shipmentGetToolDescription)
+	t.Capability = "magento.shipment.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(shipmentGetToolName, shipmentGetToolTitle, shipmentGetToolDescription, shipmentIDSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in shipmentGetInput) (*mcp.CallToolResult, shipmentGetOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, shipmentGetOutput{}, err
+				}
+				shipment, err := svc.GetShipment(ctx, in.ShipmentID)
+				if err != nil {
+					return nil, shipmentGetOutput{}, err
+				}
+				return nil, shipmentGetOutput{Shipment: *shipment}, nil
 			})
 		return nil
 	}
