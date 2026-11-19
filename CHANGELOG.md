@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-20
+
+Seventh minor pre-release: the full product custom-option lifecycle (read,
+create, update, delete).
+
 ### Added
 
 - `magento.product.options.update` and `magento.product.options.delete`
@@ -503,7 +508,8 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.0
 [0.6.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.6.0
 [0.5.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.4.0
