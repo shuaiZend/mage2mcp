@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-11-19
+
+First public pre-release: a runnable MCP gateway with typed, audited tools
+for Magento 2, Cloudflare, and Google Analytics 4.
+
 ### Added
 
 - Removed the Redis dependency (ADR-0019): the job queue is now PostgreSQL-only
@@ -83,4 +88,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/commits/main
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.0.1
