@@ -36,6 +36,8 @@ type ImportQueue interface {
 // ImportBatchReader looks up the persisted batch for a job.
 type ImportBatchReader interface {
 	GetImportBatchByJob(ctx context.Context, jobID string) (*jobs.ImportBatch, error)
+	GetImportBatch(ctx context.Context, id string) (*jobs.ImportBatch, error)
+	ListImportBatches(ctx context.Context, instanceID string, limit int) ([]jobs.ImportBatch, error)
 }
 
 // RegisterImportJobs registers the asynchronous import tools. It requires a
@@ -55,16 +57,20 @@ func RegisterImportJobs(reg *registry.Registry, resolver *Resolver, queue Import
 		newImportStatusTool(queue),
 		newImportCancelTool(queue),
 		newImportResumeTool(queue, batches),
+		newImportBatchListTool(resolver, batches),
+		newImportBatchGetTool(batches),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
 		}
 	}
 	for name, schema := range map[string]string{
-		importStartToolName:  importStartSchema,
-		importStatusToolName: importStatusSchema,
-		importCancelToolName: importCancelSchema,
-		importResumeToolName: importResumeSchema,
+		importStartToolName:     importStartSchema,
+		importStatusToolName:    importStatusSchema,
+		importCancelToolName:    importCancelSchema,
+		importResumeToolName:    importResumeSchema,
+		importBatchListToolName: importBatchListSchema,
+		importBatchGetToolName:  importBatchGetSchema,
 	} {
 		if err := reg.SetInputValidator(name, schema); err != nil {
 			return err
@@ -282,6 +288,88 @@ func newImportResumeTool(queue ImportQueue, batches ImportBatchReader) registry.
 					return nil, importResumeOutput{}, err
 				}
 				return nil, importResumeOutput{JobID: jobID, Rows: len(rows)}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	importBatchListToolName        = "magento.import.batches"
+	importBatchListToolTitle       = "List import batches"
+	importBatchListToolDescription = "Lists recent asynchronous import batches for the configured instance " +
+		"(newest first, at most 100) with state, counts, and error code. Read-only."
+	importBatchGetToolName        = "magento.import.batch"
+	importBatchGetToolTitle       = "Get an import batch"
+	importBatchGetToolDescription = "Returns one asynchronous import batch by id with its counts and every failed row. Read-only."
+
+	importBatchListSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
+		"limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
+	}, "required": ["instance"], "additionalProperties": false}`
+
+	importBatchGetSchema = `{"type": "object", "properties": {
+		"batch_id": {"type": "string", "pattern": "` + jobIDPattern + `"}
+	}, "required": ["batch_id"], "additionalProperties": false}`
+)
+
+type importBatchListInput struct {
+	Instance string `json:"instance"`
+	Limit    int    `json:"limit"`
+}
+
+type importBatchListOutput struct {
+	Batches []jobs.ImportBatch `json:"batches"`
+}
+
+type importBatchGetInput struct {
+	BatchID string `json:"batch_id"`
+}
+
+type importBatchGetOutput struct {
+	Batch *jobs.ImportBatch `json:"batch"`
+}
+
+func newImportBatchListTool(resolver *Resolver, batches ImportBatchReader) registry.Tool {
+	t := toolMetadata(importBatchListToolName, importBatchListToolTitle, importBatchListToolDescription)
+	t.Capability = "magento.import.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(importBatchListToolName, importBatchListToolTitle, importBatchListToolDescription, importBatchListSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in importBatchListInput) (*mcp.CallToolResult, importBatchListOutput, error) {
+				if _, err := resolver.Resolve(in.Instance); err != nil {
+					return nil, importBatchListOutput{}, err
+				}
+				if batches == nil {
+					return nil, importBatchListOutput{}, errs.New(errs.CodeInternal, "import batch store is not configured")
+				}
+				list, err := batches.ListImportBatches(ctx, in.Instance, in.Limit)
+				if err != nil {
+					return nil, importBatchListOutput{}, err
+				}
+				return nil, importBatchListOutput{Batches: list}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newImportBatchGetTool(batches ImportBatchReader) registry.Tool {
+	t := toolMetadata(importBatchGetToolName, importBatchGetToolTitle, importBatchGetToolDescription)
+	t.Capability = "magento.import.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(importBatchGetToolName, importBatchGetToolTitle, importBatchGetToolDescription, importBatchGetSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in importBatchGetInput) (*mcp.CallToolResult, importBatchGetOutput, error) {
+				if batches == nil {
+					return nil, importBatchGetOutput{}, errs.New(errs.CodeInternal, "import batch store is not configured")
+				}
+				batch, err := batches.GetImportBatch(ctx, in.BatchID)
+				if err != nil {
+					return nil, importBatchGetOutput{}, err
+				}
+				if batch == nil {
+					return nil, importBatchGetOutput{}, errs.New(errs.CodeNotFound, "import batch not found")
+				}
+				return nil, importBatchGetOutput{Batch: batch}, nil
 			})
 		return nil
 	}
