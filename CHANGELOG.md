@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Document emails: `magento.invoice.email`, `magento.shipment.email`, and
+  `magento.creditmemo.email` (confirmation-gated). The recipient is the order's
+  customer; the gateway never accepts an address.
+
+### Added
+
 - `magento.configurable.update` (confirmation-gated): updates a configurable
   parent's fields, SEO/pricing, and assignments through the product update
   endpoint, refusing SKUs that are not configurable.

@@ -290,6 +290,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup), newBulkOptionCreateTool(lookup),
 		newConfigurableUpdateTool(lookup),
 	}
+	tools = append(tools, newDocumentEmailTools(lookup)...)
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -349,6 +350,9 @@ func writeToolSchemas() map[string]string {
 		bulkLinkToolName:              bulkLinkSchema,
 		bulkOptionCreateToolName:      bulkOptionCreateSchema,
 		configurableUpdateToolName:    productUpdateSchema,
+		invoiceEmailToolName:          documentEmailSchema,
+		shipmentEmailToolName:         documentEmailSchema,
+		creditmemoEmailToolName:       documentEmailSchema,
 	}
 }
 
@@ -2267,6 +2271,61 @@ func newConfigurableUpdateTool(lookup serviceLookup) registry.Tool {
 					return nil, productWriteOutput{}, err
 				}
 				return nil, productWriteOutput{Product: *product}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	invoiceEmailToolName    = "magento.invoice.email"
+	shipmentEmailToolName   = "magento.shipment.email"
+	creditmemoEmailToolName = "magento.creditmemo.email"
+
+	invoiceEmailDescription = "Magento write operation: sends the invoice email (POST /rest/{store_code}/V1/invoices/{id}/emails) on the resolved instance. " +
+		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+	shipmentEmailDescription = "Magento write operation: sends the shipment email (POST /rest/{store_code}/V1/shipments/{id}/emails) on the resolved instance. " +
+		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+	creditmemoEmailDescription = "Magento write operation: sends the credit memo email (POST /rest/{store_code}/V1/creditmemos/{id}/emails) on the resolved instance. " +
+		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+
+	documentEmailSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"document_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "document_id"], "additionalProperties": false}`
+)
+
+type documentEmailInput struct {
+	Instance   string `json:"instance"`
+	DocumentID int    `json:"document_id"`
+}
+
+type documentEmailOutput struct {
+	DocumentID int    `json:"document_id"`
+	Kind       string `json:"kind"`
+	Sent       bool   `json:"sent"`
+}
+
+func newDocumentEmailTools(lookup serviceLookup) []registry.Tool {
+	return []registry.Tool{
+		newDocumentEmailTool(lookup, invoiceEmailToolName, "Send a Magento invoice email", invoiceEmailDescription, "invoice"),
+		newDocumentEmailTool(lookup, shipmentEmailToolName, "Send a Magento shipment email", shipmentEmailDescription, "shipment"),
+		newDocumentEmailTool(lookup, creditmemoEmailToolName, "Send a Magento credit memo email", creditmemoEmailDescription, "creditmemo"),
+	}
+}
+
+func newDocumentEmailTool(lookup serviceLookup, name, title, description, kind string) registry.Tool {
+	t := writeToolMetadata(name, title, description, "magento.order.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(name, title, description, documentEmailSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in documentEmailInput) (*mcp.CallToolResult, documentEmailOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, documentEmailOutput{}, err
+				}
+				if err := svc.SendDocumentEmail(ctx, kind, in.DocumentID); err != nil {
+					return nil, documentEmailOutput{}, err
+				}
+				return nil, documentEmailOutput{DocumentID: in.DocumentID, Kind: kind, Sent: true}, nil
 			})
 		return nil
 	}

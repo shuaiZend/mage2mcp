@@ -152,3 +152,35 @@ func TestCreditmemoValidation(t *testing.T) {
 		t.Fatalf("get err = %v", err)
 	}
 }
+
+func TestSendDocumentEmail(t *testing.T) {
+	var paths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`true`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	ctx := context.Background()
+	for _, tc := range []struct{ kind, path string }{
+		{"invoice", "POST /rest/default/V1/invoices/5/emails"},
+		{"shipment", "POST /rest/default/V1/shipments/6/emails"},
+		{"creditmemo", "POST /rest/default/V1/creditmemos/7/emails"},
+	} {
+		if err := svc.SendDocumentEmail(ctx, tc.kind, 5); err != nil {
+			t.Fatal(err)
+		}
+		_ = tc
+	}
+	if len(paths) != 3 || paths[0] != "POST /rest/default/V1/invoices/5/emails" ||
+		paths[1] != "POST /rest/default/V1/shipments/5/emails" || paths[2] != "POST /rest/default/V1/creditmemos/5/emails" {
+		t.Fatalf("paths = %v", paths)
+	}
+	if err := svc.SendDocumentEmail(ctx, "bogus", 5); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("kind err = %v", err)
+	}
+	if err := svc.SendDocumentEmail(ctx, "invoice", 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("id err = %v", err)
+	}
+}
