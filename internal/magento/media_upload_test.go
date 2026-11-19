@@ -169,3 +169,27 @@ func TestGetMedia(t *testing.T) {
 		t.Fatalf("validation err = %v", err)
 	}
 }
+
+func TestMediaTypes(t *testing.T) {
+	var path string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"code":"image","label":"Base Image"},{"code":"thumbnail","label":"Thumbnail"}]`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	types, err := svc.MediaTypes(context.Background(), "Default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/rest/default/V1/products/media/types/Default" {
+		t.Fatalf("path = %s", path)
+	}
+	if len(types) != 2 || types[0].Code != "image" || types[1].Label != "Thumbnail" {
+		t.Fatalf("types = %+v", types)
+	}
+	if _, err := svc.MediaTypes(context.Background(), " "); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("validation err = %v", err)
+	}
+}

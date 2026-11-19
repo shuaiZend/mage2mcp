@@ -276,3 +276,32 @@ func (s *Service) GetMedia(ctx context.Context, sku string, entryID int) (*Media
 	}
 	return &entry, nil
 }
+
+// MediaType is one gallery role available for an attribute set.
+type MediaType struct {
+	Code  string `json:"code"`
+	Label string `json:"label"`
+}
+
+// MediaTypes lists the media roles for an attribute set with
+// GET /products/media/types/{attributeSetName}.
+func (s *Service) MediaTypes(ctx context.Context, attributeSetName string) ([]MediaType, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento media service is not configured")
+	}
+	if trimmed := strings.TrimSpace(attributeSetName); trimmed == "" || len(attributeSetName) > 255 {
+		return nil, invalidf("attribute_set_name is required and must be at most 255 bytes")
+	}
+	raw, err := s.client.do(ctx, http.MethodGet, "/products/media/types/"+url.PathEscape(attributeSetName), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var types []MediaType
+	if err := json.Unmarshal(raw, &types); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media-type payload").WithCause(err)
+	}
+	if types == nil {
+		types = []MediaType{}
+	}
+	return types, nil
+}

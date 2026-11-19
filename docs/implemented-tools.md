@@ -49,6 +49,7 @@ Common behavior:
 | `magento.attributes.options.create` | write + confirmation | 60s | Adds a value to a select/multiselect attribute (variant option) |
 | `magento.attributes.options.bulk_create` | write + confirmation | 120s | Adds up to 50 labels with a per-label partial-success report |
 | `magento.attributes.options.delete` | destructive + confirmation | 60s | Deletes an option; rejected while products reference it |
+| `magento.product.media.types` | read | 30s | Media roles available for an attribute set |
 | `magento.product.media.get` | read | 30s | One gallery entry: file, label, position, types, disabled |
 | `magento.product.media` | read | 30s | Media gallery of one product |
 | `magento.product.options` | read | 30s | Custom options (not variant options) with values, prices, and price types |
