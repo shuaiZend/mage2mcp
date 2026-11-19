@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.product.links.bulk` (confirmation-gated): add or remove one link
+  type (related, upsell, crosssell) for up to 50 targets, one call each, with a
+  per-target partial-success report.
+
+### Added
+
 - `magento.order.summary`, the design-catalog name for the daily order/revenue
   aggregation already exposed as `magento.sales.summary`; both remain available.
 
