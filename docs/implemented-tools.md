@@ -79,6 +79,8 @@ Common behavior:
 | `magento.inventory.status_batch` | read | 60s | Up to 25 SKUs, each reporting its own result or error |
 | `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
 | `magento.inventory.sources` | read | 30s | MSI inventory sources with location fields |
+| `magento.inventory.source_create` | write + confirmation | 60s | Creates an MSI source with code, name, enabled flag, and location |
+| `magento.inventory.stock_source_link` | write + confirmation | 60s | Attaches a source to a stock with a position |
 | `magento.inventory.stocks` | read | 30s | MSI inventory stocks |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
 | `magento.order.summary` | read | 30s | Daily order count, revenue, and quantity over a bounded window (same data as `sales.summary`) |

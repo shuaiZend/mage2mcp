@@ -4,8 +4,10 @@ package magento
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"regexp"
+	"strings"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
@@ -205,4 +207,92 @@ func statusFor(qty int) int {
 		return 0
 	}
 	return 1
+}
+
+// InventorySourceInput describes one MSI source to create.
+type InventorySourceInput struct {
+	SourceCode string
+	Name       string
+	Enabled    bool
+	CountryID  string
+	Region     string
+	City       string
+	Postcode   string
+	Latitude   float64
+	Longitude  float64
+}
+
+// CreateSource adds an MSI source with POST /inventory/sources.
+func (s *Service) CreateSource(ctx context.Context, in InventorySourceInput) (*InventorySource, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento inventory service is not configured")
+	}
+	if !sourceCodeRE.MatchString(in.SourceCode) {
+		return nil, invalidf("source_code must match %s", sourceCodeRE.String())
+	}
+	if trimmed := strings.TrimSpace(in.Name); trimmed == "" || len(in.Name) > 255 {
+		return nil, invalidf("name is required and must be at most 255 bytes")
+	}
+	if in.CountryID != "" && (len(in.CountryID) != 2 || strings.ToUpper(in.CountryID) != in.CountryID) {
+		return nil, invalidf("country_id must be a two-letter uppercase ISO country code")
+	}
+	if in.Latitude < -90 || in.Latitude > 90 || in.Longitude < -180 || in.Longitude > 180 {
+		return nil, invalidf("latitude must be -90..90 and longitude -180..180")
+	}
+	body := inventorySourceBody{Source: inventorySourcePayload(in)}
+	raw, err := s.client.do(ctx, http.MethodPost, "/inventory/sources", nil, body)
+	if err != nil {
+		return nil, err
+	}
+	var source InventorySource
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable inventory-source payload").WithCause(err)
+	}
+	return &source, nil
+}
+
+// LinkStockSource attaches a source to a stock with
+// POST /inventory/stock-source-links.
+func (s *Service) LinkStockSource(ctx context.Context, stockID int, sourceCode string, position int) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento inventory service is not configured")
+	}
+	if stockID <= 0 {
+		return invalidf("stock_id must be a positive integer")
+	}
+	if !sourceCodeRE.MatchString(sourceCode) {
+		return invalidf("source_code must match %s", sourceCodeRE.String())
+	}
+	if position < 0 {
+		return invalidf("position must not be negative")
+	}
+	body := stockSourceLinkBody{Links: []stockSourceLink{{StockID: stockID, SourceCode: sourceCode, Position: position}}}
+	_, err := s.client.do(ctx, http.MethodPost, "/inventory/stock-source-links", nil, body)
+	return err
+}
+
+type inventorySourceBody struct {
+	Source inventorySourcePayload `json:"source"`
+}
+
+type inventorySourcePayload struct {
+	SourceCode string  `json:"source_code"`
+	Name       string  `json:"name"`
+	Enabled    bool    `json:"enabled"`
+	CountryID  string  `json:"country_id,omitempty"`
+	Region     string  `json:"region,omitempty"`
+	City       string  `json:"city,omitempty"`
+	Postcode   string  `json:"postcode,omitempty"`
+	Latitude   float64 `json:"latitude,omitempty"`
+	Longitude  float64 `json:"longitude,omitempty"`
+}
+
+type stockSourceLinkBody struct {
+	Links []stockSourceLink `json:"links"`
+}
+
+type stockSourceLink struct {
+	StockID    int    `json:"stock_id"`
+	SourceCode string `json:"source_code"`
+	Position   int    `json:"position"`
 }

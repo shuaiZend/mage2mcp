@@ -288,7 +288,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newAttributeOptionDeleteTool(lookup), newBulkProductUpdateTool(lookup), newCategoryDeleteTool(lookup),
 		newCustomerAddressCreateTool(lookup), newCustomerAddressDeleteTool(lookup),
 		newCustomerAddressUpdateTool(lookup), newBulkLinkTool(lookup), newBulkOptionCreateTool(lookup),
-		newConfigurableUpdateTool(lookup),
+		newConfigurableUpdateTool(lookup), newInventorySourceCreateTool(lookup), newStockSourceLinkTool(lookup),
 	}
 	tools = append(tools, newDocumentEmailTools(lookup)...)
 	for _, tool := range tools {
@@ -353,6 +353,8 @@ func writeToolSchemas() map[string]string {
 		invoiceEmailToolName:          documentEmailSchema,
 		shipmentEmailToolName:         documentEmailSchema,
 		creditmemoEmailToolName:       documentEmailSchema,
+		inventorySourceCreateToolName: inventorySourceCreateSchema,
+		stockSourceLinkToolName:       stockSourceLinkSchema,
 	}
 }
 
@@ -2326,6 +2328,110 @@ func newDocumentEmailTool(lookup serviceLookup, name, title, description, kind s
 					return nil, documentEmailOutput{}, err
 				}
 				return nil, documentEmailOutput{DocumentID: in.DocumentID, Kind: kind, Sent: true}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	inventorySourceCreateToolName    = "magento.inventory.source_create"
+	inventorySourceCreateToolTitle   = "Create a Magento inventory source"
+	inventorySourceCreateDescription = "Magento write operation: creates an MSI source " +
+		"(POST /rest/{store_code}/V1/inventory/sources) on the resolved instance with code, name, enabled flag, and location. " +
+		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+	stockSourceLinkToolName    = "magento.inventory.stock_source_link"
+	stockSourceLinkToolTitle   = "Link a source to a Magento stock"
+	stockSourceLinkDescription = "Magento write operation: attaches an MSI source to a stock " +
+		"(POST /rest/{store_code}/V1/inventory/stock-source-links) on the resolved instance with a position. " +
+		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+
+	inventorySourceCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"source_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
+		"name": {"type": "string", "minLength": 1, "maxLength": 255},
+		"enabled": {"type": "boolean", "default": true},
+		"country_id": {"type": "string", "pattern": "^[A-Z]{2}$"},
+		"region": {"type": "string", "maxLength": 255},
+		"city": {"type": "string", "maxLength": 255},
+		"postcode": {"type": "string", "maxLength": 255},
+		"latitude": {"type": "number", "minimum": -90, "maximum": 90},
+		"longitude": {"type": "number", "minimum": -180, "maximum": 180}
+	}, "required": ["instance", "source_code", "name"], "additionalProperties": false}`
+
+	stockSourceLinkSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"stock_id": {"type": "integer", "minimum": 1},
+		"source_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
+		"position": {"type": "integer", "minimum": 0}
+	}, "required": ["instance", "stock_id", "source_code"], "additionalProperties": false}`
+)
+
+type inventorySourceCreateInput struct {
+	Instance   string  `json:"instance"`
+	SourceCode string  `json:"source_code"`
+	Name       string  `json:"name"`
+	Enabled    bool    `json:"enabled"`
+	CountryID  string  `json:"country_id"`
+	Region     string  `json:"region"`
+	City       string  `json:"city"`
+	Postcode   string  `json:"postcode"`
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
+}
+
+type inventorySourceCreateOutput struct {
+	Source InventorySource `json:"source"`
+}
+
+type stockSourceLinkInput struct {
+	Instance   string `json:"instance"`
+	StockID    int    `json:"stock_id"`
+	SourceCode string `json:"source_code"`
+	Position   int    `json:"position"`
+}
+
+type stockSourceLinkOutput struct {
+	StockID    int    `json:"stock_id"`
+	SourceCode string `json:"source_code"`
+	Linked     bool   `json:"linked"`
+}
+
+func newInventorySourceCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(inventorySourceCreateToolName, inventorySourceCreateToolTitle, inventorySourceCreateDescription, "magento.inventory.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(inventorySourceCreateToolName, inventorySourceCreateToolTitle, inventorySourceCreateDescription, inventorySourceCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in inventorySourceCreateInput) (*mcp.CallToolResult, inventorySourceCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, inventorySourceCreateOutput{}, err
+				}
+				source, err := svc.CreateSource(ctx, InventorySourceInput{
+					SourceCode: in.SourceCode, Name: in.Name, Enabled: in.Enabled,
+					CountryID: in.CountryID, Region: in.Region, City: in.City, Postcode: in.Postcode,
+					Latitude: in.Latitude, Longitude: in.Longitude,
+				})
+				if err != nil {
+					return nil, inventorySourceCreateOutput{}, err
+				}
+				return nil, inventorySourceCreateOutput{Source: *source}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newStockSourceLinkTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(stockSourceLinkToolName, stockSourceLinkToolTitle, stockSourceLinkDescription, "magento.inventory.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(stockSourceLinkToolName, stockSourceLinkToolTitle, stockSourceLinkDescription, stockSourceLinkSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in stockSourceLinkInput) (*mcp.CallToolResult, stockSourceLinkOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, stockSourceLinkOutput{}, err
+				}
+				if err := svc.LinkStockSource(ctx, in.StockID, in.SourceCode, in.Position); err != nil {
+					return nil, stockSourceLinkOutput{}, err
+				}
+				return nil, stockSourceLinkOutput{StockID: in.StockID, SourceCode: in.SourceCode, Linked: true}, nil
 			})
 		return nil
 	}
