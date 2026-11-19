@@ -27,6 +27,9 @@ Common behavior:
 | `magento.product.get` | read | 30s | One product by SKU |
 | `magento.product.search` | read | 30s | Search with filters, sorting, page size |
 | `magento.import.validate` | read | 30s | CSV/JSON preview with per-row errors; never writes |
+| `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
+| `magento.order.search` | read | 30s | Orders by status, state, increment id, creation window, or store view; items omitted |
+| `magento.sales.summary` | read | 30s | Per-day order count, grand-total revenue, and item quantity over a bounded window (max 1000 orders, truncation reported) |
 | `magento.product.create` | write + confirmation | 60s | Simple/virtual/downloadable/bundle create with EAV attributes |
 | `magento.product.update` | write + confirmation | 60s | Merge update of provided fields |
 | `magento.configurable.create` | write + confirmation | 60s | Children → parent options → links; staged non-atomic errors |

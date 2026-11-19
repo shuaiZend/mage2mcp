@@ -87,7 +87,10 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 	if reg == nil {
 		return errs.New(errs.CodeInternal, "tool registry is required")
 	}
-	for _, tool := range []registry.Tool{newGetTool(lookup), newSearchTool(lookup), newImportValidateTool(lookup)} {
+	for _, tool := range []registry.Tool{
+		newGetTool(lookup), newSearchTool(lookup), newImportValidateTool(lookup),
+		newOrderGetTool(lookup), newOrderSearchTool(lookup), newSalesSummaryTool(lookup),
+	} {
 		if err := reg.Register(tool); err != nil {
 			return err
 		}
@@ -219,4 +222,179 @@ func newImportValidateTool(lookup serviceLookup) registry.Tool {
 			return nil
 		},
 	}
+}
+
+const (
+	orderGetToolName      = "magento.order.get"
+	orderGetToolTitle     = "Get Magento order"
+	orderSearchToolName   = "magento.order.search"
+	orderSearchToolTitle  = "Search Magento orders"
+	salesSummaryToolName  = "magento.sales.summary"
+	salesSummaryToolTitle = "Magento sales summary"
+
+	orderGetToolDescription = "Reads one order from the configured Magento 2 REST API " +
+		"(GET /rest/{store_code}/V1/orders/{id}) including its line items. " +
+		"Read-only. Customer email, addresses, and payment data are not returned. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	orderSearchToolDescription = "Searches the configured Magento 2 REST API " +
+		"(GET /rest/{store_code}/V1/orders with searchCriteria filter groups) by status, state, increment id, " +
+		"creation window, or store view. Read-only; line items are omitted from search results. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	salesSummaryToolDescription = "Aggregates Magento orders per day over a bounded window: order count, " +
+		"grand-total revenue, and item quantity. Scans at most 1000 orders and reports truncation. " +
+		"Revenue is order grand_total (tax and shipping included) and is not GA4 purchase revenue. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	orderGetSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"order_id": {"type": "integer", "minimum": 1, "description": "Magento order entity id (not the increment id)."}
+	}, "required": ["instance", "order_id"], "additionalProperties": false}`
+
+	orderSearchSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"status": {"type": "string", "maxLength": 64, "description": "Order status, e.g. processing or complete."},
+		"state": {"type": "string", "maxLength": 64, "description": "Order state, e.g. new or complete."},
+		"increment_id": {"type": "string", "maxLength": 32, "description": "Exact increment id, e.g. 000000123."},
+		"created_from": {"type": "string", "description": "Inclusive creation lower bound, RFC 3339 or YYYY-MM-DD."},
+		"created_to": {"type": "string", "description": "Exclusive creation upper bound, RFC 3339 or YYYY-MM-DD."},
+		"store_id": {"type": "integer", "minimum": 0, "description": "Store view id filter."},
+		"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+		"cursor": {"type": "string", "pattern": "` + cursorPattern + `", "description": "Zero-based row offset; must be a multiple of limit."}
+	}, "required": ["instance"], "additionalProperties": false}`
+
+	salesSummarySchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD."},
+		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD."}
+	}, "required": ["instance", "from", "to"], "additionalProperties": false}`
+)
+
+type orderGetInput struct {
+	Instance string `json:"instance"`
+	OrderID  int    `json:"order_id"`
+}
+
+type orderGetOutput struct {
+	Order Order `json:"order"`
+}
+
+type orderSearchInput struct {
+	Instance    string `json:"instance"`
+	Status      string `json:"status"`
+	State       string `json:"state"`
+	IncrementID string `json:"increment_id"`
+	CreatedFrom string `json:"created_from"`
+	CreatedTo   string `json:"created_to"`
+	StoreID     int    `json:"store_id"`
+	Limit       int    `json:"limit"`
+	Cursor      string `json:"cursor"`
+}
+
+type orderSearchOutput struct {
+	Orders []Order `json:"orders"`
+	Total  int     `json:"total"`
+}
+
+type salesSummaryInput struct {
+	Instance string `json:"instance"`
+	From     string `json:"from"`
+	To       string `json:"to"`
+}
+
+type salesSummaryOutput struct {
+	Summary SalesSummary `json:"summary"`
+}
+
+func newOrderGetTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(orderGetToolName, orderGetToolTitle, orderGetToolDescription)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(orderGetToolName, orderGetToolTitle, orderGetToolDescription, orderGetSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderGetInput) (*mcp.CallToolResult, orderGetOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, orderGetOutput{}, err
+				}
+				order, err := svc.GetOrder(ctx, in.OrderID)
+				if err != nil {
+					return nil, orderGetOutput{}, err
+				}
+				return nil, orderGetOutput{Order: *order}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newOrderSearchTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(orderSearchToolName, orderSearchToolTitle, orderSearchToolDescription)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(orderSearchToolName, orderSearchToolTitle, orderSearchToolDescription, orderSearchSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderSearchInput) (*mcp.CallToolResult, orderSearchOutput, error) {
+				offset := 0
+				if in.Cursor != "" {
+					parsed, err := strconv.Atoi(in.Cursor)
+					if err != nil || parsed < 0 {
+						return nil, orderSearchOutput{}, invalidf("cursor must be a non-negative decimal row offset")
+					}
+					offset = parsed
+				}
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, orderSearchOutput{}, err
+				}
+				orders, total, err := svc.SearchOrders(ctx, OrderQuery{
+					Status: in.Status, State: in.State, IncrementID: in.IncrementID,
+					CreatedFrom: in.CreatedFrom, CreatedTo: in.CreatedTo, StoreID: in.StoreID,
+					Limit: in.Limit, CursorOffset: offset,
+				})
+				if err != nil {
+					return nil, orderSearchOutput{}, err
+				}
+				if orders == nil {
+					orders = []Order{}
+				}
+				return nil, orderSearchOutput{Orders: orders, Total: total}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newSalesSummaryTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(salesSummaryToolName, salesSummaryToolTitle, salesSummaryToolDescription)
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(salesSummaryToolName, salesSummaryToolTitle, salesSummaryToolDescription, salesSummarySchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in salesSummaryInput) (*mcp.CallToolResult, salesSummaryOutput, error) {
+				from, err := parseSummaryTime(in.From, "from")
+				if err != nil {
+					return nil, salesSummaryOutput{}, err
+				}
+				to, err := parseSummaryTime(in.To, "to")
+				if err != nil {
+					return nil, salesSummaryOutput{}, err
+				}
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, salesSummaryOutput{}, err
+				}
+				summary, err := svc.SalesSummary(ctx, from, to)
+				if err != nil {
+					return nil, salesSummaryOutput{}, err
+				}
+				return nil, salesSummaryOutput{Summary: *summary}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+// parseSummaryTime accepts RFC 3339 or a date; a date is midnight UTC.
+func parseSummaryTime(value, field string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("2006-01-02", value); err == nil {
+		return t, nil
+	}
+	return time.Time{}, invalidf("%s must be an RFC 3339 timestamp or YYYY-MM-DD date", field)
 }
