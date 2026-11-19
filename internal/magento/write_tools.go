@@ -282,6 +282,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newCategoryCreateTool(lookup), newCategoryUpdateTool(lookup), newCategoryAssignProductTool(lookup),
 		newProductLinkAddTool(lookup), newProductLinkRemoveTool(lookup),
 		newInvoiceCaptureTool(lookup), newOrderEmailTool(lookup), newMediaDeleteTool(lookup),
+		newOrderCreateTool(lookup),
 	}
 	for _, tool := range tools {
 		if err := reg.Register(tool); err != nil {
@@ -1317,6 +1318,99 @@ func newMediaDeleteTool(lookup serviceLookup) registry.Tool {
 			}
 			return nil, mediaDeleteOutput{SKU: in.SKU, MediaID: in.MediaID, Deleted: true}, nil
 		})
+		return nil
+	}
+	return t
+}
+
+const (
+	orderCreateToolName    = "magento.order.create"
+	orderCreateToolTitle   = "Create a Magento order"
+	orderCreateDescription = "Magento write operation: places an order for an existing customer through the admin cart flow " +
+		"(cart, items, shipping information, then POST /rest/{store_code}/V1/carts/{cartId}/order) on the resolved instance. " +
+		"Totals are computed by Magento and never supplied by the caller. Requires human confirmation; " +
+		"prerequisites: the customer exists, the payment method is enabled, and the shipping method is available for the address."
+
+	addressSchema = `{"type": "object", "additionalProperties": false,
+		"required": ["firstname", "lastname", "street", "city", "postcode", "country_id", "telephone"],
+		"properties": {
+			"firstname": {"type": "string", "minLength": 1, "maxLength": 255},
+			"lastname": {"type": "string", "minLength": 1, "maxLength": 255},
+			"street": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string", "minLength": 1, "maxLength": 255}},
+			"city": {"type": "string", "minLength": 1, "maxLength": 255},
+			"postcode": {"type": "string", "minLength": 1, "maxLength": 255},
+			"country_id": {"type": "string", "pattern": "^[A-Z]{2}$"},
+			"telephone": {"type": "string", "minLength": 1, "maxLength": 255},
+			"region": {"type": "string", "maxLength": 255}
+		}}`
+
+	orderCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+		"customer_id": {"type": "integer", "minimum": 1},
+		"store_id": {"type": "integer", "minimum": 0},
+		"items": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object",
+			"additionalProperties": false, "required": ["sku", "qty"],
+			"properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
+				"qty": {"type": "number", "exclusiveMinimum": 0}}}},
+		"billing_address": ` + addressSchema + `,
+		"shipping_address": ` + addressSchema + `,
+		"shipping_carrier_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
+		"shipping_method_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
+		"payment_method": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$", "description": "Enabled Magento payment method code, e.g. checkmo."}
+	}, "required": ["instance", "customer_id", "items", "billing_address", "shipping_address",
+		"shipping_carrier_code", "shipping_method_code", "payment_method"], "additionalProperties": false}`
+)
+
+type orderAddressWire struct {
+	Firstname string   `json:"firstname"`
+	Lastname  string   `json:"lastname"`
+	Street    []string `json:"street"`
+	City      string   `json:"city"`
+	Postcode  string   `json:"postcode"`
+	CountryID string   `json:"country_id"`
+	Telephone string   `json:"telephone"`
+	Region    string   `json:"region"`
+}
+
+type orderCreateInput struct {
+	Instance            string           `json:"instance"`
+	CustomerID          int              `json:"customer_id"`
+	StoreID             int              `json:"store_id"`
+	Items               []OrderItemInput `json:"items"`
+	BillingAddress      orderAddressWire `json:"billing_address"`
+	ShippingAddress     orderAddressWire `json:"shipping_address"`
+	ShippingCarrierCode string           `json:"shipping_carrier_code"`
+	ShippingMethodCode  string           `json:"shipping_method_code"`
+	PaymentMethod       string           `json:"payment_method"`
+}
+
+type orderCreateOutput struct {
+	Order Order `json:"order"`
+}
+
+func (a orderAddressWire) toInput() OrderAddressInput {
+	return OrderAddressInput(a)
+}
+
+func newOrderCreateTool(lookup serviceLookup) registry.Tool {
+	t := writeToolMetadata(orderCreateToolName, orderCreateToolTitle, orderCreateDescription, "magento.order.write")
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpWriteTool(orderCreateToolName, orderCreateToolTitle, orderCreateDescription, orderCreateSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderCreateInput) (*mcp.CallToolResult, orderCreateOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, orderCreateOutput{}, err
+				}
+				order, err := svc.CreateOrder(ctx, CreateOrderInput{
+					CustomerID: in.CustomerID, StoreID: in.StoreID, Items: in.Items,
+					BillingAddress: in.BillingAddress.toInput(), ShippingAddress: in.ShippingAddress.toInput(),
+					ShippingCarrierCode: in.ShippingCarrierCode, ShippingMethodCode: in.ShippingMethodCode,
+					PaymentMethod: in.PaymentMethod,
+				})
+				if err != nil {
+					return nil, orderCreateOutput{}, err
+				}
+				return nil, orderCreateOutput{Order: *order}, nil
+			})
 		return nil
 	}
 	return t

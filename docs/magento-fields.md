@@ -84,6 +84,7 @@ name, street, city, postcode, and telephone are never returned.
 | `magento.invoice.capture` | `invoice_id`; charges the payment method |
 | `magento.shipment.create` | `order_id`, `items[]`, optional `tracks[]` (`track_number`, `carrier_code`), `comment`, `notify` |
 | `magento.creditmemo.create` | `order_id`, `items[]`, optional non-negative `adjustment_positive` / `adjustment_negative` |
+| `magento.order.create` | `customer_id`, 1-50 `items` (`sku`, `qty` > 0), billing and shipping addresses (firstname, lastname, street 1-4 lines, city, postcode, two-letter uppercase country, telephone), `shipping_carrier_code`, `shipping_method_code`, `payment_method`; totals are computed by Magento |
 | `magento.order.comment` | `order_id`, `comment` (1-1024), optional `status`, `notify` |
 | `magento.order.hold` / `unhold` | `order_id` |
 

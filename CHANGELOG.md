@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `magento.order.create`: places an order for an existing customer through
+  Magento's admin cart flow (cart, items, shipping information, place order).
+  Totals are computed by Magento; the tool is confirmation-gated, validates
+  addresses/items/method codes before any call, and tags failures by stage.
+  ADR-0020 records the decision and its partial-state caveats.
+
 ## [0.0.2] - 2026-11-19
 
 Second pre-release: a broad Magento write/read surface, SEO-aware product
