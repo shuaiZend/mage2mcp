@@ -153,18 +153,18 @@ Cloudflare and GA4 tools are read-only except `cloudflare.logs.jobs`, which is `
 
 | Tool | Scope | Purpose |
 |---|---|---|
-| `magento.product.get` | read | Fetch one product by SKU, including type-specific attributes |
-| `magento.product.search` | read | Search products with filters, sorting, and pagination |
-| `magento.product.create` | write | Create a simple, virtual, downloadable, or bundle product |
-| `magento.product.update` | write | Update attributes, websites, categories, status, visibility, price |
-| `magento.product.delete` | destructive | Delete a product by SKU |
+| `magento.product.get` | read | Fetch one product by SKU, including type-specific attributes **Implemented.** |
+| `magento.product.search` | read | Search products with filters, sorting, and pagination **Implemented.** |
+| `magento.product.create` | write | Create a simple, virtual, downloadable, or bundle product **Implemented.** |
+| `magento.product.update` | write | Update attributes, websites, categories, status, visibility, price **Implemented.** |
+| `magento.product.delete` | destructive | Delete a product by SKU **Implemented.** |
 | `magento.product.media_list` | read | List media entries and roles for a product |
 | `magento.product.media_upload` | write | Upload a base64 image and assign roles |
 | `magento.product.media_delete` | destructive | Delete a media entry |
 | `magento.category.list` | read | List categories with hierarchy |
-| `magento.category.get` | read | Fetch one category |
-| `magento.category.create` | write | Create a category |
-| `magento.category.update` | write | Update a category |
+| `magento.category.get` | read | Fetch one category **Implemented.** |
+| `magento.category.create` | write | Create a category **Implemented.** |
+| `magento.category.update` | write | Update a category **Implemented.** |
 | `magento.category.assign_products` | write | Assign products to a category |
 
 ### 7.2 Magento — attributes and EAV
@@ -174,19 +174,19 @@ Cloudflare and GA4 tools are read-only except `cloudflare.logs.jobs`, which is `
 | `magento.attribute.list` | read | List product attributes with scope and type metadata |
 | `magento.attribute.get` | read | Fetch one attribute definition |
 | `magento.attribute.options` | read | List options for a select-type attribute |
-| `magento.attribute.sets` | read | List attribute sets |
+| `magento.attribute.sets` | read | List attribute sets **Implemented.** |
 | `magento.attribute.set_attributes` | read | List attributes in a set, with groups and required flags |
 
 ### 7.3 Magento — configurable products
 
 | Tool | Scope | Purpose |
 |---|---|---|
-| `magento.configurable.create` | write | Create a configurable parent with variants in one validated operation |
+| `magento.configurable.create` | write | Create a configurable parent with variants in one validated operation **Implemented.** |
 | `magento.configurable.get` | read | Fetch a configurable product with options and children |
 | `magento.configurable.update` | write | Update parent attributes, status, visibility, websites |
-| `magento.configurable.add_child` | write | Link an existing simple product as a variant |
-| `magento.configurable.remove_child` | destructive | Remove a variant link (optionally delete the child) |
-| `magento.configurable.children` | read | List variant children with their attribute values |
+| `magento.configurable.add_child` | write | Link an existing simple product as a variant **Implemented.** |
+| `magento.configurable.remove_child` | destructive | Remove a variant link (optionally delete the child) **Implemented.** |
+| `magento.configurable.children` | read | List variant children with their attribute values **Implemented.** |
 | `magento.configurable.set_options` | write | Declare the variant attributes and option ordering |
 | `magento.configurable.create_variations` | write | Create missing child products from an attribute matrix |
 | `magento.configurable.verify_storefront` | read | Verify variants through the storefront GraphQL API |
@@ -197,23 +197,23 @@ Cloudflare and GA4 tools are read-only except `cloudflare.logs.jobs`, which is `
 |---|---|---|
 | `magento.inventory.sources` | read | List inventory sources |
 | `magento.inventory.stocks` | read | List stocks and their source links |
-| `magento.inventory.source_items` | read | List per-source quantities for SKUs |
-| `magento.inventory.assign` | write | Assign sources and quantities to products |
-| `magento.inventory.unassign` | destructive | Remove sources from products (clears quantities) |
+| `magento.inventory.source_items` | read | List per-source quantities for SKUs **Implemented.** |
+| `magento.inventory.assign` | write | Assign sources and quantities to products **Implemented.** |
+| `magento.inventory.unassign` | destructive | Remove sources from products (clears quantities) **Implemented.** |
 | `magento.inventory.transfer` | destructive | Transfer quantities between sources |
 
 ### 7.5 Magento — orders, sales, import
 
 | Tool | Scope | Purpose |
 |---|---|---|
-| `magento.order.get` | read | Fetch one order with items and totals |
-| `magento.order.search` | read | Search orders by date, status, store, customer email hash |
+| `magento.order.get` | read | Fetch one order with items and totals **Implemented.** |
+| `magento.order.search` | read | Search orders by date, status, store, customer email hash **Implemented.** |
 | `magento.order.summary` | read | Aggregated sales for a time range: revenue, orders, AOV, top SKUs |
-| `magento.import.validate` | read | Validate a CSV/JSON/XLSX import through the bounded converter and return a preview |
-| `magento.import.start` | destructive | Start an async import (requires confirmation) |
-| `magento.import.status` | read | Batch status by `batch_id`, counts, and per-item errors |
+| `magento.import.validate` | read | Validate a CSV/JSON/XLSX import through the bounded converter and return a preview **Implemented.** |
+| `magento.import.start` | destructive | Start an async import (requires confirmation) **Implemented.** |
+| `magento.import.status` | read | Batch status by `batch_id`, counts, and per-item errors **Implemented.** |
 | `magento.import.resume` | destructive | Resume a paused or failed batch from its last checkpoint; confirmation is bound to the batch id, not the payload |
-| `magento.import.cancel` | write | Cancel a running import |
+| `magento.import.cancel` | write | Cancel a running import **Implemented.** |
 | `magento.import.report` | read | Export per-item results |
 
 Import endpoints (`/V1/import/csv`, `/V1/import/json`) are Adobe Commerce features.
@@ -240,12 +240,12 @@ entitlement for a dataset is checked per query and reported as
 | Tool | Scope | Purpose |
 |---|---|---|
 | `cloudflare.zone.list` | read | List zones visible to the token, with plan names |
-| `cloudflare.analytics.traffic` | read | Requests, bytes, cached ratio over time by dimension |
+| `cloudflare.analytics.traffic` | read | Requests, bytes, cached ratio over time by dimension **Implemented.** |
 | `cloudflare.analytics.status_codes` | read | Status-code distribution |
 | `cloudflare.analytics.top` | read | Top hostnames, paths, countries, or ASNs where the dataset exposes the field |
 | `cloudflare.analytics.cache` | read | Cache hit ratio and origin response breakdown |
-| `cloudflare.security.events` | read | Sampled security events with action and rule metadata |
-| `cloudflare.security.summary` | read | Counts by action, service, and rule for a window |
+| `cloudflare.security.events` | read | Sampled security events with action and rule metadata **Implemented.** |
+| `cloudflare.security.summary` | read | Counts by action, service, and rule for a window **Implemented.** |
 | `cloudflare.security.bots` | read | Bot-related events where the plan exposes them |
 | `cloudflare.logs.query` | read | Request-level queries over the Logpush archive (R2/ClickHouse). Requires Logpush ingestion to be enabled and a `pii:read` grant to return client IPs; otherwise IPs are truncated. Bounded time range and row cap |
 | `cloudflare.logs.jobs` | admin | List Logpush job metadata (id, name, enabled, dataset, last error). The destination configuration is never returned, because it contains storage credentials. Cloudflare requires `Logs: Write` even for this GET; registered only when the optional log-inspection profile is enabled |
@@ -255,16 +255,16 @@ entitlement for a dataset is checked per query and reported as
 | Tool | Scope | Purpose |
 |---|---|---|
 | `ga4.analytics.report` | read | Validated report over allowlisted dimensions and metrics |
-| `ga4.analytics.traffic` | read | Sessions, users, views, engagement over time |
+| `ga4.analytics.traffic` | read | Sessions, users, views, engagement over time **Implemented.** |
 | `ga4.analytics.acquisition` | read | Channels, sources, campaigns |
 | `ga4.analytics.landing_pages` | read | Landing page performance |
 | `ga4.analytics.events` | read | Event counts and key events |
-| `ga4.analytics.realtime` | read | Last 30 minutes of activity |
-| `ga4.ecommerce.overview` | read | Revenue, transactions, AOV — requires ecommerce capability |
-| `ga4.ecommerce.products` | read | Item-level views, carts, purchases, revenue |
+| `ga4.analytics.realtime` | read | Last 30 minutes of activity **Implemented.** |
+| `ga4.ecommerce.overview` | read | Revenue, transactions, AOV — requires ecommerce capability **Implemented.** |
+| `ga4.ecommerce.products` | read | Item-level views, carts, purchases, revenue **Implemented.** |
 | `ga4.ecommerce.funnel` | read | View → cart → checkout → purchase with rates |
-| `ga4.property.metadata` | read | Available dimensions and metrics for the property |
-| `ga4.property.capabilities` | read | Capability profile: ecommerce present, currency, time zone |
+| `ga4.property.metadata` | read | Available dimensions and metrics for the property **Implemented.** |
+| `ga4.property.capabilities` | read | Capability profile: ecommerce present, currency, time zone **Implemented.** |
 
 ### 7.8 Unified analytics
 
@@ -279,7 +279,7 @@ is the default and may be omitted.
 
 | Tool | Scope | Purpose |
 |---|---|---|
-| `unified.traffic.compare` | read | Cloudflare requests vs GA4 sessions over aligned windows |
+| `unified.traffic.compare` | read | Cloudflare requests vs GA4 sessions over aligned windows **Implemented.** |
 | `unified.traffic.bot_vs_human` | read | Bot-classified requests vs human sessions |
 | `unified.security.waf_impact` | read | Security actions against observed traffic and sessions |
 | `unified.ecommerce.product_funnel` | read | GA4 item funnel vs Magento sales for matched SKUs |
@@ -418,3 +418,48 @@ tested by asserting that no upstream request is issued after cancellation.
 | Whether `ga4.analytics.report` should remain public or be internal-only behind the named tools | GA4 owner | Phase 4 |
 | Whether unified tools should accept explicit source mappings or rely on configured SKU maps | Unified owner | Phase 5 |
 | Whether tool results should support MCP resource links for large payloads | MCP owner | Phase 2 |
+
+## Implemented tools outside this catalog
+
+These tools exist in the gateway but were not part of the original design table
+(mostly because implementation split or renamed a planned tool):
+
+- `magento.attributes.list`
+- `magento.attributes.options`
+- `magento.category.assign_product`
+- `magento.category.products`
+- `magento.category.tree`
+- `magento.creditmemo.create`
+- `magento.creditmemo.get`
+- `magento.creditmemo.list`
+- `magento.customer.addresses`
+- `magento.customer.get`
+- `magento.customer.search`
+- `magento.import.execute`
+- `magento.inventory.status`
+- `magento.inventory.status_batch`
+- `magento.invoice.capture`
+- `magento.invoice.create`
+- `magento.invoice.get`
+- `magento.invoice.list`
+- `magento.order.comment`
+- `magento.order.create`
+- `magento.order.email`
+- `magento.order.hold`
+- `magento.order.status_history`
+- `magento.order.unhold`
+- `magento.product.links`
+- `magento.product.links.add`
+- `magento.product.links.remove`
+- `magento.product.media`
+- `magento.product.media.delete`
+- `magento.product.media.upload`
+- `magento.product.seo`
+- `magento.product.tier_prices`
+- `magento.product.tier_prices.set`
+- `magento.products.get`
+- `magento.sales.summary`
+- `magento.shipment.create`
+- `magento.shipment.get`
+- `magento.shipment.list`
+- `platform.info`

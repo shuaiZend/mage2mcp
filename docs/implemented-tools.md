@@ -1,8 +1,9 @@
 # Implemented tools
 
 This is the list of tools the gateway registers today. The design catalog in
-[mcp-tools.md](mcp-tools.md) describes the full planned surface; this page is
-the honest subset that exists in code.
+[mcp-tools.md](mcp-tools.md) describes the full planned surface and marks which
+of its tools are implemented; this page is the honest subset that exists in
+code, including tools added or renamed during implementation.
 
 Common behavior:
 
