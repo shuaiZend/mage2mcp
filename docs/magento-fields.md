@@ -92,6 +92,10 @@ and return the PII-safe projection (no email or name in the response).
 
 `magento.customer.addresses` returns country, region, and default flags only;
 name, street, city, postcode, and telephone are never returned.
+`magento.customer.addresses.create` accepts the full address (first/last name,
+street 1-4 lines, city, postcode, two-letter uppercase country, telephone,
+optional region) plus `default_billing`/`default_shipping`; the response is the
+same PII-safe projection. `magento.customer.addresses.delete` removes an address.
 
 ## Orders and documents
 

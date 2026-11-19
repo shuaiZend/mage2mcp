@@ -201,3 +201,82 @@ func TestCustomerWriteValidation(t *testing.T) {
 		t.Fatalf("group err = %v", err)
 	}
 }
+
+func TestCreateCustomerAddress(t *testing.T) {
+	var method, path string
+	var body customerAddressBody
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":5,"country_id":"GB","region":"London","default_billing":true,"default_shipping":false,
+			"firstname":"Ada","street":["Secret Road 1"],"city":"London","postcode":"N1 9GU","telephone":"123"}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	address, err := svc.CreateCustomerAddress(context.Background(), 7, CustomerAddressInput{
+		Firstname: "Ada", Lastname: "Lovelace", Street: []string{"1 Analytical Engine Way"},
+		City: "London", Postcode: "N1 9GU", CountryID: "GB", Telephone: "0123456789", DefaultBilling: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPost || path != "/rest/default/V1/customers/7/addresses" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if body.Address.CustomerID != 7 || body.Address.City != "London" || !body.Address.DefaultBilling {
+		t.Fatalf("body = %+v", body.Address)
+	}
+	raw, _ := json.Marshal(address)
+	for _, forbidden := range []string{"Secret Road", "Ada", "N1 9GU"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("projection leaks %q: %s", forbidden, raw)
+		}
+	}
+	if address.ID != 5 || address.CountryID != "GB" || !address.DefaultBilling {
+		t.Fatalf("address = %+v", address)
+	}
+}
+
+func TestDeleteCustomerAddress(t *testing.T) {
+	var method, path string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`true`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	if err := svc.DeleteCustomerAddress(context.Background(), 5); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodDelete || path != "/rest/default/V1/addresses/5" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if err := svc.DeleteCustomerAddress(context.Background(), 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("validation err = %v", err)
+	}
+}
+
+func TestCustomerAddressWriteValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	valid := CustomerAddressInput{
+		Firstname: "Ada", Lastname: "Lovelace", Street: []string{"1 Way"},
+		City: "London", Postcode: "N1", CountryID: "GB", Telephone: "123",
+	}
+	cases := []CustomerAddressInput{
+		{Firstname: "Ada", Lastname: "Lovelace", Street: []string{"1 Way"}, City: "London", Postcode: "N1", CountryID: "gb", Telephone: "123"},
+		{Firstname: "", Lastname: "Lovelace", Street: []string{"1 Way"}, City: "London", Postcode: "N1", CountryID: "GB", Telephone: "123"},
+		{Firstname: "Ada", Lastname: "Lovelace", Street: nil, City: "London", Postcode: "N1", CountryID: "GB", Telephone: "123"},
+	}
+	for i, in := range cases {
+		if _, err := svc.CreateCustomerAddress(ctx, 7, in); errs.CodeOf(err) != errs.CodeInvalidArgument {
+			t.Fatalf("case %d: err = %v", i, err)
+		}
+	}
+	if _, err := svc.CreateCustomerAddress(ctx, 0, valid); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("customer id err = %v", err)
+	}
+}
