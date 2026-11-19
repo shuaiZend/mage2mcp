@@ -25,8 +25,9 @@ Common behavior:
 | Tool | Scope | Timeout | Notes |
 |---|---|---|---|
 | `magento.product.get` | read | 30s | One product by SKU |
+| `magento.products.get` | read | 30s | Up to 50 products by SKU in one search (duplicates ignored) |
 | `magento.configurable.children` | read | 30s | Child products linked to a configurable product |
-| `magento.product.search` | read | 30s | Search with filters, sorting, page size |
+| `magento.product.search` | read | 30s | Search by name/SKU/type/status plus price and creation windows |
 | `magento.import.validate` | read | 30s | CSV/JSON preview with per-row errors; never writes |
 | `magento.category.get` | read | 30s | One category by id |
 | `magento.category.tree` | read | 30s | Category subtree under a root, flattened depth-first (depth 1-5) |

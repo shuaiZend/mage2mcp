@@ -19,6 +19,7 @@ import (
 const (
 	defaultSearchLimit = 50
 	maxSearchLimit     = 200
+	maxBatchGetSKUs    = 50
 	maxNameQueryBytes  = 128
 )
 
@@ -48,6 +49,10 @@ type ProductQuery struct {
 	NameContains string // substring filter on the product name
 	TypeID       string // Magento product type code
 	Status       int    // 1 enabled, 2 disabled, 0 any
+	PriceFrom    string // decimal lower bound (inclusive)
+	PriceTo      string // decimal upper bound (inclusive)
+	CreatedFrom  string // RFC 3339 or YYYY-MM-DD, inclusive
+	CreatedTo    string // RFC 3339 or YYYY-MM-DD, exclusive
 	Limit        int    // page size 1-200; zero selects 50
 	CursorOffset int    // zero-based row offset
 }
@@ -113,6 +118,23 @@ func (s *Service) Search(ctx context.Context, q ProductQuery) ([]Product, int, e
 	if q.Status != 0 && q.Status != 1 && q.Status != 2 {
 		return nil, 0, invalidf("status must be 1 (enabled) or 2 (disabled)")
 	}
+	if err := validatePriceBound(q.PriceFrom, "price_from"); err != nil {
+		return nil, 0, err
+	}
+	if err := validatePriceBound(q.PriceTo, "price_to"); err != nil {
+		return nil, 0, err
+	}
+	createdFrom, err := parseOrderTime(q.CreatedFrom, "created_from")
+	if err != nil {
+		return nil, 0, err
+	}
+	createdTo, err := parseOrderTime(q.CreatedTo, "created_to")
+	if err != nil {
+		return nil, 0, err
+	}
+	if createdFrom != "" && createdTo != "" && createdTo < createdFrom {
+		return nil, 0, invalidf("created_to must not be before created_from")
+	}
 	query := make(url.Values)
 	query.Set("searchCriteria[pageSize]", strconv.Itoa(limit))
 	query.Set("searchCriteria[currentPage]", strconv.Itoa(q.CursorOffset/limit+1))
@@ -136,6 +158,18 @@ func (s *Service) Search(ctx context.Context, q ProductQuery) ([]Product, int, e
 	if q.Status != 0 {
 		addFilter("status", strconv.Itoa(q.Status), "eq")
 	}
+	if q.PriceFrom != "" {
+		addFilter("price", q.PriceFrom, "gteq")
+	}
+	if q.PriceTo != "" {
+		addFilter("price", q.PriceTo, "lteq")
+	}
+	if createdFrom != "" {
+		addFilter("created_at", createdFrom, "gteq")
+	}
+	if createdTo != "" {
+		addFilter("created_at", createdTo, "lt")
+	}
 	raw, err := s.client.do(ctx, http.MethodGet, "/products", query, nil)
 	if err != nil {
 		return nil, 0, err
@@ -152,6 +186,63 @@ func (s *Service) Search(ctx context.Context, q ProductQuery) ([]Product, int, e
 	}
 	return payload.Items, payload.TotalCount, nil
 }
+
+// BatchGet returns up to 50 products by SKU in one search.
+func (s *Service) BatchGet(ctx context.Context, skus []string) ([]Product, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento product service is not configured")
+	}
+	if len(skus) == 0 {
+		return nil, invalidf("at least one sku is required")
+	}
+	if len(skus) > maxBatchGetSKUs {
+		return nil, invalidf("at most %d skus are allowed per call", maxBatchGetSKUs)
+	}
+	seen := make(map[string]struct{}, len(skus))
+	clean := make([]string, 0, len(skus))
+	for _, sku := range skus {
+		if err := validateSKU(sku); err != nil {
+			return nil, err
+		}
+		if _, duplicate := seen[sku]; duplicate {
+			continue
+		}
+		seen[sku] = struct{}{}
+		clean = append(clean, sku)
+	}
+	query := make(url.Values)
+	query.Set("searchCriteria[pageSize]", strconv.Itoa(len(clean)))
+	query.Set("searchCriteria[filter_groups][0][filters][0][field]", "sku")
+	query.Set("searchCriteria[filter_groups][0][filters][0][value]", strings.Join(clean, ","))
+	query.Set("searchCriteria[filter_groups][0][filters][0][condition_type]", "in")
+	raw, err := s.client.do(ctx, http.MethodGet, "/products", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Items []Product `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable product payload").WithCause(err)
+	}
+	if payload.Items == nil {
+		payload.Items = []Product{}
+	}
+	return payload.Items, nil
+}
+
+var priceBoundRE = regexp.MustCompile(`^\d{1,12}(\.\d{1,4})?$`)
+
+func validatePriceBound(value, field string) error {
+	if value == "" {
+		return nil
+	}
+	if !priceBoundRE.MatchString(value) {
+		return invalidf("%s must be a non-negative decimal with at most 4 fraction digits", field)
+	}
+	return nil
+}
+
 func validateSKU(sku string) error {
 	if !skuRE.MatchString(sku) {
 		return invalidf("sku must be 1-64 characters from [A-Za-z0-9._:-] and start with a letter or digit")
