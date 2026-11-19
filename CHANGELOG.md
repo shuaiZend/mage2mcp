@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento order status writes: `magento.order.comment` (history comment with an
+  optional status transition and notify flag), `magento.order.hold`, and
+  `magento.order.unhold`. All are confirmation-gated.
 - Magento fulfillment writes: `magento.shipment.create` (order-item lines plus
   up to 20 tracking numbers) and `magento.creditmemo.create` (refund record with
   optional positive/negative adjustments). Both are confirmation-gated with

@@ -14,7 +14,8 @@ No plugin is installed and the Magento database is never touched.
   product deletion (destructive), configurable child unlinking, MSI source
   unassignment, bounded media upload, invoice creation (capture defaults to
   false), shipment creation with tracking, and credit-memo creation — all writes
-  require two-step confirmation. Catalog discovery
+  require two-step confirmation. Order status writes cover comments/transitions,
+  hold, and unhold. Catalog discovery
   covers attribute options and category product listings. Customer reads use a
   PII-safe projection: email, name, and addresses are never returned.
 - `Register(reg, svc)` — read tools; `RegisterWrites(reg, svc)` — write tools

@@ -25,6 +25,7 @@ var writeToolNames = []string{
 	configurableAddChildToolName, inventoryAssignToolName, importExecuteToolName,
 	productDeleteToolName, removeChildToolName, unassignSourceItemsToolName, mediaUploadToolName,
 	invoiceCreateToolName, shipmentCreateToolName, creditmemoCreateToolName,
+	orderCommentToolName, orderHoldToolName, orderUnholdToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -363,6 +364,9 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 		"invoice.create":            invoiceCreateSchema,
 		"shipment.create":           shipmentCreateSchema,
 		"creditmemo.create":         creditmemoCreateSchema,
+		"order.comment":             orderCommentSchema,
+		"order.hold":                orderHoldSchema,
+		"order.unhold":              orderHoldSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {
