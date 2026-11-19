@@ -77,3 +77,16 @@ type orderStatusHistoryBody struct {
 	IsVisibleOnFront   int    `json:"is_visible_on_front"`
 	EntityName         string `json:"entity_name"`
 }
+
+// SendOrderEmail sends the order confirmation email with
+// POST /orders/{id}/emails.
+func (s *Service) SendOrderEmail(ctx context.Context, orderID int) error {
+	if err := s.requireOrderService(); err != nil {
+		return err
+	}
+	if orderID <= 0 {
+		return invalidf("order_id must be a positive integer")
+	}
+	_, err := s.client.do(ctx, http.MethodPost, "/orders/"+strconv.Itoa(orderID)+"/emails", nil, nil)
+	return err
+}
