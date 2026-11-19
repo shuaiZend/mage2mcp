@@ -140,7 +140,8 @@ client import-status "$job" | tee "$WORK/import-status.txt" | grep -q "JOB succe
 grep -q '"created":1' "$WORK/import-status.txt" || fail "import report missing created=1"
 
 echo "== configurable product =="
-out=$(client configurable)
+out=$(client configurable || true)
+echo "$out"
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no configurable confirmation id: $out"
 approve "$cid"
@@ -149,7 +150,8 @@ echo "$out"
 echo "$out" | grep -q "CREATED CONFIGURABLE" || fail "configurable retry"
 
 echo "== order creation =="
-out=$(client order)
+out=$(client order || true)
+echo "$out"
 cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
 [[ -n "$cid" ]] || fail "no order confirmation id: $out"
 approve "$cid"
