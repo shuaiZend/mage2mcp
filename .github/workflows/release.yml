@@ -34,8 +34,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          conclusion=$(gh api "repos/${{ github.repository }}/commits/${GITHUB_SHA}/check-runs" \
-            --jq '[.check_runs[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
+          # Exclude this workflow's own check runs (verify/publish): they are
+          # created by the tag push itself and would otherwise count as pending.
+          conclusion=$(gh api "repos/${{ github.repository }}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
+            --jq '[.check_runs[]
+                   | select(.name != "verify" and .name != "publish")
+                   | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")
+                   ] | length')
           if [ "$conclusion" != "0" ]; then
             echo "::error::The tagged commit has failing or pending checks."
             exit 1
