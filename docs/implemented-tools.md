@@ -70,6 +70,9 @@ Common behavior:
 | `magento.configurable.add_child` | write + confirmation | 60s | Link one variant |
 | `magento.inventory.assign` | write + confirmation | 60s | MSI source items, at most 100 per call |
 | `magento.import.execute` | write + confirmation | 60s | Bounded batch execution with partial-success report |
+| `magento.import.start` | write + confirmation | 30s | Queues a bounded import for the worker; requires the database queue |
+| `magento.import.status` | read | 30s | Job state, attempts, error code, and result summary |
+| `magento.import.cancel` | write + confirmation | 30s | Cancels a queued or running import job |
 | `magento.product.delete` | destructive + confirmation | 60s | Deletes one product by SKU; irreversible, 404 on unknown SKU |
 | `magento.configurable.remove_child` | write + confirmation | 60s | Unlinks a child from a configurable product; child product remains |
 | `magento.inventory.unassign` | write + confirmation | 60s | Removes MSI source assignments for up to 100 sku/source pairs |

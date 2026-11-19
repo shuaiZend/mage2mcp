@@ -21,9 +21,26 @@ import (
 // Task types. A type is stable once released; handlers are registered by the
 // worker and producers enqueue by name.
 const (
-	TypeNoop    = "platform:noop"
-	TypeReindex = "platform:reindex"
+	TypeNoop          = "platform:noop"
+	TypeReindex       = "platform:reindex"
+	TypeMagentoImport = "magento:import"
 )
+
+// QueueImport is the queue name for asynchronous imports.
+const QueueImport = "import"
+
+// JobRecord is a read-only view of a persisted job.
+type JobRecord struct {
+	ID          string     `json:"id"`
+	Kind        string     `json:"kind"`
+	State       string     `json:"state"`
+	Attempts    int        `json:"attempts"`
+	MaxAttempts int        `json:"max_attempts"`
+	ErrorCode   string     `json:"error_code,omitempty"`
+	Result      string     `json:"result,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+}
 
 // NoopPayload is a liveness task used to verify the queue end to end.
 type NoopPayload struct {

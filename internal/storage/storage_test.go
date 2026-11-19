@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
@@ -153,5 +154,35 @@ func TestJobQueueRecoversExpiredLease(t *testing.T) {
 	}
 	if recovered.Attempts != 2 {
 		t.Fatalf("attempts = %d, want 2", recovered.Attempts)
+	}
+}
+
+func TestJobQueueResultAndLookup(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	queue := NewJobQueue(store)
+	id, err := queue.Enqueue(ctx, jobs.Task{Kind: jobs.TypeMagentoImport, Queue: jobs.QueueImport, MaxAttempts: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := queue.GetJob(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ID != id || record.Kind != jobs.TypeMagentoImport || record.State != "queued" || record.MaxAttempts != 2 {
+		t.Fatalf("record = %+v", record)
+	}
+	if err := queue.SetResult(ctx, id, `{"total":3}`); err != nil {
+		t.Fatal(err)
+	}
+	record, err = queue.GetJob(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Result != `{"total":3}` {
+		t.Fatalf("result = %q", record.Result)
+	}
+	if _, err := queue.GetJob(ctx, "00000000-0000-0000-0000-000000000000"); errs.CodeOf(err) != errs.CodeNotFound {
+		t.Fatalf("missing job err = %v", err)
 	}
 }

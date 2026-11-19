@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
+	"github.com/shuaiZend/mage2mcp/internal/magento"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
 )
 
@@ -65,16 +66,16 @@ func TestRegisterModulesBuildsTools(t *testing.T) {
 }
 
 func TestMagentoSignerForms(t *testing.T) {
-	if _, err := magentoSigner("bearer:abc"); err != nil {
+	if _, err := magento.ParseCredential("bearer:abc"); err != nil {
 		t.Fatalf("bearer: %v", err)
 	}
-	if _, err := magentoSigner("oauth1:k:s:t:ts"); err != nil {
+	if _, err := magento.ParseCredential("oauth1:k:s:t:ts"); err != nil {
 		t.Fatalf("oauth1: %v", err)
 	}
-	if _, err := magentoSigner("oauth1:bad"); err == nil {
+	if _, err := magento.ParseCredential("oauth1:bad"); err == nil {
 		t.Fatal("malformed oauth1 credential accepted")
 	}
-	if _, err := magentoSigner("plain-token"); err == nil {
+	if _, err := magento.ParseCredential("plain-token"); err == nil {
 		t.Fatal("unsupported credential form accepted")
 	}
 }
