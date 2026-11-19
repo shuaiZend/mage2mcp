@@ -93,3 +93,48 @@ func TestCreateProductOptionValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateAndDeleteProductOption(t *testing.T) {
+	var method, path string
+	var body customOptionBody
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodDelete {
+			_, _ = w.Write([]byte(`true`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"option_id":5,"title":"Gift wrap","type":"drop_down","values":[]}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	option, err := svc.UpdateProductOption(context.Background(), "SKU-1", 5, CustomOptionInput{
+		Title: "Gift wrap", Type: "drop_down", Values: []CustomOptionValueInput{{Title: "Yes", Price: 1}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPut || path != "/rest/default/V1/products/SKU-1/options/5" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if body.Option.OptionID != 5 || body.Option.Title != "Gift wrap" {
+		t.Fatalf("body = %+v", body.Option)
+	}
+	if option.OptionID != 5 {
+		t.Fatalf("option = %+v", option)
+	}
+	if err := svc.DeleteProductOption(context.Background(), "SKU-1", 5); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodDelete || path != "/rest/default/V1/products/SKU-1/options/5" {
+		t.Fatalf("delete = %s %s", method, path)
+	}
+	if _, err := svc.UpdateProductOption(context.Background(), "SKU-1", 0, CustomOptionInput{Title: "X", Type: "field"}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("update id err = %v", err)
+	}
+	if err := svc.DeleteProductOption(context.Background(), "SKU-1", 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("delete id err = %v", err)
+	}
+}

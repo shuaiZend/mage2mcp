@@ -36,6 +36,7 @@ var writeToolNames = []string{
 	configurableUpdateToolName, invoiceEmailToolName, shipmentEmailToolName, creditmemoEmailToolName,
 	inventorySourceCreateToolName, stockSourceLinkToolName, stockSourceUnlinkToolName,
 	createVariationsToolName, setConfigurableOptionsToolName, productOptionCreateToolName,
+	productOptionUpdateToolName, productOptionDeleteToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -60,7 +61,7 @@ func TestRegisterWritesMetadata(t *testing.T) {
 			t.Fatalf("tool %q is not registered", name)
 		}
 		wantPermission := registry.PermissionWrite
-		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName || name == orderCancelToolName || name == attributeOptionDeleteToolName || name == categoryDeleteToolName || name == customerAddressDeleteToolName || name == stockSourceUnlinkToolName {
+		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName || name == orderCancelToolName || name == attributeOptionDeleteToolName || name == categoryDeleteToolName || name == customerAddressDeleteToolName || name == stockSourceUnlinkToolName || name == productOptionDeleteToolName {
 			wantPermission = registry.PermissionDestructive
 		}
 		if tool.Permission != wantPermission {
@@ -83,7 +84,7 @@ func TestRegisterWritesMetadata(t *testing.T) {
 			t.Fatalf("write tool %q must not set idempotentHint", name)
 		}
 		destructive := tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint
-		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName || name == orderCancelToolName || name == attributeOptionDeleteToolName || name == categoryDeleteToolName || name == customerAddressDeleteToolName || name == stockSourceUnlinkToolName {
+		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName || name == orderCancelToolName || name == attributeOptionDeleteToolName || name == categoryDeleteToolName || name == customerAddressDeleteToolName || name == stockSourceUnlinkToolName || name == productOptionDeleteToolName {
 			if !destructive {
 				t.Fatalf("destructive tool %q must set destructiveHint=true", name)
 			}
@@ -227,7 +228,7 @@ func TestWriteToolsThroughInMemoryTransport(t *testing.T) {
 			t.Fatalf("write tool %q must not be read-only", tool.Name)
 		}
 		destructive := tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint
-		if tool.Name == productDeleteToolName || tool.Name == mediaDeleteToolName || tool.Name == inventoryTransferToolName || tool.Name == orderCancelToolName || tool.Name == attributeOptionDeleteToolName || tool.Name == categoryDeleteToolName || tool.Name == customerAddressDeleteToolName || tool.Name == stockSourceUnlinkToolName {
+		if tool.Name == productDeleteToolName || tool.Name == mediaDeleteToolName || tool.Name == inventoryTransferToolName || tool.Name == orderCancelToolName || tool.Name == attributeOptionDeleteToolName || tool.Name == categoryDeleteToolName || tool.Name == customerAddressDeleteToolName || tool.Name == stockSourceUnlinkToolName || tool.Name == productOptionDeleteToolName {
 			if !destructive {
 				t.Fatalf("destructive tool %q must set destructiveHint=true", tool.Name)
 			}
@@ -415,6 +416,8 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 		"configurable.create_variations": createVariationsSchema,
 		"configurable.set_options":       setConfigurableOptionsSchema,
 		"product.options.create":         productOptionCreateSchema,
+		"product.options.update":         productOptionUpdateSchema,
+		"product.options.delete":         productOptionDeleteSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {

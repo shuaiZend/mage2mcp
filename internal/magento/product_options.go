@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
@@ -88,6 +89,46 @@ func (s *Service) CreateProductOption(ctx context.Context, sku string, in Custom
 	if err := validateSKU(sku); err != nil {
 		return nil, err
 	}
+	values, err := validateCustomOption(in)
+	if err != nil {
+		return nil, err
+	}
+	body := customOptionBody{Option: customOptionPayload{
+		Title: in.Title, Type: in.Type, IsRequire: in.IsRequire, SortOrder: in.SortOrder, Values: values,
+	}}
+	raw, err := s.client.do(ctx, http.MethodPost, "/products/"+url.PathEscape(sku)+"/options", nil, body)
+	if err != nil {
+		return nil, err
+	}
+	var option ProductOption
+	if err := json.Unmarshal(raw, &option); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable product-option payload").WithCause(err)
+	}
+	return &option, nil
+}
+
+type customOptionBody struct {
+	Option customOptionPayload `json:"option"`
+}
+
+type customOptionPayload struct {
+	OptionID  int                        `json:"option_id,omitempty"`
+	Title     string                     `json:"title"`
+	Type      string                     `json:"type"`
+	IsRequire bool                       `json:"is_require"`
+	SortOrder int                        `json:"sort_order"`
+	Values    []customOptionValuePayload `json:"values,omitempty"`
+}
+
+type customOptionValuePayload struct {
+	Title     string  `json:"title"`
+	Price     float64 `json:"price"`
+	PriceType string  `json:"price_type"`
+	SKU       string  `json:"sku,omitempty"`
+	SortOrder int     `json:"sort_order"`
+}
+
+func validateCustomOption(in CustomOptionInput) ([]customOptionValuePayload, error) {
 	if trimmed := strings.TrimSpace(in.Title); trimmed == "" || len(in.Title) > 255 {
 		return nil, invalidf("title is required and must be at most 255 bytes")
 	}
@@ -128,10 +169,30 @@ func (s *Service) CreateProductOption(ctx context.Context, sku string, in Custom
 			SKU: value.SKU, SortOrder: value.SortOrder,
 		})
 	}
+	return values, nil
+}
+
+// UpdateProductOption changes a custom option with
+// PUT /products/{sku}/options/{optionId}.
+func (s *Service) UpdateProductOption(ctx context.Context, sku string, optionID int, in CustomOptionInput) (*ProductOption, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento product service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return nil, err
+	}
+	if optionID <= 0 {
+		return nil, invalidf("option_id must be a positive integer")
+	}
+	values, err := validateCustomOption(in)
+	if err != nil {
+		return nil, err
+	}
 	body := customOptionBody{Option: customOptionPayload{
-		Title: in.Title, Type: in.Type, IsRequire: in.IsRequire, SortOrder: in.SortOrder, Values: values,
+		OptionID: optionID, Title: in.Title, Type: in.Type, IsRequire: in.IsRequire, SortOrder: in.SortOrder, Values: values,
 	}}
-	raw, err := s.client.do(ctx, http.MethodPost, "/products/"+url.PathEscape(sku)+"/options", nil, body)
+	raw, err := s.client.do(ctx, http.MethodPut,
+		"/products/"+url.PathEscape(sku)+"/options/"+strconv.Itoa(optionID), nil, body)
 	if err != nil {
 		return nil, err
 	}
@@ -142,22 +203,19 @@ func (s *Service) CreateProductOption(ctx context.Context, sku string, in Custom
 	return &option, nil
 }
 
-type customOptionBody struct {
-	Option customOptionPayload `json:"option"`
-}
-
-type customOptionPayload struct {
-	Title     string                     `json:"title"`
-	Type      string                     `json:"type"`
-	IsRequire bool                       `json:"is_require"`
-	SortOrder int                        `json:"sort_order"`
-	Values    []customOptionValuePayload `json:"values,omitempty"`
-}
-
-type customOptionValuePayload struct {
-	Title     string  `json:"title"`
-	Price     float64 `json:"price"`
-	PriceType string  `json:"price_type"`
-	SKU       string  `json:"sku,omitempty"`
-	SortOrder int     `json:"sort_order"`
+// DeleteProductOption removes a custom option with
+// DELETE /products/{sku}/options/{optionId}.
+func (s *Service) DeleteProductOption(ctx context.Context, sku string, optionID int) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento product service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return err
+	}
+	if optionID <= 0 {
+		return invalidf("option_id must be a positive integer")
+	}
+	_, err := s.client.do(ctx, http.MethodDelete,
+		"/products/"+url.PathEscape(sku)+"/options/"+strconv.Itoa(optionID), nil, nil)
+	return err
 }
