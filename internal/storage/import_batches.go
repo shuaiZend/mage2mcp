@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -167,4 +168,17 @@ func (s *Store) GetImportBatch(ctx context.Context, id string) (*jobs.ImportBatc
 		batch.Failures = append(batch.Failures, failure)
 	}
 	return &batch, rows.Err()
+}
+
+// PruneImportBatches deletes batches created before olderThan and returns the
+// number removed. Failure rows cascade.
+func (s *Store) PruneImportBatches(ctx context.Context, olderThan time.Time) (int64, error) {
+	if s == nil || s.pool == nil {
+		return 0, fmt.Errorf("storage: not open")
+	}
+	tag, err := s.pool.Exec(ctx, `DELETE FROM import_batches WHERE created_at < $1`, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("storage: prune import batches: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }

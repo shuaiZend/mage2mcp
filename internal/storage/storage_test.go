@@ -285,3 +285,65 @@ func TestListAndGetImportBatch(t *testing.T) {
 		t.Fatalf("all batches = %+v, %v", all, err)
 	}
 }
+
+func TestPruneImportBatches(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	id, err := store.CreateImportBatch(ctx, "store-prune-test", "", "csv", []byte("sku\nA\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := &jobs.ImportBatchResult{Total: 1, Processed: 1, Failed: 1,
+		Failures: []jobs.ImportBatchFailure{{RowNumber: 2, SKU: "A", Action: "create", Error: "boom"}}}
+	if err := store.FinishImportBatch(ctx, id, result, "partial", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Backdate the batch so the retention window removes it.
+	if _, err := store.pool.Exec(ctx, `UPDATE import_batches SET created_at = now() - interval '40 days' WHERE id = $1::uuid`, id); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := store.PruneImportBatches(ctx, time.Now().Add(-30*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed < 1 {
+		t.Fatalf("removed = %d", removed)
+	}
+	if batch, err := store.GetImportBatch(ctx, id); err != nil || batch != nil {
+		t.Fatalf("pruned batch = %+v, %v", batch, err)
+	}
+	var failures int
+	if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM import_batch_failures WHERE batch_id = $1::uuid`, id).Scan(&failures); err != nil {
+		t.Fatal(err)
+	}
+	if failures != 0 {
+		t.Fatalf("failure rows survived pruning: %d", failures)
+	}
+}
+
+func TestPruneImportBatchesNotOpen(t *testing.T) {
+	var store *Store
+	if _, err := store.PruneImportBatches(context.Background(), time.Now()); err == nil {
+		t.Fatal("pruning a closed store must fail")
+	}
+}
+
+func TestImportBatchStoreClosed(t *testing.T) {
+	var store *Store
+	ctx := context.Background()
+	if _, err := store.CreateImportBatch(ctx, "i", "", "csv", nil); err == nil {
+		t.Fatal("create on a closed store must fail")
+	}
+	if err := store.FinishImportBatch(ctx, "i", &jobs.ImportBatchResult{}, "failed", ""); err == nil {
+		t.Fatal("finish on a closed store must fail")
+	}
+	if _, err := store.GetImportBatchByJob(ctx, "i"); err == nil {
+		t.Fatal("get-by-job on a closed store must fail")
+	}
+	if _, err := store.ListImportBatches(ctx, "i", 10); err == nil {
+		t.Fatal("list on a closed store must fail")
+	}
+	if _, err := store.GetImportBatch(ctx, "i"); err == nil {
+		t.Fatal("get on a closed store must fail")
+	}
+}

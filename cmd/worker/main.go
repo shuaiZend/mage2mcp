@@ -13,6 +13,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -145,6 +146,7 @@ func run() error {
 		})
 	}
 
+	go pruneImportBatches(ctx, store, logger)
 	logger.Info("worker starting", "version", version, "queue", "postgresql")
 	if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -169,4 +171,34 @@ func importBatchResult(result *magento.ImportResult) *jobs.ImportBatchResult {
 		})
 	}
 	return batch
+}
+
+// pruneImportBatches removes import batch history older than the retention
+// window. Failure rows cascade with their batch.
+// importBatchPruner is the subset of storage used by the retention loop.
+type importBatchPruner interface {
+	PruneImportBatches(ctx context.Context, olderThan time.Time) (int64, error)
+}
+
+func pruneImportBatches(ctx context.Context, store importBatchPruner, logger *slog.Logger) {
+	const (
+		retention = 30 * 24 * time.Hour
+		interval  = 6 * time.Hour
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		removed, err := store.PruneImportBatches(ctx, time.Now().Add(-retention))
+		switch {
+		case err != nil && ctx.Err() == nil:
+			logger.Error("import batch pruning failed", "err", err)
+		case removed > 0:
+			logger.Info("pruned import batches", "count", removed)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
