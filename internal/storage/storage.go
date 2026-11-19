@@ -71,10 +71,10 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
 
-// Migrate applies the embedded migrations in order, skipping applied versions.
-// It is idempotent and safe to run on every start.
 const migrationLockKey = int64(0x6d616765326d6370)
 
+// Migrate applies the embedded migrations in order, skipping applied versions.
+// It is idempotent, takes an advisory lock, and is safe to run on every start.
 func (s *Store) Migrate(ctx context.Context) error {
 	// Serialize migrations across processes: server and worker start together and
 	// would otherwise race on CREATE TABLE IF NOT EXISTS.
