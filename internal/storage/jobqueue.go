@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -52,8 +53,17 @@ func (q *JobQueue) Enqueue(ctx context.Context, t jobs.Task) (string, error) {
 		payload = json.RawMessage("{}")
 	}
 	subject := sha256.Sum256([]byte("system"))
+	module := "platform"
 	var instanceID *string
 	if t.InstanceID != "" {
+		// The jobs table enforces module/instance consistency: a module-scoped
+		// job must name its module and instance.
+		module = strings.SplitN(t.Kind, ":", 2)[0]
+		switch module {
+		case "magento", "cloudflare", "ga4":
+		default:
+			return "", fmt.Errorf("storage: task kind %q needs a platform module prefix", t.Kind)
+		}
 		instanceID = &t.InstanceID
 	}
 	var idempotencyKey *string
@@ -64,9 +74,9 @@ func (q *JobQueue) Enqueue(ctx context.Context, t jobs.Task) (string, error) {
 	err := q.store.pool.QueryRow(ctx, `
 		INSERT INTO jobs (module, instance_id, tool, kind, queue, payload, subject_hash,
 		                  max_attempts, state, idempotency_key)
-		VALUES ('platform', $1, $2, $2, $3, $4, $5, $6, 'queued', $7)
+		VALUES ($1, $2, $3, $3, $4, $5, $6, $7, 'queued', $8)
 		RETURNING id::text`,
-		instanceID, t.Kind, queue, payload, subject[:], maxAttempts, idempotencyKey).Scan(&id)
+		module, instanceID, t.Kind, queue, payload, subject[:], maxAttempts, idempotencyKey).Scan(&id)
 	if err != nil {
 		// A repeated enqueue with the same idempotency key is not an error: the
 		// original job is returned so callers can poll it.
