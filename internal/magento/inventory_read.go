@@ -98,3 +98,45 @@ func (s *Service) SourceItems(ctx context.Context, skus []string) ([]SourceItemR
 	}
 	return payload.Items, nil
 }
+
+const maxStockStatusBatch = 25
+
+// StockStatusBatchItem is one SKU's stock result or its per-SKU error.
+type StockStatusBatchItem struct {
+	SKU    string       `json:"sku"`
+	Status *StockStatus `json:"status,omitempty"`
+	Error  string       `json:"error,omitempty"`
+}
+
+// StockStatuses reads the stock status of up to 25 SKUs. Magento has no batch
+// endpoint for catalog inventory, so the calls are sequential and each SKU
+// reports its own error instead of failing the whole batch.
+func (s *Service) StockStatuses(ctx context.Context, skus []string) ([]StockStatusBatchItem, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento inventory service is not configured")
+	}
+	if len(skus) == 0 {
+		return nil, invalidf("at least one sku is required")
+	}
+	if len(skus) > maxStockStatusBatch {
+		return nil, invalidf("at most %d skus are allowed per call", maxStockStatusBatch)
+	}
+	seen := make(map[string]struct{}, len(skus))
+	results := make([]StockStatusBatchItem, 0, len(skus))
+	for _, sku := range skus {
+		if err := validateSKU(sku); err != nil {
+			return nil, err
+		}
+		if _, duplicate := seen[sku]; duplicate {
+			continue
+		}
+		seen[sku] = struct{}{}
+		status, err := s.StockStatus(ctx, sku)
+		if err != nil {
+			results = append(results, StockStatusBatchItem{SKU: sku, Error: importErrorMessage(err)})
+			continue
+		}
+		results = append(results, StockStatusBatchItem{SKU: sku, Status: status})
+	}
+	return results, nil
+}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -166,4 +167,21 @@ func validateMediaUpload(in MediaUploadInput) ([]byte, error) {
 		return nil, invalidf("media payload must not be empty")
 	}
 	return content, nil
+}
+
+// DeleteMedia removes one media entry from a product gallery with
+// DELETE /products/{sku}/media/{entryId}.
+func (s *Service) DeleteMedia(ctx context.Context, sku string, entryID int) error {
+	if s == nil || s.client == nil {
+		return errs.New(errs.CodeInternal, "Magento media service is not configured")
+	}
+	if err := validateSKU(sku); err != nil {
+		return err
+	}
+	if entryID <= 0 {
+		return invalidf("media_id must be a positive integer")
+	}
+	path := "/products/" + url.PathEscape(sku) + "/media/" + strconv.Itoa(entryID)
+	_, err := s.client.do(ctx, http.MethodDelete, path, nil, nil)
+	return err
 }
