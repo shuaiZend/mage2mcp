@@ -17,7 +17,8 @@ should do next. It is updated at the end of each development session.
 - GA4: traffic, metadata, capability probe, realtime, ecommerce overview, item
   performance; multi-property routing.
 - Unified: Cloudflare requests vs GA4 sessions comparison with declared semantics.
-- PostgreSQL migrations and durable audit, Redis/Asynq worker, admin approval CLI.
+- PostgreSQL migrations, durable audit, and a PostgreSQL-backed job queue/worker
+  (no Redis, ADR-0019), plus the admin approval CLI.
 - CI: docs, dco, actions-pinned, go 1.26/1.27, gosec, govulncheck, gitleaks,
   dependency-review, integration (PostgreSQL), coverage floor, release dry run.
 

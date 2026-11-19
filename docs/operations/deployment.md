@@ -2,7 +2,7 @@
 
 mage2mcp runs as two processes — `mage2mcp-server` (MCP endpoint) and
 `mage2mcp-worker` (background jobs) — with PostgreSQL for durable state and
-Redis for the job queue. The admin CLI (`mage2mcp-admin`) is a human-only tool
+PostgreSQL (which also hosts the job queue, ADR-0019). The admin CLI (`mage2mcp-admin`) is a human-only tool
 and must never run inside an agent's execution path.
 
 ## Components
@@ -10,10 +10,10 @@ and must never run inside an agent's execution path.
 | Component | Required | Purpose |
 |---|---|---|
 | `mage2mcp-server` | yes | MCP endpoint, auth, RBAC, confirmation, tool execution |
-| `mage2mcp-worker` | with async jobs | Imports, reports, log ingestion |
+| `mage2mcp-worker` | with async jobs | Imports, reports, log ingestion (PostgreSQL queue) |
 | `mage2mcp-admin` | for writes | Human approval surface for confirmations |
 | PostgreSQL 16+ | recommended | Audit, confirmations, jobs, instances |
-| Redis 7+ | with worker | Asynq queues, rate limits, cache |
+| — | — | The job queue lives in PostgreSQL (ADR-0019); no Redis |
 
 Without PostgreSQL the server keeps audit and confirmations in memory: writes
 stay disabled and audit is lost on restart. That mode is for local development
@@ -41,7 +41,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 Both stacks bind the server to `127.0.0.1:8080`, run it read-only with
-`no-new-privileges`, and wire PostgreSQL and Redis with health checks. The
+`no-new-privileges`, and wire PostgreSQL with a health check. The
 development stack must never be exposed to a network: it disables authentication
 and uses fixed placeholder passwords.
 
@@ -86,5 +86,5 @@ before closing the database pool.
 - One process handles all tool calls; scale vertically first. Multi-replica
   deployments require sticky routing for stateful MCP sessions or stateless
   mode.
-- The worker is stateless apart from Redis and PostgreSQL and can run as a
+- The worker is stateless apart from PostgreSQL and can run as a
   separate replica.

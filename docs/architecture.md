@@ -42,7 +42,6 @@ flowchart LR
     CF["Cloudflare<br/>API + GraphQL Analytics"]
     GA["Google Analytics 4<br/>Data API v1"]
     PG[("PostgreSQL")]
-    RD[("Redis")]
     CH[("ClickHouse<br/>(optional, Phase 3+)")]
     R2[("R2 object storage<br/>(Logpush archive)")]
 
@@ -52,7 +51,6 @@ flowchart LR
     GW -->|"REST + GraphQL (read-only)"| CF
     GW -->|"gRPC/REST (read-only)"| GA
     GW --> PG
-    GW --> RD
     GW -.->|"async ingestion"| CH
     CF -.->|"Logpush"| R2
     R2 -.->|"loader"| CH
@@ -68,9 +66,9 @@ through a typed, permissioned tool.
 | Container | Responsibility | State |
 |---|---|---|
 | `mage2mcp-server` | MCP endpoint, authentication, RBAC, tool registry, synchronous tool execution | Stateless except MCP session state |
-| `mage2mcp-worker` | Asynchronous jobs: imports, Logpush ingestion, long-running reports, retries | Durable job state in PostgreSQL/Redis |
+| `mage2mcp-worker` | Asynchronous jobs: imports, Logpush ingestion, long-running reports, retries | Durable job state in PostgreSQL |
 | PostgreSQL | Instances, permissions, job state, audit log, SKU mappings, import batches | Durable |
-| Redis | Asynq queues, rate limits, short-lived caches, idempotency keys | Ephemeral |
+| PostgreSQL job queue | Durable task queue with leases (ADR-0019); no Redis | Durable |
 | ClickHouse (optional) | Raw/normalized HTTP request logs from Logpush | Durable, Phase 3+ |
 | R2 (optional) | Logpush archive and replay source | Durable, Phase 3+ |
 
@@ -112,10 +110,10 @@ internal/magento  internal/cloudflare  internal/ga4  internal/unified
 | `internal/cloudflare` | Cloudflare API client, GraphQL query templates, security events, Logpush metadata | `core` only |
 | `internal/ga4` | GA4 Data API client, report builder, compatibility validator, property capabilities | `core` only |
 | `internal/unified` | Cross-source models, joins, metric semantics, SKU mapping | `core` + module **public service interfaces** |
-| `internal/jobs` | Asynq task definitions, enqueue/dequeue, retry policy | `core`, module services (as task handlers) |
+| `internal/jobs` | Queue contract, worker loop, retry policy | `core` |
 | `internal/logs` | R2/ClickHouse ingestion and request-level queries for Logpush data | `core`, object storage and ClickHouse drivers |
 | `internal/admin` | Human-only approval surface for confirmations, read-only status | `core`, `security` |
-| `internal/storage` | PostgreSQL repositories, migrations runner, Redis adapters | `core` |
+| `internal/storage` | PostgreSQL repositories, migrations runner, job queue | `core` |
 | `internal/observability` | Structured logging, metrics, health, tracing | `core` |
 | `pkg/` | Optional reusable primitives with no domain knowledge | Standard library only |
 
@@ -268,12 +266,11 @@ Rules:
 | Credential references | PostgreSQL (reference only) / secret manager | Until rotated |
 | Users, roles, tool permissions | PostgreSQL | Until deleted |
 | Audit events | PostgreSQL, append-only | 365 days default, configurable |
-| Jobs and job attempts | PostgreSQL + Redis queue | 30 days after completion |
-| Idempotency reservations (Redis) and ledger (PostgreSQL) | Redis + PostgreSQL | Reservation 24 h; ledger 30 days |
+| Jobs and job attempts | PostgreSQL queue (ADR-0019) | 30 days after completion |
+| Idempotency ledger | PostgreSQL | 30 days |
 | Import batches and item results | PostgreSQL | 90 days |
 | SKU mappings | PostgreSQL | Until deleted |
-| Short-lived response cache | Redis | 30 s – 15 min by report shape |
-| Rate-limit counters | Redis | Window length |
+| Job queue | PostgreSQL (`FOR UPDATE SKIP LOCKED`, leases) | Until completion + retention |
 | Raw HTTP request logs | ClickHouse / R2 | Per-zone policy, never PostgreSQL |
 
 The database design is in [database-design.md](database-design.md). Raw
@@ -330,14 +327,14 @@ Internet ── Cloudflare (Access + Tunnel) ── mage2mcp-server (private net
                                                    │
                                     ┌──────────────┼──────────────┐
                                     ▼              ▼              ▼
-                                PostgreSQL       Redis        worker
+                                PostgreSQL                   worker
 ```
 
 - The MCP endpoint is published through a Cloudflare Tunnel; no inbound port is
   opened on the host.
 - The admin/metrics surface is bound to a private interface or protected by a
   separate Access application. It is never exposed anonymously.
-- The server and worker share the database and Redis but have separate
+- The server and worker share the database but have separate
   credentials and separate container images.
 - Configuration is mounted read-only; secrets come from the environment or a
   secret manager, never from the image.

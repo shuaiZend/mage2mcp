@@ -10,7 +10,6 @@ package config
 import (
 	"bytes"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 	"time"
@@ -24,7 +23,6 @@ type Config struct {
 	Auth     Auth      `yaml:"auth"`
 	Log      Log       `yaml:"log"`
 	Database Database  `yaml:"database"`
-	Redis    Redis     `yaml:"redis"`
 	Tools    Tools     `yaml:"tools"`
 	Modules  Modules   `yaml:"datasources"`
 	Bindings []Binding `yaml:"bindings"`
@@ -49,13 +47,6 @@ type Tools struct {
 type Database struct {
 	URL      string `yaml:"url"`
 	MaxConns int32  `yaml:"max_conns"`
-}
-
-// Redis configures the optional job queue.
-type Redis struct {
-	Addr     string `yaml:"addr"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
 }
 
 // Server holds listener settings.
@@ -168,12 +159,6 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("MAGE2MCP_DATABASE_URL"); v != "" {
 		c.Database.URL = v
 	}
-	if v := os.Getenv("MAGE2MCP_REDIS_ADDR"); v != "" {
-		c.Redis.Addr = v
-	}
-	if v := os.Getenv("MAGE2MCP_REDIS_PASSWORD"); v != "" {
-		c.Redis.Password = v
-	}
 }
 
 // Validate rejects an unsafe or incomplete configuration.
@@ -215,14 +200,6 @@ func (c Config) Validate() error {
 		}
 		if c.Database.MaxConns <= 0 {
 			problems = append(problems, "database.max_conns must be positive")
-		}
-	}
-	if c.Redis.Addr != "" {
-		if _, _, err := net.SplitHostPort(c.Redis.Addr); err != nil {
-			problems = append(problems, "redis.addr must be host:port")
-		}
-		if c.Redis.DB < 0 {
-			problems = append(problems, "redis.db must not be negative")
 		}
 	}
 	for name, m := range map[string]Module{

@@ -1,6 +1,6 @@
 # ADR-0015: Job enqueue path and retry semantics
 
-- **Status:** Accepted
+- **Status:** Accepted; queue storage superseded by ADR-0019 (PostgreSQL, no Redis)
 - **Date:** 2026-11-19
 - **Deciders:** maintainer, Architect
 - **Supersedes:** none

@@ -1,6 +1,7 @@
 # ADR-0009: Data stores — PostgreSQL for state, Redis for queues and limits
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0019 for the queue; PostgreSQL remains the only stateful store
+- **Original status:** Accepted
 - **Date:** 2026-11-18
 - **Deciders:** maintainer, Architect
 - **Supersedes:** none
@@ -33,12 +34,9 @@ Adopt option 3.
   users, roles, permissions, jobs, audit, import batches, SKU mappings, and
   idempotency records. The server never writes configuration back to the database. Migrations run via
   `golang-migrate`, forward-only with tested rollback notes.
-- **Redis 7+** for Asynq queues, rate-limit counters, idempotency reservations, and
-  short-lived response caches. Durable idempotency records live in PostgreSQL:
-  Redis provides the fast `SET NX` reservation, PostgreSQL provides the single
-  authoritative ledger that survives a Redis flush. There is exactly one ledger;
-  `jobs.idempotency_key` is a convenience index into it, not a second source of
-  truth.
+- **PostgreSQL 16+** for the job queue as well (ADR-0019): `FOR UPDATE SKIP
+  LOCKED` plus leases replaced Redis/Asynq. Durable idempotency records live in
+  PostgreSQL and are the single authoritative ledger.
 - **Explicitly excluded:** raw Cloudflare logs (ClickHouse/R2), secrets
   (environment or secret manager), and agent conversation content.
 
