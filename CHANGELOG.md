@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-19
+
+Fourth minor pre-release: configurable parent updates and variation creation,
+document emails, and the complete MSI source lifecycle (create, link, unlink).
+
 ### Added
 
 - `magento.configurable.create_variations` (confirmation-gated): creates simple
@@ -449,7 +454,8 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.3.0
 [0.2.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.2.0
 [0.1.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.1.0
