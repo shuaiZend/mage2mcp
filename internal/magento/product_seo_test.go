@@ -250,3 +250,70 @@ func TestUpdateProductRejectsBadCategoryIDs(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestCreateProductSendsPricingAttributes(t *testing.T) {
+	var body struct {
+		Product struct {
+			CustomAttributes []productAttribute `json:"custom_attributes"`
+		} `json:"product"`
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"sku":"SKU-1","name":"Widget","type_id":"simple","price":9.99,"attribute_set_id":4}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	_, err := svc.Create(context.Background(), CreateProductInput{
+		SKU: "SKU-1", Name: "Widget", AttributeSetID: 4, TypeID: "simple", Price: "9.99",
+		Weight: "1.25", SpecialPrice: "7.99", SpecialFromDate: "2026-11-01", SpecialToDate: "2026-11-30",
+		Cost: "5.00", TaxClassID: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, attr := range body.Product.CustomAttributes {
+		got[attr.AttributeCode] = attr.Value
+	}
+	if got["weight"] != "1.25" || got["special_price"] != "7.99" || got["tax_class_id"] != "2" {
+		t.Fatalf("attributes = %+v", got)
+	}
+	if got["special_from_date"] != "2026-11-01" || got["special_to_date"] != "2026-11-30" {
+		t.Fatalf("attributes = %+v", got)
+	}
+}
+
+func TestPricingValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	base := CreateProductInput{SKU: "SKU-1", Name: "Widget", AttributeSetID: 4, TypeID: "simple", Price: "9.99"}
+	cases := []CreateProductInput{
+		{Weight: "heavy"},
+		{SpecialPrice: "1.23456"},
+		{SpecialFromDate: "01/11/2026"},
+		{SpecialFromDate: "2026-11-30", SpecialToDate: "2026-11-01"},
+		{Cost: "-1"},
+		{TaxClassID: -1},
+	}
+	for i, patch := range cases {
+		in := base
+		in.Weight = patch.Weight
+		in.SpecialPrice = patch.SpecialPrice
+		in.SpecialFromDate = patch.SpecialFromDate
+		in.SpecialToDate = patch.SpecialToDate
+		in.Cost = patch.Cost
+		in.TaxClassID = patch.TaxClassID
+		if _, err := svc.Create(ctx, in); errs.CodeOf(err) != errs.CodeInvalidArgument {
+			t.Fatalf("case %d: err = %v", i, err)
+		}
+	}
+	duplicate := base
+	duplicate.Attributes = map[string]string{"weight": "1"}
+	if _, err := svc.Create(ctx, duplicate); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("duplicate weight err = %v", err)
+	}
+}

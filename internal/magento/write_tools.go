@@ -88,10 +88,17 @@ const (
 	metaKeywordsProp     = `"meta_keywords": {"type": "string", "maxLength": 255, "description": "Optional comma-separated keywords; low ranking value, keep it short and relevant."}`
 	metaDescriptionProp  = `"meta_description": {"type": "string", "maxLength": 255, "description": "SEO meta description. 120-160 characters is the useful range; state the benefit and include a call to action."}`
 	seoProps             = descriptionProp + `, ` + shortDescriptionProp + `, ` + urlKeyProp + `, ` + metaTitleProp + `, ` + metaKeywordsProp + `, ` + metaDescriptionProp
+	weightProp           = `"weight": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Product weight for shipping (decimal, up to 4 fraction digits)."}`
+	specialPriceProp     = `"special_price": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Promotional price; pair it with special_from_date/special_to_date."}`
+	specialFromProp      = `"special_from_date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Special price start date, YYYY-MM-DD."}`
+	specialToProps       = `"special_to_date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Special price end date, YYYY-MM-DD; must not precede special_from_date."}`
+	costProp             = `"cost": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Cost of goods, used for margin reporting."}`
+	taxClassProp         = `"tax_class_id": {"type": "integer", "minimum": 0, "description": "Magento tax class id; 0 leaves the default."}`
+	pricingProps         = weightProp + `, ` + specialPriceProp + `, ` + specialFromProp + `, ` + specialToProps + `, ` + costProp + `, ` + taxClassProp
 
-	productCreateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + typeIDProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + quantityProp + `, ` + seoProps + `}, "required": ["instance", "sku", "name", "attribute_set_id", "type_id", "price"], "additionalProperties": false}`
-	productUpdateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + attributesProp + `, ` + seoProps + `, "category_ids": {"type": "array", "maxItems": 500, "items": {"type": "integer", "minimum": 1}, "description": "Replaces the product's category assignments when provided; an empty array clears them."}, "website_ids": {"type": "array", "maxItems": 50, "items": {"type": "integer", "minimum": 1}, "description": "Replaces the product's website assignments when provided."}}, "required": ["instance", "sku"], "additionalProperties": false}`
-	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + seoProps + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `, ` + seoProps + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
+	productCreateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + typeIDProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + quantityProp + `, ` + seoProps + `, ` + pricingProps + `}, "required": ["instance", "sku", "name", "attribute_set_id", "type_id", "price"], "additionalProperties": false}`
+	productUpdateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `, "category_ids": {"type": "array", "maxItems": 500, "items": {"type": "integer", "minimum": 1}, "description": "Replaces the product's category assignments when provided; an empty array clears them."}, "website_ids": {"type": "array", "maxItems": 50, "items": {"type": "integer", "minimum": 1}, "description": "Replaces the product's website assignments when provided."}}, "required": ["instance", "sku"], "additionalProperties": false}`
+	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `, ` + seoProps + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
 	configurableAddChildSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "child_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}}, "required": ["instance", "parent_sku", "child_sku"], "additionalProperties": false}`
 	inventoryAssignSchema      = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "source_code", "quantity", "status"], "properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "source_code": {"type": "string", "pattern": "` + sourceCodeInputPattern + `"}, "quantity": {"type": "integer", "minimum": 0}, "status": {"type": "integer", "enum": [0, 1], "description": "1 in stock, 0 out of stock."}}}}}, "required": ["instance", "items"], "additionalProperties": false}`
 )
@@ -116,6 +123,13 @@ type productCreateInput struct {
 	MetaTitle        string `json:"meta_title"`
 	MetaKeywords     string `json:"meta_keywords"`
 	MetaDescription  string `json:"meta_description"`
+
+	Weight          string `json:"weight"`
+	SpecialPrice    string `json:"special_price"`
+	SpecialFromDate string `json:"special_from_date"`
+	SpecialToDate   string `json:"special_to_date"`
+	Cost            string `json:"cost"`
+	TaxClassID      int    `json:"tax_class_id"`
 }
 
 func (in productCreateInput) toCreateInput() CreateProductInput {
@@ -125,6 +139,8 @@ func (in productCreateInput) toCreateInput() CreateProductInput {
 		WebsiteIDs: in.WebsiteIDs, CategoryIDs: in.CategoryIDs, Attributes: in.Attributes, Quantity: in.Quantity,
 		Description: in.Description, ShortDescription: in.ShortDescription, URLKey: in.URLKey,
 		MetaTitle: in.MetaTitle, MetaKeywords: in.MetaKeywords, MetaDescription: in.MetaDescription,
+		Weight: in.Weight, SpecialPrice: in.SpecialPrice, SpecialFromDate: in.SpecialFromDate,
+		SpecialToDate: in.SpecialToDate, Cost: in.Cost, TaxClassID: in.TaxClassID,
 	}
 }
 
@@ -145,6 +161,13 @@ type productUpdateInput struct {
 	MetaDescription  *string `json:"meta_description"`
 	CategoryIDs      []int   `json:"category_ids"`
 	WebsiteIDs       []int   `json:"website_ids"`
+
+	Weight          *string `json:"weight"`
+	SpecialPrice    *string `json:"special_price"`
+	SpecialFromDate *string `json:"special_from_date"`
+	SpecialToDate   *string `json:"special_to_date"`
+	Cost            *string `json:"cost"`
+	TaxClassID      *int    `json:"tax_class_id"`
 }
 
 type variantAttributeInput struct {
@@ -170,6 +193,13 @@ type childProductInput struct {
 	MetaTitle        string `json:"meta_title"`
 	MetaKeywords     string `json:"meta_keywords"`
 	MetaDescription  string `json:"meta_description"`
+
+	Weight          string `json:"weight"`
+	SpecialPrice    string `json:"special_price"`
+	SpecialFromDate string `json:"special_from_date"`
+	SpecialToDate   string `json:"special_to_date"`
+	Cost            string `json:"cost"`
+	TaxClassID      int    `json:"tax_class_id"`
 }
 
 type configurableCreateInput struct {
@@ -321,6 +351,8 @@ func newProductUpdateTool(lookup serviceLookup) registry.Tool {
 					Description: in.Description, ShortDescription: in.ShortDescription, URLKey: in.URLKey,
 					MetaTitle: in.MetaTitle, MetaKeywords: in.MetaKeywords, MetaDescription: in.MetaDescription,
 					CategoryIDs: in.CategoryIDs, WebsiteIDs: in.WebsiteIDs,
+					Weight: in.Weight, SpecialPrice: in.SpecialPrice, SpecialFromDate: in.SpecialFromDate,
+					SpecialToDate: in.SpecialToDate, Cost: in.Cost, TaxClassID: in.TaxClassID,
 				})
 				if err != nil {
 					return nil, productWriteOutput{}, err

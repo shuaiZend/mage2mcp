@@ -61,6 +61,14 @@ type CreateProductInput struct {
 	MetaTitle        string
 	MetaKeywords     string
 	MetaDescription  string
+
+	// Pricing and shipping attributes.
+	Weight          string
+	SpecialPrice    string
+	SpecialFromDate string
+	SpecialToDate   string
+	Cost            string
+	TaxClassID      int
 }
 
 // UpdateProductInput is a partial product update: nil fields are not sent, so
@@ -84,6 +92,13 @@ type UpdateProductInput struct {
 	// non-nil; an empty non-nil slice clears them. Nil leaves them untouched.
 	CategoryIDs []int
 	WebsiteIDs  []int
+
+	Weight          *string
+	SpecialPrice    *string
+	SpecialFromDate *string
+	SpecialToDate   *string
+	Cost            *string
+	TaxClassID      *int
 }
 
 type productAttribute struct {
@@ -219,6 +234,11 @@ func buildCreatePayload(in CreateProductInput) (productPayload, error) {
 		return productPayload{}, err
 	}
 	attributes = append(attributes, seo...)
+	pricing, err := pricingAttributes(in.Weight, in.SpecialPrice, in.SpecialFromDate, in.SpecialToDate, in.Cost, in.TaxClassID)
+	if err != nil {
+		return productPayload{}, err
+	}
+	attributes = append(attributes, pricing...)
 	payload := productPayload{
 		SKU: in.SKU, Name: strings.TrimSpace(in.Name), AttributeSetID: in.AttributeSetID,
 		TypeID: in.TypeID, Price: in.Price, Status: in.Status, Visibility: in.Visibility,
@@ -245,6 +265,13 @@ func buildUpdatePayload(sku string, in UpdateProductInput) (productPayload, erro
 		return productPayload{}, err
 	}
 	attributes = append(attributes, seo...)
+	pricing, err := pricingAttributesFromPointers([]*string{
+		in.Weight, in.SpecialPrice, in.SpecialFromDate, in.SpecialToDate, in.Cost,
+	}, in.TaxClassID)
+	if err != nil {
+		return productPayload{}, err
+	}
+	attributes = append(attributes, pricing...)
 	payload := productPayload{SKU: sku, CustomAttributes: attributes}
 	if in.CategoryIDs != nil || in.WebsiteIDs != nil {
 		ext := &productExtension{}
@@ -301,6 +328,10 @@ func buildUpdatePayload(sku string, in UpdateProductInput) (productPayload, erro
 			seoProvided = true
 			break
 		}
+	}
+	if in.Weight != nil || in.SpecialPrice != nil || in.SpecialFromDate != nil ||
+		in.SpecialToDate != nil || in.Cost != nil || in.TaxClassID != nil {
+		seoProvided = true
 	}
 	if payload.Name == "" && payload.Price == "" && payload.Status == 0 && payload.Visibility == 0 &&
 		len(attributes) == 0 && !seoProvided && in.CategoryIDs == nil && in.WebsiteIDs == nil {
@@ -364,7 +395,10 @@ func validateProductFields(in CreateProductInput) error {
 		in.MetaTitle, in.MetaKeywords, in.MetaDescription); err != nil {
 		return err
 	}
-	if err := ensureNoSEODuplicates(in.Attributes); err != nil {
+	if err := validatePricingFields(in.Weight, in.SpecialPrice, in.SpecialFromDate, in.SpecialToDate, in.Cost, in.TaxClassID); err != nil {
+		return err
+	}
+	if err := ensureNoReservedDuplicates(in.Attributes); err != nil {
 		return err
 	}
 	_, err := customAttributes(in.Attributes)
@@ -537,15 +571,6 @@ func validateSEOAttribute(code, value string) error {
 	return nil
 }
 
-func ensureNoSEODuplicates(attributes map[string]string) error {
-	for _, code := range seoAttributeOrder {
-		if _, exists := attributes[code]; exists {
-			return invalidf("%s must be set through its dedicated field, not the attributes map", code)
-		}
-	}
-	return nil
-}
-
 func seoAttributes(description, shortDescription, urlKey, metaTitle, metaKeywords, metaDescription string) ([]productAttribute, error) {
 	return seoAttributesFromPointers([]*string{
 		stringPtrIfSet(description), stringPtrIfSet(shortDescription), stringPtrIfSet(urlKey),
@@ -572,4 +597,78 @@ func stringPtrIfSet(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+var (
+	weightRE      = regexp.MustCompile(`^\d{1,12}(\.\d{1,4})?$`)
+	specialDateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+)
+
+var pricingAttributeOrder = []string{
+	"weight", "special_price", "special_from_date", "special_to_date", "cost", "tax_class_id",
+}
+
+// validatePricingFields checks pricing/shipping attribute bounds. Dates are
+// YYYY-MM-DD; Magento accepts an empty value to clear them.
+func validatePricingFields(weight, specialPrice, specialFrom, specialTo, cost string, taxClassID int) error {
+	if weight != "" && !weightRE.MatchString(weight) {
+		return invalidf("weight must be a non-negative decimal with at most 4 fraction digits")
+	}
+	if specialPrice != "" && !priceRE.MatchString(specialPrice) {
+		return invalidf("special_price must be a non-negative decimal with at most 4 fraction digits")
+	}
+	if cost != "" && !priceRE.MatchString(cost) {
+		return invalidf("cost must be a non-negative decimal with at most 4 fraction digits")
+	}
+	for field, value := range map[string]string{"special_from_date": specialFrom, "special_to_date": specialTo} {
+		if value != "" && !specialDateRE.MatchString(value) {
+			return invalidf("%s must be a YYYY-MM-DD date", field)
+		}
+	}
+	if specialFrom != "" && specialTo != "" && specialTo < specialFrom {
+		return invalidf("special_to_date must not be before special_from_date")
+	}
+	if taxClassID < 0 {
+		return invalidf("tax_class_id must not be negative")
+	}
+	return nil
+}
+
+func pricingAttributes(weight, specialPrice, specialFrom, specialTo, cost string, taxClassID int) ([]productAttribute, error) {
+	values := []*string{stringPtrIfSet(weight), stringPtrIfSet(specialPrice), stringPtrIfSet(specialFrom), stringPtrIfSet(specialTo), stringPtrIfSet(cost)}
+	var taxPointer *int
+	if taxClassID > 0 {
+		taxPointer = &taxClassID
+	}
+	return pricingAttributesFromPointers(values, taxPointer)
+}
+
+func pricingAttributesFromPointers(values []*string, taxClassID *int) ([]productAttribute, error) {
+	out := make([]productAttribute, 0, len(values)+1)
+	for i, code := range pricingAttributeOrder {
+		if i >= len(values) || values[i] == nil {
+			continue
+		}
+		out = append(out, productAttribute{AttributeCode: code, Value: *values[i]})
+	}
+	if taxClassID != nil {
+		if *taxClassID < 0 {
+			return nil, invalidf("tax_class_id must not be negative")
+		}
+		out = append(out, productAttribute{AttributeCode: "tax_class_id", Value: strconv.Itoa(*taxClassID)})
+	}
+	return out, nil
+}
+
+// ensureNoReservedDuplicates rejects reserved attribute codes set through the
+// raw attributes map; each has a dedicated typed field.
+func ensureNoReservedDuplicates(attributes map[string]string) error {
+	reserved := append([]string{}, seoAttributeOrder...)
+	reserved = append(reserved, pricingAttributeOrder...)
+	for _, code := range reserved {
+		if _, exists := attributes[code]; exists {
+			return invalidf("%s must be set through its dedicated field, not the attributes map", code)
+		}
+	}
+	return nil
 }
