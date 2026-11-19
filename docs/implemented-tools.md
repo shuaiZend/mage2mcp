@@ -25,12 +25,15 @@ Common behavior:
 | Tool | Scope | Timeout | Notes |
 |---|---|---|---|
 | `magento.product.get` | read | 30s | One product by SKU |
+| `magento.configurable.children` | read | 30s | Child products linked to a configurable product |
 | `magento.product.search` | read | 30s | Search with filters, sorting, page size |
 | `magento.import.validate` | read | 30s | CSV/JSON preview with per-row errors; never writes |
 | `magento.category.get` | read | 30s | One category by id |
 | `magento.category.tree` | read | 30s | Category subtree under a root, flattened depth-first (depth 1-5) |
+| `magento.category.products` | read | 30s | Products assigned to a category, paginated |
 | `magento.attribute.sets` | read | 30s | Product attribute sets (max 200) |
 | `magento.attributes.list` | read | 30s | Attributes of one attribute set |
+| `magento.attributes.options` | read | 30s | Options of a select/multiselect attribute (value_index) |
 | `magento.product.media` | read | 30s | Media gallery of one product |
 | `magento.inventory.status` | read | 30s | Catalog quantity, in-stock flag, and backorders for one SKU |
 | `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |

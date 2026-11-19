@@ -167,3 +167,79 @@ func (s *Service) Attributes(ctx context.Context, attributeSetID int) ([]Attribu
 	}
 	return attributes, nil
 }
+
+// AttributeOption is one selectable value of an attribute.
+type AttributeOption struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// AttributesOptions lists the options of a select/multiselect attribute.
+//
+// Configurable products reference options by value_index, so callers need this
+// to build variant attributes.
+func (s *Service) AttributesOptions(ctx context.Context, attributeCode string) ([]AttributeOption, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento catalog service is not configured")
+	}
+	if !attributeCodeRE.MatchString(attributeCode) {
+		return nil, invalidf("attribute code must match %s", attributeCodeRE.String())
+	}
+	path := "/products/attributes/" + url.PathEscape(attributeCode) + "/options"
+	raw, err := s.client.do(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var options []AttributeOption
+	if err := json.Unmarshal(raw, &options); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable attribute-option payload").WithCause(err)
+	}
+	if options == nil {
+		options = []AttributeOption{}
+	}
+	return options, nil
+}
+
+// CategoryProducts returns one page of products assigned to a category.
+func (s *Service) CategoryProducts(ctx context.Context, categoryID, limit, offset int) ([]Product, int, error) {
+	if s == nil || s.client == nil {
+		return nil, 0, errs.New(errs.CodeInternal, "Magento catalog service is not configured")
+	}
+	if categoryID <= 0 {
+		return nil, 0, invalidf("category_id must be a positive integer")
+	}
+	if limit == 0 {
+		limit = defaultSearchLimit
+	}
+	if limit < 1 || limit > maxSearchLimit {
+		return nil, 0, invalidf("limit must be between 1 and %d", maxSearchLimit)
+	}
+	if offset < 0 || offset%limit != 0 {
+		return nil, 0, invalidf("cursor offset must be a non-negative multiple of limit")
+	}
+	query := make(url.Values)
+	query.Set("searchCriteria[pageSize]", strconv.Itoa(limit))
+	query.Set("searchCriteria[currentPage]", strconv.Itoa(offset/limit+1))
+	path := "/categories/" + strconv.Itoa(categoryID) + "/products"
+	raw, err := s.client.do(ctx, http.MethodGet, path, query, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	var products []Product
+	var total int
+	if err := json.Unmarshal(raw, &products); err == nil {
+		total = len(products)
+		return products, total, nil
+	}
+	var payload struct {
+		Items      []Product `json:"items"`
+		TotalCount int       `json:"total_count"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, 0, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable category-product payload").WithCause(err)
+	}
+	if payload.Items == nil {
+		payload.Items = []Product{}
+	}
+	return payload.Items, payload.TotalCount, nil
+}
