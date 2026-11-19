@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shuaiZend/mage2mcp/internal/jobs"
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 )
@@ -105,5 +106,52 @@ func TestConfirmStoreLifecycle(t *testing.T) {
 	}
 	if err := svc.Consume(ctx, req.ID, "agent-1", args); err == nil {
 		t.Fatal("replay must be rejected")
+	}
+}
+
+func TestJobQueueLifecycle(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	queue := NewJobQueue(store)
+	id, err := queue.Enqueue(ctx, jobs.Task{Kind: jobs.TypeNoop, Payload: []byte(`{"message":"hi"}`), MaxAttempts: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := queue.Claim(ctx, []string{"default"}, time.Minute)
+	if err != nil || task == nil {
+		t.Fatalf("Claim = %v, %v", task, err)
+	}
+	if task.ID != id || task.Attempts != 1 || task.MaxAttempts != 2 {
+		t.Fatalf("task = %+v", task)
+	}
+	if err := queue.Complete(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if next, _ := queue.Claim(ctx, []string{"default"}, time.Minute); next != nil && next.ID == id {
+		t.Fatal("completed task was claimed again")
+	}
+}
+
+func TestJobQueueRecoversExpiredLease(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	queue := NewJobQueue(store)
+	id, err := queue.Enqueue(ctx, jobs.Task{Kind: jobs.TypeNoop, MaxAttempts: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Claim(ctx, []string{"default"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a worker that died holding the lease.
+	if _, err := store.pool.Exec(ctx, `UPDATE jobs SET lease_expires_at = now() - interval '1 minute' WHERE id = $1::uuid`, id); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := queue.Claim(ctx, []string{"default"}, time.Minute)
+	if err != nil || recovered == nil || recovered.ID != id {
+		t.Fatalf("expired lease not recovered: %+v %v", recovered, err)
+	}
+	if recovered.Attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", recovered.Attempts)
 	}
 }

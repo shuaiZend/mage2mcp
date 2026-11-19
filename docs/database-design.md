@@ -1,7 +1,7 @@
 # Database design
 
 **Status:** Phase 0 design baseline. Normative for Phase 1 migrations.
-**Date:** 2026-11-18 · **Target:** PostgreSQL 16+ (pgx v5, golang-migrate), Redis 7+ (Asynq).
+**Date:** 2026-11-18 · **Target:** PostgreSQL 16+ (pgx v5, golang-migrate). Redis was removed by ADR-0019: the job queue now lives in PostgreSQL, so the Redis sections below are historical.
 **Decisions:** [ADR-0009](adr/0009-data-stores.md), [ADR-0006](adr/0006-authentication.md),
 [ADR-0011](adr/0011-configuration-and-multi-instance.md),
 [ADR-0012](adr/0012-observability-and-audit.md).
@@ -35,7 +35,7 @@ reserved where cheap (§5.1, §13).
 
 ### 2.1 The durable/ephemeral test
 
-One question decides the store: **if Redis were flushed now, would a past operation become
+One question decides the store (historical, before ADR-0019): **if the cache were flushed now, would a past operation become
 unknowable, or would a retry become unsafe?** If yes, PostgreSQL. If losing it costs only
 latency, a recomputation, or one re-run job, Redis.
 

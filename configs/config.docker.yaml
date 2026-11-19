@@ -26,10 +26,6 @@ database:
   url: "${MAGE2MCP_DATABASE_URL}"
   max_conns: 10
 
-redis:
-  addr: "${MAGE2MCP_REDIS_ADDR}"
-  password: "${MAGE2MCP_REDIS_PASSWORD}"
-  db: 0
 
 datasources:
   magento:

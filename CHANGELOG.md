@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Removed the Redis dependency (ADR-0019): the job queue is now PostgreSQL-only
+  (`FOR UPDATE SKIP LOCKED` with leases), the worker requires `database.url`, and
+  the Redis configuration, Compose service, and Asynq/Redis dependencies are gone.
 - Dockerization: a distroless image with baked configuration and a real
   `HEALTHCHECK`, a development Compose stack that runs with one command, a
   production override that requires every secret, and a CI job that builds the

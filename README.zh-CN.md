@@ -8,8 +8,9 @@ mage2mcp 是一个独立的 [Model Context Protocol](https://modelcontextprotoco
 > 已具备可运行的 MCP 服务器：Streamable HTTP、Cloudflare Access JWT 认证、RBAC、
 > 审计、Prometheus 指标，以及 Magento 商品、Cloudflare 分析/安全、GA4 流量与元数据的
 > 只读工具与统一流量对比。一个网关可同时服务多个 Magento 店铺、Cloudflare zone 与
-> GA4 属性，并具备按实例的授权与审计；可选 PostgreSQL 持久化与 Redis worker 构成
-> 完整部署。写操作需要两步人工审批。尚未发布版本，接口在 1.0 之前可能通过 ADR 变更。
+> GA4 属性，并具备按实例的授权与审计；可选 PostgreSQL 持久化、审计与任务队列构成
+> 完整部署（无 Redis）。写操作需要两步人工审批。尚未发布版本，接口在 1.0 之前可能
+> 通过 ADR 变更。
 
 ## 当前已有的内容
 
@@ -128,7 +129,7 @@ flowchart TB
   cloudflare --> cfapi["Cloudflare API"]
   ga4 --> gaapi["GA4 Data API"]
   gateway -.-> pg[("PostgreSQL<br/>配置、审计、任务")]
-  gateway -.-> redis[("Redis<br/>Asynq 队列")]
+  gateway -.-> pgjobs[("PostgreSQL<br/>任务队列 队列")]
 ```
 
 网关将使用官方 [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) 和 Streamable HTTP
@@ -151,7 +152,7 @@ flowchart TB
 |---|---|
 | Go 服务 | MCP 端点、认证、RBAC、工具注册表、模块编排 |
 | PostgreSQL | 实例配置元数据、审计日志、任务状态 |
-| Redis + Asynq | 批量操作、导入轮询和日志摄取的后台队列 |
+| PostgreSQL 任务队列 | 批量操作、导入轮询和日志摄取的后台队列 |
 | R2 + ClickHouse（可选） | 启用 Logpush 日志分析时的 Cloudflare 原始请求日志 |
 | Prometheus | 工具延迟、错误和上游限流的指标端点 |
 | `slog` | 带脱敏的结构化 JSON 日志 |
@@ -333,7 +334,6 @@ Data API 只返回聚合数据。维度与指标的兼容性按字段对逐对�
 | MCP 协议 | 计划中：`2026-07-28`，可向下协商到 `2025-11-25` | 由 MCP Go SDK v1.8.0 提供 |
 | Go | 1.26 或更高 | SDK v1.8.0 要求 `go 1.25.0`；当前直接依赖要求 1.26；当前工具链为 1.27.x |
 | PostgreSQL | 16 或更高 | 配置元数据、审计日志、任务状态 |
-| Redis | 7 或更高 | Asynq 队列 |
 | 容器运行时 | Docker 与 Compose | 本地栈与部署 |
 
 ## 文档地图
@@ -367,7 +367,7 @@ Data API 只返回聚合数据。维度与指标的兼容性按字段对逐对�
 | 阶段 | 重点 | 退出标准 |
 |---|---|---|
 | 0 | 设计 | 架构、边界、工具目录、威胁模型、ADR 与治理机制通过评审；文档 CI 通过 |
-| 1 | 基础设施 | 基于 Streamable HTTP 的服务骨架、Cloudflare Access JWT 认证、RBAC、工具注册表、配置校验、审计、PostgreSQL 与 Redis、Docker、CI 关卡 |
+| 1 | 基础设施 | 基于 Streamable HTTP 的服务骨架、Cloudflare Access JWT 认证、RBAC、工具注册表、配置校验、审计、PostgreSQL、Docker、CI 关卡 |
 | 2 | Magento 2 | 商品、EAV、MSI、媒体、分类、订单、批量导入的读写工具，以及 GraphQL 验证 |
 | 3 | Cloudflare | GraphQL Analytics、Security Events、Logpush 清单与分析，全部只读 |
 | 4 | GA4 | 元数据发现、核心报告、电商报告、实时报告、配额处理，以及有文档记录的 BigQuery 边界 |

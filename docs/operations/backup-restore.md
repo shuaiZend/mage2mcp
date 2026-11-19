@@ -9,7 +9,6 @@
 | Jobs and idempotency keys | PostgreSQL | daily | losing them may re-run non-idempotent work |
 | Instances and permissions | PostgreSQL | daily | projection of YAML; YAML is the source of truth |
 | Configuration and secrets | operator repository / secret manager | on change | never in the database backup |
-| Redis | — | not backed up | queues and caches are reconstructible |
 
 Raw Cloudflare request logs (when Logpush is enabled) live in R2/ClickHouse and
 follow that system's own backup policy; they are never in PostgreSQL.

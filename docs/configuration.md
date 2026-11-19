@@ -49,16 +49,6 @@ Environment override: `MAGE2MCP_TOOLS_WRITES=true`.
 
 Environment override: `MAGE2MCP_DATABASE_URL`.
 
-## `redis`
-
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `addr` | string | — | `host:port`; required by the worker. |
-| `password` | string | — | Redis password. |
-| `db` | int | `0` | Redis database index. |
-
-Environment overrides: `MAGE2MCP_REDIS_ADDR`, `MAGE2MCP_REDIS_PASSWORD`.
-
 ## `datasources`
 
 Each module has `enabled` and `instances`. All three modules accept several

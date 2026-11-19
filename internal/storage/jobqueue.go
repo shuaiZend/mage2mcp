@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package storage
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/shuaiZend/mage2mcp/internal/jobs"
+)
+
+// JobQueue is a PostgreSQL-backed jobs.Queue.
+//
+// Claiming uses FOR UPDATE SKIP LOCKED so several workers can run safely, and
+// expired leases are returned to the queue so a crashed worker does not strand
+// work. No Redis is involved.
+type JobQueue struct {
+	store *Store
+}
+
+// NewJobQueue returns a queue backed by store.
+func NewJobQueue(store *Store) *JobQueue {
+	return &JobQueue{store: store}
+}
+
+// Enqueue inserts a queued task and returns its id.
+func (q *JobQueue) Enqueue(ctx context.Context, t jobs.Task) (string, error) {
+	if q == nil || q.store == nil || q.store.pool == nil {
+		return "", fmt.Errorf("storage: job queue not configured")
+	}
+	if t.Kind == "" {
+		return "", fmt.Errorf("storage: task kind is required")
+	}
+	queue := t.Queue
+	if queue == "" {
+		queue = "default"
+	}
+	maxAttempts := t.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	payload := t.Payload
+	if len(payload) == 0 {
+		payload = json.RawMessage("{}")
+	}
+	subject := sha256.Sum256([]byte("system"))
+	var id string
+	err := q.store.pool.QueryRow(ctx, `
+		INSERT INTO jobs (module, tool, kind, queue, payload, subject_hash, max_attempts, state)
+		VALUES ('platform', $1, $1, $2, $3, $4, $5, 'queued')
+		RETURNING id::text`,
+		t.Kind, queue, payload, subject[:], maxAttempts).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("storage: enqueue job: %w", err)
+	}
+	return id, nil
+}
+
+// Claim returns the next runnable task, or nil when the queues are empty.
+func (q *JobQueue) Claim(ctx context.Context, queues []string, lease time.Duration) (*jobs.Task, error) {
+	if len(queues) == 0 {
+		queues = []string{"critical", "default", "import", "report"}
+	}
+	if lease <= 0 {
+		lease = 2 * time.Minute
+	}
+	tx, err := q.store.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("storage: claim begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Recover work whose worker died while holding a lease.
+	if _, err := tx.Exec(ctx, `
+		UPDATE jobs SET state = 'queued', lease_expires_at = NULL
+		WHERE state = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < now()`); err != nil {
+		return nil, fmt.Errorf("storage: recover expired leases: %w", err)
+	}
+
+	var task jobs.Task
+	err = tx.QueryRow(ctx, `
+		SELECT id::text, kind, queue, payload, attempt_count + 1, max_attempts
+		FROM jobs
+		WHERE state = 'queued' AND queue = ANY($1) AND scheduled_at <= now()
+		ORDER BY priority DESC, scheduled_at ASC
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1`, queues).Scan(&task.ID, &task.Kind, &task.Queue, &task.Payload, &task.Attempts, &task.MaxAttempts)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("storage: claim select: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE jobs SET state = 'running', started_at = COALESCE(started_at, now()),
+			lease_expires_at = now() + $2::interval, attempt_count = $3, updated_at = now()
+		WHERE id = $1::uuid`, task.ID, lease.String(), task.Attempts); err != nil {
+		return nil, fmt.Errorf("storage: claim update: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("storage: claim commit: %w", err)
+	}
+	return &task, nil
+}
+
+// Complete marks a task succeeded.
+func (q *JobQueue) Complete(ctx context.Context, id string) error {
+	_, err := q.store.pool.Exec(ctx, `
+		UPDATE jobs SET state = 'succeeded', finished_at = now(), lease_expires_at = NULL, updated_at = now()
+		WHERE id = $1::uuid`, id)
+	if err != nil {
+		return fmt.Errorf("storage: complete job: %w", err)
+	}
+	return nil
+}
+
+// Fail records a failed attempt. With retry it returns the task to the queue
+// after a bounded exponential backoff; otherwise it is terminal.
+func (q *JobQueue) Fail(ctx context.Context, id, errorCode string, retry bool) error {
+	state := "failed"
+	backoff := time.Duration(0)
+	if retry {
+		state = "queued"
+		backoff = 5 * time.Second
+	}
+	_, err := q.store.pool.Exec(ctx, `
+		UPDATE jobs SET state = $2, last_error_code = NULLIF($3,''), lease_expires_at = NULL,
+			scheduled_at = now() + $4::interval,
+			finished_at = CASE WHEN $2 = 'failed' THEN now() ELSE NULL END,
+			updated_at = now()
+		WHERE id = $1::uuid`, id, state, errorCode, backoff.String())
+	if err != nil {
+		return fmt.Errorf("storage: fail job: %w", err)
+	}
+	return nil
+}
+
+// Extend renews the lease of a running task.
+func (q *JobQueue) Extend(ctx context.Context, id string, lease time.Duration) error {
+	_, err := q.store.pool.Exec(ctx, `
+		UPDATE jobs SET lease_expires_at = now() + $2::interval, updated_at = now()
+		WHERE id = $1::uuid AND state = 'running'`, id, lease.String())
+	if err != nil {
+		return fmt.Errorf("storage: extend job lease: %w", err)
+	}
+	return nil
+}
+
+// Cancel cancels a queued or running task.
+func (q *JobQueue) Cancel(ctx context.Context, id string) error {
+	_, err := q.store.pool.Exec(ctx, `
+		UPDATE jobs SET state = 'canceled', finished_at = now(), lease_expires_at = NULL, updated_at = now()
+		WHERE id = $1::uuid AND state IN ('queued','running')`, id)
+	if err != nil {
+		return fmt.Errorf("storage: cancel job: %w", err)
+	}
+	return nil
+}

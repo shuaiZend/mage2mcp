@@ -141,7 +141,7 @@ Apache-2.0 11, BSD-2-Clause 3, ISC 1, MIT-0 1, dual MIT + Apache-2.0 1.
 |---|---|---|---|---|---|---|
 | `github.com/modelcontextprotocol/go-sdk` | v1.8.0 | Apache-2.0 (MIT portions) | Active | No (direct) | Compatible | 2026-11-18 |
 | `github.com/jackc/pgx/v5` | v5.13.0 | MIT | Active | No (direct) | Compatible | 2026-11-18 |
-| `github.com/hibiken/asynq` | v0.26.0 | MIT | Active | No (direct) | Compatible | 2026-11-18 |
+| `github.com/hibiken/asynq` (removed in ADR-0019) | v0.26.0 | MIT | Active | No (direct) | Compatible | 2026-11-18 |
 | `github.com/go-chi/chi/v5` | v5.5.0 | MIT | Active | No (direct) | Compatible | 2026-11-18 |
 | `github.com/golang-jwt/jwt/v5` | v5.3.1 | MIT | Active | No (direct) | Compatible | 2026-11-18 |
 | `github.com/redis/go-redis/v9` | v9.23.0 | BSD-2-Clause | Active | No (direct) | Compatible | 2026-11-18 |

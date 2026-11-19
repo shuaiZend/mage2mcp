@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command worker runs the asynchronous task worker.
+//
+// Tasks live in PostgreSQL (see internal/storage.JobQueue); there is no Redis
+// dependency. The worker claims with a lease, executes handlers, and records
+// success, failure, or retry.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +20,7 @@ import (
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
 	"github.com/shuaiZend/mage2mcp/internal/observability"
+	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
 
 // version is set at build time.
@@ -37,29 +43,36 @@ func run() error {
 		return err
 	}
 	logger := observability.NewLogger(cfg.Log.Level, cfg.Log.Format, os.Stderr)
-	if cfg.Redis.Addr == "" {
-		return errors.New("worker: redis.addr is required")
+	if cfg.Database.URL == "" {
+		return errors.New("worker: database.url is required: the queue lives in PostgreSQL")
 	}
-	server := jobs.NewServer(jobs.RedisOptions(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB), 0, logger)
-	mux := jobs.NewMux(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	errCh := make(chan error, 1)
-	go func() {
-		logger.Info("worker starting", "version", version, "redis", cfg.Redis.Addr)
-		if err := server.Run(mux); err != nil {
-			errCh <- err
-		}
-	}()
-
-	select {
-	case err := <-errCh:
+	store, err := storage.Open(ctx, storage.Config{URL: cfg.Database.URL, MaxConns: cfg.Database.MaxConns})
+	if err != nil {
 		return err
-	case <-ctx.Done():
 	}
-	logger.Info("worker shutting down")
-	server.Shutdown()
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		return err
+	}
+
+	worker := jobs.NewWorker(storage.NewJobQueue(store), jobs.WorkerOptions{Logger: logger})
+	worker.Handle(jobs.TypeNoop, func(_ context.Context, task jobs.Task) error {
+		var payload jobs.NoopPayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return fmt.Errorf("decode noop payload: %w", err)
+		}
+		logger.Info("noop task executed", "job_id", task.ID, "message", payload.Message)
+		return nil
+	})
+
+	logger.Info("worker starting", "version", version, "queue", "postgresql")
+	if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	logger.Info("worker stopped")
 	return nil
 }

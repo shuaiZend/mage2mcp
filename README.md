@@ -10,7 +10,7 @@ typed, audited, read-only-by-default tools.
 > products, Cloudflare analytics/security, GA4 reports and capabilities, and a
 > unified traffic comparison. Multiple Magento stores, Cloudflare zones, and GA4
 > properties can share one gateway, with per-instance authorization and audit;
-> optional PostgreSQL-backed state and a Redis worker complete the deployment.
+> optional PostgreSQL-backed state, audit, and job queue complete the deployment.
 > Write tools require two-step human approval. There is no release yet, and
 > interfaces may change with an ADR before 1.0.
 
@@ -150,7 +150,7 @@ flowchart TB
   cloudflare --> cfapi["Cloudflare API"]
   ga4 --> gaapi["GA4 Data API"]
   gateway -.-> pg[("PostgreSQL<br/>config, audit, jobs")]
-  gateway -.-> redis[("Redis<br/>Asynq queues")]
+  gateway -.-> pgjobs[("PostgreSQL<br/>job queue")]
 ```
 
 The gateway will use the official
@@ -182,7 +182,7 @@ Runtime components:
 |---|---|
 | Go service | MCP endpoint, auth, RBAC, tool registry, module orchestration |
 | PostgreSQL | Instance configuration metadata, audit log, job state |
-| Redis + Asynq | Background queues for bulk operations, import polling, and log ingestion |
+| PostgreSQL job queue | Background queues for bulk operations, import polling, and log ingestion (ADR-0019) |
 | R2 + ClickHouse (optional) | Raw Cloudflare request logs when Logpush analysis is enabled |
 | Prometheus | Metrics endpoint for tool latency, errors, and upstream rate limits |
 | `slog` | Structured JSON logs with redaction |
@@ -389,7 +389,6 @@ documentation behind each constraint is cited in the corresponding integration d
 | MCP protocol | Planned: `2026-07-28`, negotiating down to `2025-11-25` | Provided by MCP Go SDK v1.8.0 |
 | Go | 1.26 or newer | SDK v1.8.0 requires `go 1.25.0`; current direct dependencies require 1.26; 1.27.x is the current toolchain |
 | PostgreSQL | 16 or newer | Configuration metadata, audit log, job state |
-| Redis | 7 or newer | Asynq queues |
 | Container runtime | Docker with Compose | Local stack and deployment |
 
 ## Documentation map
@@ -424,7 +423,7 @@ and the design documents for the next phase are consistent with the research bas
 | Phase | Focus | Exit criteria |
 |---|---|---|
 | 0 | Design | Architecture, boundaries, tool catalog, threat model, ADRs, and governance reviewed; documentation CI green |
-| 1 | Foundation | Server skeleton on Streamable HTTP, Cloudflare Access JWT auth, RBAC, tool registry, config validation, audit, PostgreSQL and Redis, Docker, CI gates |
+| 1 | Foundation | Server skeleton on Streamable HTTP, Cloudflare Access JWT auth, RBAC, tool registry, config validation, audit, PostgreSQL (including the job queue), Docker, CI gates |
 | 2 | Magento 2 | Read and write tools for products, EAV, MSI, media, categories, orders, bulk import, and GraphQL verification |
 | 3 | Cloudflare | GraphQL Analytics, Security Events, Logpush inventory and analysis, all read-only |
 | 4 | GA4 | Metadata discovery, core, ecommerce, and realtime reports, quota handling, and the documented BigQuery boundary |
