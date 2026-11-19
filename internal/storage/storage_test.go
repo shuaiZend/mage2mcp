@@ -320,3 +320,10 @@ func TestPruneImportBatches(t *testing.T) {
 		t.Fatalf("failure rows survived pruning: %d", failures)
 	}
 }
+
+func TestPruneImportBatchesNotOpen(t *testing.T) {
+	var store *Store
+	if _, err := store.PruneImportBatches(context.Background(), time.Now()); err == nil {
+		t.Fatal("pruning a closed store must fail")
+	}
+}
