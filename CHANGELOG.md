@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-11-19
+
+Second pre-release: a broad Magento write/read surface, SEO-aware product
+fields, asynchronous imports, and a repository end-to-end test.
+
 ### Added
 
 - Repository end-to-end assets (`test/e2e/`): a fake Magento REST API, an MCP
@@ -228,5 +233,6 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.0.2
 [0.0.1]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.0.1
