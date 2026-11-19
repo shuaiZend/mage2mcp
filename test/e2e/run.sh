@@ -107,7 +107,12 @@ WORKER_PID=$!
 export E2E_ENDPOINT="http://127.0.0.1:${API_PORT}/mcp"
 export E2E_INSTANCE="store-us"
 client() { "$WORK/bin/client" "$@"; }
-approve() { "$WORK/bin/admin" -config "$WORK/config.yaml" -as e2e-reviewer approve "$1" >/dev/null; }
+approve() {
+  local out
+  out=$("$WORK/bin/admin" -config "$WORK/config.yaml" -as e2e-reviewer approve "$1" 2>&1)
+  echo "$out"
+  [[ "$out" == approved* ]] || { echo "approve failed for $1"; return 1; }
+}
 
 fail() { echo "E2E FAIL: $*"; echo "--- server ---"; tail -20 "$WORK/server.log"; echo "--- worker ---"; tail -20 "$WORK/worker.log"; exit 1; }
 
