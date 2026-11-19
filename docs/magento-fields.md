@@ -33,7 +33,9 @@ pass/warn/fail checks and a score without generating copy.
 
 Same fields as create except `sku` is the path identifier and every field is
 optional. Unset fields are not sent, so Magento preserves the stored values.
-Setting a field to an empty string clears it.
+Setting a field to an empty string clears it. `category_ids` and `website_ids`
+replace the product's assignments when provided; an empty array clears them and
+omitting them leaves the assignments untouched.
 
 ## Configurable create (`magento.configurable.create`)
 

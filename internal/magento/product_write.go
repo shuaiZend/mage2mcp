@@ -79,6 +79,11 @@ type UpdateProductInput struct {
 	MetaTitle        *string
 	MetaKeywords     *string
 	MetaDescription  *string
+
+	// CategoryIDs and WebsiteIDs replace the product's assignments when
+	// non-nil; an empty non-nil slice clears them. Nil leaves them untouched.
+	CategoryIDs []int
+	WebsiteIDs  []int
 }
 
 type productAttribute struct {
@@ -92,9 +97,26 @@ type categoryLink struct {
 }
 
 type productExtension struct {
-	WebsiteIDs                 []int                `json:"website_ids,omitempty"`
-	CategoryLinks              []categoryLink       `json:"category_links,omitempty"`
-	ConfigurableProductOptions []configurableOption `json:"configurable_product_options,omitempty"`
+	WebsiteIDs                 []int                `json:"-"`
+	CategoryLinks              []categoryLink       `json:"-"`
+	ConfigurableProductOptions []configurableOption `json:"-"`
+}
+
+// MarshalJSON emits only the extension fields that are non-nil. A non-nil empty
+// slice is emitted as [] so an update can explicitly clear assignments; nil is
+// omitted entirely.
+func (e productExtension) MarshalJSON() ([]byte, error) {
+	out := make(map[string]any, 3)
+	if e.WebsiteIDs != nil {
+		out["website_ids"] = e.WebsiteIDs
+	}
+	if e.CategoryLinks != nil {
+		out["category_links"] = e.CategoryLinks
+	}
+	if e.ConfigurableProductOptions != nil {
+		out["configurable_product_options"] = e.ConfigurableProductOptions
+	}
+	return json.Marshal(out)
 }
 
 type productPayload struct {
@@ -224,6 +246,21 @@ func buildUpdatePayload(sku string, in UpdateProductInput) (productPayload, erro
 	}
 	attributes = append(attributes, seo...)
 	payload := productPayload{SKU: sku, CustomAttributes: attributes}
+	if in.CategoryIDs != nil || in.WebsiteIDs != nil {
+		ext := &productExtension{}
+		if in.WebsiteIDs != nil {
+			ext.WebsiteIDs = append([]int{}, in.WebsiteIDs...)
+		}
+		if in.CategoryIDs != nil {
+			for i, id := range in.CategoryIDs {
+				ext.CategoryLinks = append(ext.CategoryLinks, categoryLink{CategoryID: strconv.Itoa(id), Position: i})
+			}
+			if ext.CategoryLinks == nil {
+				ext.CategoryLinks = []categoryLink{}
+			}
+		}
+		payload.ExtensionAttributes = ext
+	}
 	if in.Name != nil {
 		if err := validateProductName(*in.Name); err != nil {
 			return productPayload{}, err
@@ -248,6 +285,16 @@ func buildUpdatePayload(sku string, in UpdateProductInput) (productPayload, erro
 		}
 		payload.Visibility = *in.Visibility
 	}
+	if in.CategoryIDs != nil {
+		if err := validatePositiveIDs("category_ids", in.CategoryIDs, maxCategoryIDs); err != nil {
+			return productPayload{}, err
+		}
+	}
+	if in.WebsiteIDs != nil {
+		if err := validatePositiveIDs("website_ids", in.WebsiteIDs, maxWebsiteIDs); err != nil {
+			return productPayload{}, err
+		}
+	}
 	seoProvided := false
 	for _, value := range updateSEO {
 		if value != nil {
@@ -255,7 +302,8 @@ func buildUpdatePayload(sku string, in UpdateProductInput) (productPayload, erro
 			break
 		}
 	}
-	if payload.Name == "" && payload.Price == "" && payload.Status == 0 && payload.Visibility == 0 && len(attributes) == 0 && !seoProvided {
+	if payload.Name == "" && payload.Price == "" && payload.Status == 0 && payload.Visibility == 0 &&
+		len(attributes) == 0 && !seoProvided && in.CategoryIDs == nil && in.WebsiteIDs == nil {
 		return productPayload{}, invalidf("update requires at least one of name, price, status, visibility, or attributes")
 	}
 	return payload, nil
