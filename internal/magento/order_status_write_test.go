@@ -86,3 +86,23 @@ func TestOrderStatusWriteValidation(t *testing.T) {
 		t.Fatalf("unhold err = %v", err)
 	}
 }
+
+func TestCancelOrder(t *testing.T) {
+	var method, path string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`true`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	if err := svc.CancelOrder(context.Background(), 42); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPost || path != "/rest/default/V1/orders/42/cancel" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if err := svc.CancelOrder(context.Background(), 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("validation err = %v", err)
+	}
+}

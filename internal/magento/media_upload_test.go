@@ -91,3 +91,57 @@ func TestUploadMediaRejectsOversizedPayload(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestUpdateMedia(t *testing.T) {
+	var method, path string
+	var body mediaUpdateBody
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":9,"label":"New label","position":2,"types":["image"],"disabled":true}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	label := "New label"
+	position := 2
+	disabled := true
+	entry, err := svc.UpdateMedia(context.Background(), "SKU-1", 9, MediaUpdateInput{
+		Label: &label, Position: &position, Types: []string{"image"}, Disabled: &disabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPut || path != "/rest/default/V1/products/SKU-1/media/9" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if body.Entry.ID != 9 || body.Entry.Label == nil || *body.Entry.Label != "New label" {
+		t.Fatalf("body = %+v", body.Entry)
+	}
+	if entry.ID != 9 || entry.Label != "New label" || !entry.Disabled {
+		t.Fatalf("entry = %+v", entry)
+	}
+}
+
+func TestUpdateMediaValidation(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	ctx := context.Background()
+	if _, err := svc.UpdateMedia(ctx, "SKU-1", 0, MediaUpdateInput{Types: []string{"image"}}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("id err = %v", err)
+	}
+	if _, err := svc.UpdateMedia(ctx, "SKU-1", 9, MediaUpdateInput{}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("empty err = %v", err)
+	}
+	label := strings.Repeat("x", 256)
+	if _, err := svc.UpdateMedia(ctx, "SKU-1", 9, MediaUpdateInput{Label: &label}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("label err = %v", err)
+	}
+	position := 1001
+	if _, err := svc.UpdateMedia(ctx, "SKU-1", 9, MediaUpdateInput{Position: &position}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("position err = %v", err)
+	}
+	if _, err := svc.UpdateMedia(ctx, "SKU-1", 9, MediaUpdateInput{Types: []string{"video"}}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("type err = %v", err)
+	}
+}

@@ -29,7 +29,7 @@ var writeToolNames = []string{
 	categoryCreateToolName, categoryUpdateToolName, categoryAssignToolName,
 	productLinkAddToolName, productLinkRemoveToolName, invoiceCaptureToolName, orderEmailToolName,
 	mediaDeleteToolName, orderCreateToolName, tierPricesSetToolName, inventoryTransferToolName,
-	customerCreateToolName, customerUpdateToolName,
+	customerCreateToolName, customerUpdateToolName, mediaUpdateToolName, orderCancelToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {
@@ -54,7 +54,7 @@ func TestRegisterWritesMetadata(t *testing.T) {
 			t.Fatalf("tool %q is not registered", name)
 		}
 		wantPermission := registry.PermissionWrite
-		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName {
+		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName || name == orderCancelToolName {
 			wantPermission = registry.PermissionDestructive
 		}
 		if tool.Permission != wantPermission {
@@ -73,7 +73,7 @@ func TestRegisterWritesMetadata(t *testing.T) {
 			t.Fatalf("write tool %q must not set idempotentHint", name)
 		}
 		destructive := tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint
-		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName {
+		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName || name == orderCancelToolName {
 			if !destructive {
 				t.Fatalf("destructive tool %q must set destructiveHint=true", name)
 			}
@@ -217,7 +217,7 @@ func TestWriteToolsThroughInMemoryTransport(t *testing.T) {
 			t.Fatalf("write tool %q must not be read-only", tool.Name)
 		}
 		destructive := tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint
-		if tool.Name == productDeleteToolName || tool.Name == mediaDeleteToolName || tool.Name == inventoryTransferToolName {
+		if tool.Name == productDeleteToolName || tool.Name == mediaDeleteToolName || tool.Name == inventoryTransferToolName || tool.Name == orderCancelToolName {
 			if !destructive {
 				t.Fatalf("destructive tool %q must set destructiveHint=true", tool.Name)
 			}
@@ -384,6 +384,8 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 		"inventory.transfer":        inventoryTransferSchema,
 		"customer.create":           customerCreateSchema,
 		"customer.update":           customerUpdateSchema,
+		"product.media.update":      mediaUpdateSchema,
+		"order.cancel":              orderCancelSchema,
 	}
 	for name, schema := range schemas {
 		var doc struct {

@@ -90,3 +90,18 @@ func (s *Service) SendOrderEmail(ctx context.Context, orderID int) error {
 	_, err := s.client.do(ctx, http.MethodPost, "/orders/"+strconv.Itoa(orderID)+"/emails", nil, nil)
 	return err
 }
+
+// CancelOrder cancels an order with POST /orders/{id}/cancel.
+//
+// Cancellation is irreversible; Magento only allows it while the order is in a
+// cancellable state and returns an upstream error otherwise.
+func (s *Service) CancelOrder(ctx context.Context, orderID int) error {
+	if err := s.requireOrderService(); err != nil {
+		return err
+	}
+	if orderID <= 0 {
+		return invalidf("order_id must be a positive integer")
+	}
+	_, err := s.client.do(ctx, http.MethodPost, "/orders/"+strconv.Itoa(orderID)+"/cancel", nil, nil)
+	return err
+}
