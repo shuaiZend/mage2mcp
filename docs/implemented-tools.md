@@ -45,6 +45,9 @@ Common behavior:
 | `magento.order.comment` | write + confirmation | 60s | Adds a status-history comment; a non-empty status also transitions the order |
 | `magento.order.hold` | write + confirmation | 60s | Places an order on hold |
 | `magento.order.unhold` | write + confirmation | 60s | Releases an order hold |
+| `magento.category.create` | write + confirmation | 60s | Creates a category under a parent |
+| `magento.category.update` | write + confirmation | 60s | Partial update of name/active/position/menu visibility |
+| `magento.category.assign_product` | write + confirmation | 60s | Links a product to a category |
 | `magento.inventory.status` | read | 30s | Catalog quantity, in-stock flag, and backorders for one SKU |
 | `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
@@ -94,7 +97,7 @@ Common behavior:
 
 ## Not implemented yet
 
-Customer address tools, order creation, product links writes, invoice capture,
+Customer address tools, order creation, product-link writes, invoice capture,
 category and attribute tools, Logpush inspection, GA4 ecommerce reports, and the
 remaining unified scenarios. They are designed in [mcp-tools.md](mcp-tools.md)
 but are not registered.

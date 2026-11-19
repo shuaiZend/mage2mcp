@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Magento category writes: `magento.category.create`,
+  `magento.category.update` (partial update; at least one field required), and
+  `magento.category.assign_product`. All are confirmation-gated with name,
+  position, and parent validation.
 - Magento order status writes: `magento.order.comment` (history comment with an
   optional status transition and notify flag), `magento.order.hold`, and
   `magento.order.unhold`. All are confirmation-gated.
