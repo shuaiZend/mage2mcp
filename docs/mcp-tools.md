@@ -208,7 +208,7 @@ Cloudflare and GA4 tools are read-only except `cloudflare.logs.jobs`, which is `
 |---|---|---|
 | `magento.order.get` | read | Fetch one order with items and totals **Implemented.** |
 | `magento.order.search` | read | Search orders by date, status, store, customer email hash **Implemented.** |
-| `magento.order.summary` | read | Aggregated sales for a time range: revenue, orders, AOV, top SKUs |
+| `magento.order.summary` | read | Aggregated sales for a time range: revenue, orders, AOV, top SKUs **Implemented.** |
 | `magento.import.validate` | read | Validate a CSV/JSON/XLSX import through the bounded converter and return a preview **Implemented.** |
 | `magento.import.start` | destructive | Start an async import (requires confirmation) **Implemented.** |
 | `magento.import.status` | read | Batch status by `batch_id`, counts, and per-item errors **Implemented.** |

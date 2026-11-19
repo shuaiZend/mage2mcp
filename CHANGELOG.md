@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `magento.order.summary`, the design-catalog name for the daily order/revenue
+  aggregation already exposed as `magento.sales.summary`; both remain available.
+
+### Documented
+
+- A limits-and-pagination table for the Magento surface (batch sizes, order
+  search paging, summary window, tier prices, media, imports).
+
+### Added
+
 - `magento.product.media.get` (read): one gallery entry with file, label,
   position, types, and disabled flag.
 
