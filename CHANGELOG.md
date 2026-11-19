@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documented
+
+- The tool catalog now maps design names to implemented equivalents (11),
+  lists tools that are **not planned** with reasons (storefront verification,
+  generic job tools, runtime mapping mutation), and separates the remaining
+  roadmap items. ADR-0022 records the REST-admin scope decision.
+
 ### Added
 
 - `magento.configurable.set_options` (confirmation-gated): declares the variant
