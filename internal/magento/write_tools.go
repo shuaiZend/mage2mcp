@@ -289,7 +289,45 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 			return err
 		}
 	}
+	// Validate arguments before a human is asked to approve them: a malformed
+	// write must fail fast instead of consuming an approval.
+	for name, schema := range writeToolSchemas() {
+		if err := reg.SetInputValidator(name, schema); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// writeToolSchemas maps each write tool to its JSON Schema.
+func writeToolSchemas() map[string]string {
+	return map[string]string{
+		productCreateToolName:        productCreateSchema,
+		productUpdateToolName:        productUpdateSchema,
+		productDeleteToolName:        productDeleteSchema,
+		configurableCreateToolName:   configurableCreateSchema,
+		configurableAddChildToolName: configurableAddChildSchema,
+		inventoryAssignToolName:      inventoryAssignSchema,
+		importExecuteToolName:        importExecuteSchema,
+		mediaUploadToolName:          mediaUploadSchema,
+		mediaDeleteToolName:          mediaDeleteSchema,
+		invoiceCreateToolName:        invoiceCreateSchema,
+		invoiceCaptureToolName:       invoiceCaptureSchema,
+		shipmentCreateToolName:       shipmentCreateSchema,
+		creditmemoCreateToolName:     creditmemoCreateSchema,
+		orderCommentToolName:         orderCommentSchema,
+		orderHoldToolName:            orderHoldSchema,
+		orderUnholdToolName:          orderHoldSchema,
+		orderEmailToolName:           orderEmailSchema,
+		orderCreateToolName:          orderCreateSchema,
+		categoryCreateToolName:       categoryCreateSchema,
+		categoryUpdateToolName:       categoryUpdateSchema,
+		categoryAssignToolName:       categoryAssignSchema,
+		removeChildToolName:          removeChildSchema,
+		unassignSourceItemsToolName:  unassignSourceItemsSchema,
+		productLinkAddToolName:       productLinkAddSchema,
+		productLinkRemoveToolName:    productLinkRemoveSchema,
+	}
 }
 
 func writeToolMetadata(name, title, description, capability string) registry.Tool {
