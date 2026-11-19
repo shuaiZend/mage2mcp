@@ -188,12 +188,12 @@ func (q *JobQueue) Cancel(ctx context.Context, id string) error {
 	return nil
 }
 
-// GetJob returns one job by id.
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// GetJob returns one job by id.
 func (q *JobQueue) GetJob(ctx context.Context, id string) (*jobs.JobRecord, error) {
 	if q == nil || q.store == nil || q.store.pool == nil {
 		return nil, fmt.Errorf("storage: job queue not configured")
