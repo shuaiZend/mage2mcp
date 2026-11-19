@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The end-to-end test now covers bulk product updates, a failing import, resume
+  of the failed row, and the import batch list/detail reads.
+
 ### Changed
 
 - The worker prunes import batch history older than 30 days every six hours;

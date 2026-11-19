@@ -179,4 +179,51 @@ out=$(client order-retry "$cid" 2>&1 || true)
 echo "$out"
 echo "$out" | grep -q "ORDER 99" || fail "order retry"
 
+echo "== bulk product update =="
+out=$(client bulk || true)
+echo "$out"
+cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
+[[ -n "$cid" ]] || fail "no bulk confirmation id: $out"
+approve "$cid"
+out=$(client bulk-retry "$cid" 2>&1 || true)
+echo "$out"
+echo "$out" | grep -q "BULK updated=2 failed=0" || fail "bulk update"
+
+echo "== failing import and resume =="
+out=$(client import-fail || true)
+echo "$out"
+cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
+[[ -n "$cid" ]] || fail "no failing-import confirmation id: $out"
+approve "$cid"
+out=$(client import-fail-retry "$cid" 2>&1 || true)
+echo "$out"
+job=$(echo "$out" | awk '/JOB/{print $2}')
+[[ -n "$job" ]] || fail "no failing-import job id"
+status=$(client import-status "$job" 2>&1 || true)
+echo "$status"
+echo "$status" | grep -q '"failed":1' || fail "expected one failed row in the import report"
+
+out=$(client resume "$job" 2>&1 || true)
+echo "$out"
+cid=$(echo "$out" | awk '/CONFIRMATION/{print $2}')
+[[ -n "$cid" ]] || fail "no resume confirmation id: $out"
+approve "$cid"
+out=$(client resume-retry "$job" "$cid" 2>&1 || true)
+echo "$out"
+echo "$out" | grep -q "RESUMED .* rows=1" || fail "resume did not select the failed row"
+newjob=$(echo "$out" | awk '/RESUMED/{print $2}')
+status=$(client import-status "$newjob" 2>&1 || true)
+echo "$status"
+echo "$status" | grep -q '"failed":1' || fail "resumed job did not report the failure"
+
+echo "== import batch queries =="
+out=$(client batches 2>&1 || true)
+echo "$out"
+echo "$out" | grep -q "BATCHES " || fail "batch list"
+batch_id=$(echo "$out" | awk '/^BATCH /{print $2}')
+[[ -n "$batch_id" ]] || fail "no batch id in list output"
+out=$(client batch-get "$batch_id" 2>&1 || true)
+echo "$out"
+echo "$out" | grep -q "BATCH_FAILURES 1" || fail "batch failure rows"
+
 echo "E2E PASS"
