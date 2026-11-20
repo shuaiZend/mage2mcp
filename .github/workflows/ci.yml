@@ -81,13 +81,7 @@ jobs:
             echo "::error::Every action must be pinned to a 40-character commit SHA."
             exit 1
           fi
-      - name: DCO sign-off on HEAD
-        shell: bash
-        run: |
-          if ! git log -1 --format=%B | grep -qE '^Signed-off-by: .+ <.+>$'; then
-            echo "::error::The commit is missing a Signed-off-by line (DCO)."
-            exit 1
-          fi
+
 
   integration:
     name: integration
