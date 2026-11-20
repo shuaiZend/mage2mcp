@@ -296,7 +296,7 @@ func (s *orderRefundState) checkRefundable(lines []DocumentLine) error {
 // id when given, otherwise the order's single invoice. Several invoices need an
 // explicit id; none is a validation error.
 func (s *Service) refundInvoiceID(ctx context.Context, orderID, requested int) (int, error) {
-	invoices, err := s.OrderInvoices(ctx, orderID)
+	invoices, _, err := s.OrderInvoices(ctx, orderID)
 	if err != nil {
 		return 0, err
 	}

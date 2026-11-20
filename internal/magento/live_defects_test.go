@@ -820,3 +820,45 @@ func TestAdminTokenRefreshIsSingleFlight(t *testing.T) {
 		t.Fatalf("elapsed = %v, want the callers to share one fetch", elapsed)
 	}
 }
+
+// PERF-21: the document list queries requested a single page of 100 and returned it
+// with no total and no flag, so an order with more documents was silently cut short.
+// The scan now pages until the store runs out, and reports the total either way.
+func TestOrderDocumentListsPagePastOneHundred(t *testing.T) {
+	const want = 150
+	var pages int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := 1
+		if p := r.URL.Query().Get("searchCriteria[currentPage]"); p != "" {
+			_, _ = fmt.Sscan(p, &page)
+		}
+		pages++
+		items := make([]string, 0, orderDocumentPageSize)
+		for i := 0; i < orderDocumentPageSize; i++ {
+			n := (page-1)*orderDocumentPageSize + i
+			if n >= want {
+				break
+			}
+			items = append(items, fmt.Sprintf(`{"entity_id":%d}`, n+1))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"items":[%s],"total_count":%d}`,
+			strings.Join(items, ","), want))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	invoices, total, err := svc.OrderInvoices(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("OrderInvoices: %v", err)
+	}
+	if len(invoices) != want {
+		t.Fatalf("invoices = %d, want %d: a list longer than one page must not be cut short", len(invoices), want)
+	}
+	if total != want {
+		t.Fatalf("total = %d, want %d", total, want)
+	}
+	if pages < 2 {
+		t.Fatalf("pages = %d, want the scan to continue past the first page", pages)
+	}
+}

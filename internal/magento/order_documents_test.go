@@ -67,7 +67,7 @@ func TestOrderInvoicesAndGet(t *testing.T) {
 	}))
 	defer ts.Close()
 	svc := testService(t, ts.URL)
-	invoices, err := svc.OrderInvoices(context.Background(), 42)
+	invoices, _, err := svc.OrderInvoices(context.Background(), 42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestOrderShipmentsAndGet(t *testing.T) {
 	}))
 	defer ts.Close()
 	svc := testService(t, ts.URL)
-	shipments, err := svc.OrderShipments(context.Background(), 42)
+	shipments, _, err := svc.OrderShipments(context.Background(), 42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,13 +119,13 @@ func TestOrderDocumentValidation(t *testing.T) {
 	if _, err := svc.OrderStatusHistory(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("history err = %v", err)
 	}
-	if _, err := svc.OrderInvoices(ctx, -1); errs.CodeOf(err) != errs.CodeInvalidArgument {
+	if _, _, err := svc.OrderInvoices(ctx, -1); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("invoices err = %v", err)
 	}
 	if _, err := svc.GetInvoice(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("invoice err = %v", err)
 	}
-	if _, err := svc.OrderShipments(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+	if _, _, err := svc.OrderShipments(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("shipments err = %v", err)
 	}
 	if _, err := svc.GetShipment(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
@@ -147,7 +147,7 @@ func TestOrderCreditmemosAndGet(t *testing.T) {
 	}))
 	defer ts.Close()
 	svc := testService(t, ts.URL)
-	creditmemos, err := svc.OrderCreditmemos(context.Background(), 42)
+	creditmemos, _, err := svc.OrderCreditmemos(context.Background(), 42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestOrderCreditmemosAndGet(t *testing.T) {
 func TestCreditmemoValidation(t *testing.T) {
 	svc := testService(t, "https://shop.example.com")
 	ctx := context.Background()
-	if _, err := svc.OrderCreditmemos(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
+	if _, _, err := svc.OrderCreditmemos(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("list err = %v", err)
 	}
 	if _, err := svc.GetCreditmemo(ctx, 0); errs.CodeOf(err) != errs.CodeInvalidArgument {

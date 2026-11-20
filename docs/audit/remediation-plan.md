@@ -288,7 +288,7 @@ These were present in the audit reports but had never been entered in this plan,
 | PERF-18 | P3 | DEFER | Import status polling reads and discards the payload column | limitations |
 | PERF-19 | P3 | DEFER | Retry is a fixed 5-second re-run, no exponential or jitter | limitations |
 | PERF-20 | P3 | FIXED | The admin-token refresh is single-flight: waiters block on the in-flight refresh instead of on the mutex, so one slow token fetch no longer queues every request of the instance behind it | `TestAdminTokenRefreshIsSingleFlight` |
-| PERF-21 | P3 | DEFER | Invoice/shipment/credit-memo list queries stop at 100 rows with no pagination | limitations |
+| PERF-21 | P3 | FIXED | Invoice, shipment and credit-memo lists page until the store runs out (bounded at 1000) and report `total`/`truncated`; one page of 100 used to be returned silently | `TestOrderDocumentListsPagePastOneHundred` |
 | PERF-22 | P3 | DEFER | The import payload is parsed twice per execution | limitations |
 | QA-02 | P3 | DEFER | `go test -cover ./...` and `make cover` fail on the pinned toolchain | limitations |
 | QA-07 | P3 | DEFER | Coverage targets in the testing strategy are missed and unenforced | limitations |

@@ -105,27 +105,14 @@ func (s *Service) OrderStatusHistory(ctx context.Context, orderID int) ([]OrderS
 }
 
 // OrderInvoices lists the invoices of one order.
-func (s *Service) OrderInvoices(ctx context.Context, orderID int) ([]Invoice, error) {
+func (s *Service) OrderInvoices(ctx context.Context, orderID int) ([]Invoice, int, error) {
 	if err := s.requireOrderService(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if orderID <= 0 {
-		return nil, invalidf("order_id must be a positive integer")
+		return nil, 0, invalidf("order_id must be a positive integer")
 	}
-	raw, err := s.client.do(ctx, http.MethodGet, "/invoices", orderSearchQuery(orderID), nil)
-	if err != nil {
-		return nil, err
-	}
-	var envelope struct {
-		Items []Invoice `json:"items" jsonschema:"Entries returned by this call."`
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable invoice payload").WithCause(err)
-	}
-	if envelope.Items == nil {
-		envelope.Items = []Invoice{}
-	}
-	return envelope.Items, nil
+	return scanOrderDocuments[Invoice](ctx, s, orderID, "/invoices", "invoice")
 }
 
 // GetInvoice returns one invoice by id.
@@ -148,27 +135,14 @@ func (s *Service) GetInvoice(ctx context.Context, invoiceID int) (*Invoice, erro
 }
 
 // OrderShipments lists the shipments of one order.
-func (s *Service) OrderShipments(ctx context.Context, orderID int) ([]Shipment, error) {
+func (s *Service) OrderShipments(ctx context.Context, orderID int) ([]Shipment, int, error) {
 	if err := s.requireOrderService(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if orderID <= 0 {
-		return nil, invalidf("order_id must be a positive integer")
+		return nil, 0, invalidf("order_id must be a positive integer")
 	}
-	raw, err := s.client.do(ctx, http.MethodGet, "/shipments", orderSearchQuery(orderID), nil)
-	if err != nil {
-		return nil, err
-	}
-	var envelope struct {
-		Items []Shipment `json:"items" jsonschema:"Entries returned by this call."`
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable shipment payload").WithCause(err)
-	}
-	if envelope.Items == nil {
-		envelope.Items = []Shipment{}
-	}
-	return envelope.Items, nil
+	return scanOrderDocuments[Shipment](ctx, s, orderID, "/shipments", "shipment")
 }
 
 // GetShipment returns one shipment by id.
@@ -216,27 +190,14 @@ type Creditmemo struct {
 }
 
 // OrderCreditmemos lists the credit memos of one order.
-func (s *Service) OrderCreditmemos(ctx context.Context, orderID int) ([]Creditmemo, error) {
+func (s *Service) OrderCreditmemos(ctx context.Context, orderID int) ([]Creditmemo, int, error) {
 	if err := s.requireOrderService(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if orderID <= 0 {
-		return nil, invalidf("order_id must be a positive integer")
+		return nil, 0, invalidf("order_id must be a positive integer")
 	}
-	raw, err := s.client.do(ctx, http.MethodGet, "/creditmemos", orderSearchQuery(orderID), nil)
-	if err != nil {
-		return nil, err
-	}
-	var envelope struct {
-		Items []Creditmemo `json:"items" jsonschema:"Entries returned by this call."`
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable creditmemo payload").WithCause(err)
-	}
-	if envelope.Items == nil {
-		envelope.Items = []Creditmemo{}
-	}
-	return envelope.Items, nil
+	return scanOrderDocuments[Creditmemo](ctx, s, orderID, "/creditmemos", "credit memo")
 }
 
 // GetCreditmemo returns one credit memo by id.
@@ -283,12 +244,57 @@ func (s *Service) SendDocumentEmail(ctx context.Context, kind string, documentID
 	return err
 }
 
+// maxOrderDocuments bounds a document scan for one order. It is far above any real
+// order; the point is that a bound exists and is reported rather than silently
+// cutting the list at one page.
+const maxOrderDocuments = 1000
+
 // orderSearchQuery filters a sales document collection by order_id.
-func orderSearchQuery(orderID int) url.Values {
+func orderSearchQuery(orderID, page int) url.Values {
 	query := make(url.Values)
 	query.Set("searchCriteria[filter_groups][0][filters][0][field]", "order_id")
 	query.Set("searchCriteria[filter_groups][0][filters][0][value]", strconv.Itoa(orderID))
 	query.Set("searchCriteria[filter_groups][0][filters][0][condition_type]", "eq")
-	query.Set("searchCriteria[pageSize]", "100")
+	query.Set("searchCriteria[pageSize]", strconv.Itoa(orderDocumentPageSize))
+	query.Set("searchCriteria[currentPage]", strconv.Itoa(page))
 	return query
+}
+
+// orderDocumentPageSize is one page of a document scan.
+const orderDocumentPageSize = 100
+
+// scanOrderDocuments pages through one order's documents.
+//
+// The previous version requested a single page of 100 and returned it with no total
+// and no flag, so an order with more documents was silently cut short. It now pages
+// until the store reports no more, up to a bound, and returns the total the store
+// reported so the caller can see whether anything was left out.
+func scanOrderDocuments[T any](ctx context.Context, s *Service, orderID int, path, field string) ([]T, int, error) {
+	var collected []T
+	total := 0
+	for page := 1; ; page++ {
+		raw, err := s.client.do(ctx, http.MethodGet, path, orderSearchQuery(orderID, page), nil)
+		if err != nil {
+			return nil, 0, err
+		}
+		var envelope struct {
+			Items      []T `json:"items"`
+			TotalCount int `json:"total_count"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return nil, 0, errs.New(errs.CodeUpstreamUnavailable,
+				"Magento returned an unreadable "+field+" payload").WithCause(err)
+		}
+		if envelope.TotalCount > total {
+			total = envelope.TotalCount
+		}
+		collected = append(collected, envelope.Items...)
+		if len(envelope.Items) < orderDocumentPageSize || len(collected) >= maxOrderDocuments {
+			break
+		}
+	}
+	if total < len(collected) {
+		total = len(collected)
+	}
+	return collected, total, nil
 }

@@ -834,6 +834,10 @@ type orderHistoryOutput struct {
 
 type invoiceListOutput struct {
 	Invoices []Invoice `json:"invoices" jsonschema:"Invoices of the order."`
+	// Total is how many invoices the store reports; the list itself is paged.
+	Total int `json:"total" jsonschema:"Number of invoices the store reports for the order."`
+	// Truncated is true when the scan stopped at its bound before the store ran out.
+	Truncated bool `json:"truncated" jsonschema:"True when more invoices exist than were returned."`
 }
 
 type invoiceGetInput struct {
@@ -847,6 +851,10 @@ type invoiceGetOutput struct {
 
 type shipmentListOutput struct {
 	Shipments []Shipment `json:"shipments" jsonschema:"Shipments of the order."`
+	// Total is how many shipments the store reports; the list itself is paged.
+	Total int `json:"total" jsonschema:"Number of shipments the store reports for the order."`
+	// Truncated is true when the scan stopped at its bound before the store ran out.
+	Truncated bool `json:"truncated" jsonschema:"True when more shipments exist than were returned."`
 }
 
 type shipmentGetInput struct {
@@ -889,11 +897,11 @@ func newInvoiceListTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, invoiceListOutput{}, err
 				}
-				invoices, err := svc.OrderInvoices(ctx, in.OrderID)
+				invoices, total, err := svc.OrderInvoices(ctx, in.OrderID)
 				if err != nil {
 					return nil, invoiceListOutput{}, err
 				}
-				return nil, invoiceListOutput{Invoices: invoices}, nil
+				return nil, invoiceListOutput{Invoices: invoices, Total: total, Truncated: total > len(invoices)}, nil
 			})
 		return nil
 	}
@@ -931,11 +939,11 @@ func newShipmentListTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, shipmentListOutput{}, err
 				}
-				shipments, err := svc.OrderShipments(ctx, in.OrderID)
+				shipments, total, err := svc.OrderShipments(ctx, in.OrderID)
 				if err != nil {
 					return nil, shipmentListOutput{}, err
 				}
-				return nil, shipmentListOutput{Shipments: shipments}, nil
+				return nil, shipmentListOutput{Shipments: shipments, Total: total, Truncated: total > len(shipments)}, nil
 			})
 		return nil
 	}
@@ -984,6 +992,10 @@ const (
 
 type creditmemoListOutput struct {
 	Creditmemos []Creditmemo `json:"creditmemos" jsonschema:"Credit memos of the order."`
+	// Total is how many credit memos the store reports; the list itself is paged.
+	Total int `json:"total" jsonschema:"Number of credit memos the store reports for the order."`
+	// Truncated is true when the scan stopped at its bound before the store ran out.
+	Truncated bool `json:"truncated" jsonschema:"True when more credit memos exist than were returned."`
 }
 
 type creditmemoGetInput struct {
@@ -1005,11 +1017,11 @@ func newCreditmemoListTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, creditmemoListOutput{}, err
 				}
-				creditmemos, err := svc.OrderCreditmemos(ctx, in.OrderID)
+				creditmemos, total, err := svc.OrderCreditmemos(ctx, in.OrderID)
 				if err != nil {
 					return nil, creditmemoListOutput{}, err
 				}
-				return nil, creditmemoListOutput{Creditmemos: creditmemos}, nil
+				return nil, creditmemoListOutput{Creditmemos: creditmemos, Total: total, Truncated: total > len(creditmemos)}, nil
 			})
 		return nil
 	}
