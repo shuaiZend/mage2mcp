@@ -949,11 +949,16 @@ func preserveUpstream(e *errs.Error, cause error) error {
 			e = e.WithDetail(key, value)
 		}
 	}
+	// The upstream text stays server-side: it is logged, never serialised into the
+	// tool result the agent sees (SEC-10).
+	if from.Upstream != "" {
+		e = e.WithUpstream(from.Upstream)
+	}
 	if message := strings.TrimSpace(from.Details["upstream_message"]); message != "" {
 		if len(message) > maxUpstreamMessageBytes {
 			message = message[:maxUpstreamMessageBytes] + "…"
 		}
-		e = e.WithDetail("upstream_message", message)
+		e = e.WithUpstream(message)
 	}
 	return e
 }

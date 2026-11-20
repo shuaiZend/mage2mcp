@@ -321,6 +321,14 @@ func installPolicy(srv *mcp.Server, opts Options) {
 					WithDetail("timeout", timeout.String())
 			}
 
+			// SEC-10: Magento's own validation text is diagnostic, not caller-facing.
+			// It is logged here, with the tool and taxonomy code, and never enters the
+			// tool result the agent reads.
+			if upstream := errs.UpstreamOf(err); upstream != "" && opts.Logger != nil {
+				opts.Logger.Warn("upstream diagnostic",
+					"tool", tool, "code", string(errs.CodeOf(err)), "upstream", upstream)
+			}
+
 			if gated {
 				outcome := classifyResult(result, err)
 				outcome.Audit = auditEventFor(ctx, tool, instance, meta.Permission, outcome)

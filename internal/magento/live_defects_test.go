@@ -364,8 +364,13 @@ func TestStageErrorPreservesUpstreamDiagnostics(t *testing.T) {
 		if got := e.Details["upstream_status"]; got != "400" {
 			t.Fatalf("%s: upstream_status = %q, want 400", name, got)
 		}
-		if got := e.Details["upstream_message"]; !strings.Contains(got, `"color" is incorrect`) {
-			t.Fatalf("%s: upstream_message = %q, want Magento's own reason", name, got)
+		// SEC-10: the reason is kept for the server log, not for the agent. It must
+		// reach e.Upstream and must not appear in the serialised details.
+		if !strings.Contains(e.Upstream, `"color" is incorrect`) {
+			t.Fatalf("%s: upstream = %q, want Magento's own reason kept server-side", name, e.Upstream)
+		}
+		if _, leaked := e.Details["upstream_message"]; leaked {
+			t.Fatalf("%s: upstream_message leaked into the agent-visible details", name)
 		}
 		if got := e.Details["store_code"]; got != "pl" {
 			t.Fatalf("%s: store_code = %q, want pl", name, got)
@@ -386,8 +391,8 @@ func TestStageErrorBoundsUpstreamMessage(t *testing.T) {
 	if !errors.As(stageFailure("parent", "", cause), &e) {
 		t.Fatal("want a taxonomy error")
 	}
-	if got := len(e.Details["upstream_message"]); got > maxUpstreamMessageBytes+3 {
-		t.Fatalf("upstream_message length = %d, want it bounded", got)
+	if got := len(e.Upstream); got > maxUpstreamMessageBytes+3 {
+		t.Fatalf("upstream length = %d, want it bounded", got)
 	}
 }
 
@@ -477,5 +482,45 @@ func TestInventorySourcesTotalNeverBelowReturned(t *testing.T) {
 	}
 	if total < len(sources) {
 		t.Fatalf("total = %d, want at least %d", total, len(sources))
+	}
+}
+
+// SEC-10: an upstream 4xx must not hand the agent Magento's raw validation text,
+// which echoes SKUs, attribute codes and ACL resource names. The text is kept on
+// the error for the server log; the operation label must not carry the identifier
+// either.
+func TestUpstreamDiagnosticsStayServerSide(t *testing.T) {
+	const secretSKU = "SECRET-SKU-42"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = io.WriteString(w, `{"message":"The SKU `+secretSKU+` is not assigned to the ACL resource Magento_Catalog::products."}`)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	_, err := svc.Get(context.Background(), secretSKU)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("not a taxonomy error: %v", err)
+	}
+	// The agent-visible surface: details, message and op.
+	for key, value := range e.Details {
+		if strings.Contains(value, secretSKU) || strings.Contains(value, "ACL resource") {
+			t.Fatalf("detail %q leaked upstream text: %q", key, value)
+		}
+	}
+	if strings.Contains(e.Message, secretSKU) || strings.Contains(e.Message, "ACL resource") {
+		t.Fatalf("message leaked upstream text: %q", e.Message)
+	}
+	if strings.Contains(e.Op, secretSKU) {
+		t.Fatalf("op leaked the SKU: %q", e.Op)
+	}
+	// The server-side channel keeps the reason for the log.
+	if !strings.Contains(e.Upstream, secretSKU) {
+		t.Fatalf("upstream = %q, want the reason kept for the log", e.Upstream)
 	}
 }

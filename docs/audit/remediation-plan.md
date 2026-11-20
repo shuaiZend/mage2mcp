@@ -74,7 +74,7 @@ wiring is reverted.
 | SEC-07 | P1 | **FIXED** | `t9` — approver sees instance and a redacted argument summary | `t32` pass |
 | SEC-08 | P1 | **FIXED** | `t22` — `Cf-Access-Jwt-Assertion` via the same verifier, explicit precedence | final review `t36` |
 | SEC-09 | P1 | **FIXED** | `t22` — role provenance documented; unknown role fails closed | final review `t36` |
-| SEC-10 | P2 | DEFER | Bounded upstream text reaches the agent | limitations |
+| SEC-10 | P2 | FIXED | Upstream validation text moved to a server-only field and logged with the tool and code; `op` no longer carries identifiers | `TestUpstreamDiagnosticsStayServerSide` |
 | SEC-11 | P2 | **FIXED** | Instance-aware rate limiting and concurrency cap (`internal/magento/limits.go`, config `limits:`) | covered by `limits_test.go` + config validation |
 | SEC-12 | P2 | FIXED | `/metrics` goes behind the auth middleware whenever the listener is not loopback; health probes stay open | `TestMetricsRequireAuthOnPublicListener` |
 | SEC-13 | P2 | **FIXED** | `t20` — non-loopback + auth disabled is refused; startup warns loudly | `t20` |

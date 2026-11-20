@@ -120,6 +120,25 @@ func (e *Error) WithOp(op string) *Error {
 	return e
 }
 
+// WithUpstream records the upstream text for the server log. It is deliberately
+// not a detail: Details are serialised into the tool result the agent sees, and
+// Magento's validation text echoes SKUs, attribute codes and ACL resource names,
+// which turns an error into a catalogue and permission oracle. Upstream is never
+// part of the envelope.
+func (e *Error) WithUpstream(text string) *Error {
+	e.Upstream = text
+	return e
+}
+
+// UpstreamOf returns the server-side upstream text of err, if any.
+func UpstreamOf(err error) string {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Upstream
+	}
+	return ""
+}
+
 // WithDetail attaches a bounded, redacted detail and returns the error.
 func (e *Error) WithDetail(key, value string) *Error {
 	if len(e.Details) >= maxDetails {

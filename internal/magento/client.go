@@ -280,7 +280,7 @@ func responseTooLargeError(method, path string, resp *http.Response, read int64)
 	// upstream_unavailable with explicit details; the typed cause carries the
 	// same numbers for Go callers.
 	e := errs.New(errs.CodeUpstreamUnavailable, message+"; narrow the query (fewer fields or a smaller page)")
-	e = e.WithOp("magento " + method + " " + path)
+	e = e.WithOp("magento " + method + " " + redactedRoute(path))
 	e = e.WithDetail("limit_bytes", strconv.FormatInt(int64(maxResponseBytes), 10))
 	e = e.WithDetail("observed_bytes", strconv.FormatInt(observed, 10))
 	e = e.WithDetail("overage_bytes", strconv.FormatInt(over, 10))
@@ -335,18 +335,54 @@ func statusError(method, path string, status int, body []byte, storeCode string)
 	}
 	e := errs.New(code, message)
 	e.Retryable = retryable
-	e = e.WithOp("magento " + method + " " + path)
+	e = e.WithOp("magento " + method + " " + redactedRoute(path))
 	e = e.WithDetail("upstream_status", strconv.Itoa(status))
 	if storeCode != "" {
 		e = e.WithDetail("store_code", storeCode)
 	}
 	if upstream := upstreamMessage(body); upstream != "" {
-		e = e.WithDetail("upstream_message", upstream)
+		// Server-side only: Magento's validation text echoes SKUs, attribute codes
+		// and ACL resource names, so it is logged rather than returned (SEC-10).
+		e = e.WithUpstream(upstream)
 	}
 	if ambiguous {
 		e = markAmbiguous(e)
 	}
 	return e
+}
+
+// routeWords are the literal path segments this client uses. Anything else in a
+// path is an identifier: a SKU, a document id, an address id. The allowlist is
+// fail-safe — a segment it does not know is redacted, so a new route loses detail
+// in the operation label rather than leaking the identifier it carries.
+var routeWords = map[string]struct{}{
+	"products": {}, "orders": {}, "invoices": {}, "creditmemos": {}, "shipments": {},
+	"carts": {}, "customers": {}, "addresses": {}, "media": {}, "links": {}, "options": {},
+	"tierPrices": {}, "attributes": {}, "attribute-sets": {}, "categories": {}, "configurable": {},
+	"inventory": {}, "sources": {}, "stocks": {}, "source-items": {}, "bulk": {}, "async": {},
+	"import": {}, "integration": {}, "admin": {}, "token": {}, "search": {}, "comments": {},
+	"emails": {}, "hold": {}, "unhold": {}, "cancel": {}, "capture": {}, "items": {},
+	"shipping-information": {}, "totals": {}, "order": {}, "store": {}, "storeConfigs": {},
+	"taxClasses": {}, "directory": {}, "countries": {}, "groups": {},
+}
+
+// redactedRoute replaces identifier segments with {id} so an operation label can
+// be logged and shown without disclosing which SKU or document was addressed.
+func redactedRoute(path string) string {
+	if path == "" {
+		return ""
+	}
+	segments := strings.Split(path, "/")
+	for i, segment := range segments {
+		if segment == "" {
+			continue
+		}
+		if _, known := routeWords[segment]; known {
+			continue
+		}
+		segments[i] = "{id}"
+	}
+	return strings.Join(segments, "/")
 }
 
 // upstreamMessage extracts Magento's validation message without echoing request
