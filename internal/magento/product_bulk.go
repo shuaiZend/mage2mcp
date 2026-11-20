@@ -5,9 +5,15 @@ package magento
 import (
 	"context"
 	"strings"
+	"sync"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
+
+// maxBulkWriteConcurrency bounds the in-flight writes of one bulk call. The client
+// limiter is the real cap on concurrent requests; this keeps the goroutine count from
+// running far ahead of it.
+const maxBulkWriteConcurrency = 8
 
 const maxBulkUpdateSKUs = 50
 
@@ -48,7 +54,7 @@ func (s *Service) BulkUpdateProducts(ctx context.Context, skus []string, update 
 		return nil, invalidf("at least one of status, visibility, or attributes is required")
 	}
 	seen := make(map[string]struct{}, len(skus))
-	result := &BulkUpdateResult{Total: len(skus), Rows: make([]BulkUpdateRow, 0, len(skus))}
+	unique := make([]string, 0, len(skus))
 	for _, sku := range skus {
 		if err := validateSKU(sku); err != nil {
 			return nil, err
@@ -58,16 +64,40 @@ func (s *Service) BulkUpdateProducts(ctx context.Context, skus []string, update 
 			continue
 		}
 		seen[key] = struct{}{}
-		row := BulkUpdateRow{SKU: sku}
-		if _, err := s.Update(ctx, sku, update); err != nil {
-			row.Status = "failed"
-			row.Error = importErrorMessage(err)
+		unique = append(unique, sku)
+	}
+	// Bounded fan-out: the writes are independent and partial success is already
+	// modelled per row, so running them one at a time only multiplied the round-trips.
+	// The client limiter remains the real cap on concurrent requests.
+	rows := make([]BulkUpdateRow, len(unique))
+	sem := make(chan struct{}, maxBulkWriteConcurrency)
+	var wg sync.WaitGroup
+	for i, sku := range unique {
+		wg.Add(1)
+		go func(i int, sku string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				rows[i] = BulkUpdateRow{SKU: sku, Status: "failed", Error: "the request was canceled"}
+				return
+			}
+			defer func() { <-sem }()
+			if _, err := s.Update(ctx, sku, update); err != nil {
+				rows[i] = BulkUpdateRow{SKU: sku, Status: "failed", Error: importErrorMessage(err)}
+				return
+			}
+			rows[i] = BulkUpdateRow{SKU: sku, Status: "updated"}
+		}(i, sku)
+	}
+	wg.Wait()
+	result := &BulkUpdateResult{Total: len(skus), Rows: rows}
+	for _, row := range rows {
+		if row.Status == "failed" {
 			result.Failed++
-		} else {
-			row.Status = "updated"
-			result.Updated++
+			continue
 		}
-		result.Rows = append(result.Rows, row)
+		result.Updated++
 	}
 	return result, nil
 }

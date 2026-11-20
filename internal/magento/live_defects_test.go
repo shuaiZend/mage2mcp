@@ -969,3 +969,51 @@ func TestStockStatusBatchIsBoundedAndKeepsPerSKUErrors(t *testing.T) {
 		t.Fatalf("peak in-flight = %d, want at most %d", peak, maxStockStatusConcurrency)
 	}
 }
+
+// PERF-16: bulk writes ran one round-trip at a time. Partial success is already
+// modelled per row, so the writes are independent and can overlap under a bound.
+func TestBulkWritesFanOutUnderABound(t *testing.T) {
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		inFlight++
+		if inFlight > peak {
+			peak = inFlight
+		}
+		mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":1,"sku":"X","type_id":"simple"}`)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	skus := make([]string, 0, 30)
+	for i := 0; i < 30; i++ {
+		skus = append(skus, fmt.Sprintf("SKU-%02d", i))
+	}
+	status := 2
+	result, err := svc.BulkUpdateProducts(context.Background(), skus, UpdateProductInput{Status: &status})
+	if err != nil {
+		t.Fatalf("BulkUpdateProducts: %v", err)
+	}
+	if result.Updated != 30 || result.Failed != 0 {
+		t.Fatalf("result = %+v, want 30 updated", result)
+	}
+	// Order follows the request so the caller can zip the rows with its own list.
+	for i, sku := range skus {
+		if result.Rows[i].SKU != sku {
+			t.Fatalf("rows[%d].SKU = %q, want %q", i, result.Rows[i].SKU, sku)
+		}
+	}
+	if peak < 2 {
+		t.Fatalf("peak in-flight = %d, want the writes to overlap", peak)
+	}
+	if peak > maxBulkWriteConcurrency {
+		t.Fatalf("peak in-flight = %d, want at most %d", peak, maxBulkWriteConcurrency)
+	}
+}

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
@@ -195,11 +197,14 @@ func TestDeleteAttributeOption(t *testing.T) {
 }
 
 func TestBulkCreateAttributeOptions(t *testing.T) {
-	calls := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
+	// The creates run concurrently, so the counter is atomic and the failure is chosen
+	// by label rather than by arrival order: which call lands second is not defined.
+	var calls atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		raw, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
-		if calls == 2 {
+		if strings.Contains(string(raw), "Blue") {
 			http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)
 			return
 		}
@@ -214,8 +219,14 @@ func TestBulkCreateAttributeOptions(t *testing.T) {
 	if result.Total != 3 || result.Created != 1 || result.Failed != 1 || len(result.Rows) != 2 {
 		t.Fatalf("result = %+v", result)
 	}
-	if result.Rows[0].Value != "14" || result.Rows[1].Status != "failed" || calls != 2 {
-		t.Fatalf("rows = %+v calls = %d", result.Rows, calls)
+	if result.Rows[0].Label != "Green" || result.Rows[0].Value != "14" {
+		t.Fatalf("first row = %+v, want the Green option created", result.Rows[0])
+	}
+	if result.Rows[1].Label != "Blue" || result.Rows[1].Status != "failed" {
+		t.Fatalf("second row = %+v, want Blue failed", result.Rows[1])
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("calls = %d, want 2 (duplicate skipped)", got)
 	}
 }
 

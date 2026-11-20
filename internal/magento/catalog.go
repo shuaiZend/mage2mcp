@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
@@ -358,7 +359,7 @@ func (s *Service) BulkCreateAttributeOptions(ctx context.Context, attributeCode 
 		return nil, invalidf("at most %d option labels are allowed per call", maxBulkOptions)
 	}
 	seen := make(map[string]struct{}, len(labels))
-	result := &OptionBulkResult{Total: len(labels), Rows: make([]OptionBulkRow, 0, len(labels))}
+	unique := make([]string, 0, len(labels))
 	for _, label := range labels {
 		key := strings.ToUpper(strings.TrimSpace(label))
 		if key == "" {
@@ -368,18 +369,40 @@ func (s *Service) BulkCreateAttributeOptions(ctx context.Context, attributeCode 
 			continue
 		}
 		seen[key] = struct{}{}
-		row := OptionBulkRow{Label: label}
-		option, err := s.CreateAttributeOption(ctx, attributeCode, label)
-		if err != nil {
-			row.Status = "failed"
-			row.Error = importErrorMessage(err)
+		unique = append(unique, label)
+	}
+	// Bounded fan-out: each label is an independent create and failures are reported
+	// per row, so running them one at a time only multiplied the round-trips.
+	rows := make([]OptionBulkRow, len(unique))
+	sem := make(chan struct{}, maxBulkWriteConcurrency)
+	var wg sync.WaitGroup
+	for i, label := range unique {
+		wg.Add(1)
+		go func(i int, label string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				rows[i] = OptionBulkRow{Label: label, Status: "failed", Error: "the request was canceled"}
+				return
+			}
+			defer func() { <-sem }()
+			option, err := s.CreateAttributeOption(ctx, attributeCode, label)
+			if err != nil {
+				rows[i] = OptionBulkRow{Label: label, Status: "failed", Error: importErrorMessage(err)}
+				return
+			}
+			rows[i] = OptionBulkRow{Label: label, Status: "created", Value: option.Value}
+		}(i, label)
+	}
+	wg.Wait()
+	result := &OptionBulkResult{Total: len(labels), Rows: rows}
+	for _, row := range rows {
+		if row.Status == "failed" {
 			result.Failed++
-		} else {
-			row.Status = "created"
-			row.Value = option.Value
-			result.Created++
+			continue
 		}
-		result.Rows = append(result.Rows, row)
+		result.Created++
 	}
 	return result, nil
 }
