@@ -11,7 +11,7 @@ One endpoint, one auth model, one audit trail — with typed, documented tools t
 agents can actually use safely. Writes are two-step human-approved; reads are
 read-only by default and PII-safe.
 
-> **Status: v0.8.0 (pre-1.0).** 112 tools (101 Magento). Validated against a live
+> **Status: v0.8.1 (pre-1.0).** 112 tools (101 Magento). Validated against a live
 > Magento production store: 23 read-only checks plus a 30-day business drill-down
 > (924 orders) with no writes. Releases ship signed artifacts, SBOM, and a
 > multi-arch image. Interfaces may still change with an ADR before 1.0.
