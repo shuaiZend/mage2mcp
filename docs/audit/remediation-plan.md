@@ -111,7 +111,7 @@ wiring is reverted.
 | MAG-20 | P1 | FIXED | Addresses carry `region_id`; Magento rejects Polish addresses without it, so order creation could not succeed | `TestOrderAddressCarriesRegionID` |
 | MAG-21 | P2 | FIXED | `writableTypeIDs` and the schema enum now offer only `simple`/`virtual`; the other types are refused with the missing capability named | `TestCreateProductRejectsBundleAndDownloadable` |
 | MAG-22 | P3 | DEFER | Grouped product creation | limitations |
-| MAG-23 | P1 | **PARTIAL** — payloads recorded from a real store are replayed in CI by `internal/magento/conformance_test.go` (12 fixtures under `test/fixtures/magento`), so the shapes a real Magento returns are under regression without an environment. It is not an integration test: it cannot notice a store changing behaviour, and the full live matrix stays a manual run (`docs/audit/live-magento-test-report.md`) |
+| MAG-23 | P1 | PARTIAL | Payloads recorded from a real store are replayed in CI (12 fixtures, `TestConformanceProductList`); not an integration test, so the full live matrix stays manual |
 | MAG-24 | P3 | DOC | Configurable price relationship | `t34` |
 | MAG-25 | P3 | DOC | Capability matrix said sales read-only | `t33` |
 | MAG-26 | P3 | DEFER | Numeric attribute option id | limitations |
