@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-20
+
+Patch release: reference reads use the Magento search collections, fixing the
+routes shipped in v0.7.1.
+
 ### Fixed
 
 - `magento.customer.groups` and `magento.tax.classes` use the Magento search
@@ -535,7 +540,8 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.2
 [0.7.1]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.1
 [0.7.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.0
 [0.6.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.6.0
