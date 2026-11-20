@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-11-21
+
+The defects a live Magento run found, fixed, plus the audit findings that did not need
+a design decision. Full notes: [docs/releases/v0.11.2.md](docs/releases/v0.11.2.md).
+
+### Fixed
+
+- **Order placement used `POST`; Magento requires `PUT`.** The money path — order,
+  invoice, capture, shipment, credit memo — was unreachable on a standard instance.
+- **A placed order could be recorded as definitely not placed.** An ambiguous placement
+  with empty reconciliation reads was written `failed / reconciled_not_applied` while
+  the order existed, and the caller was told to retry. Empty reads now prove nothing.
+- **The reconciler's queue was never polled**, so no UNKNOWN operation could resolve.
+- Upstream error text reached the agent (Magento, Cloudflare); `op` carried identifiers.
+- An MCP session was not bound to the subject that created it.
+- `/metrics` was unauthenticated on a non-loopback listener.
+- A credential printed itself under `%v`/`%+v`/`%#v`; the approval CLI trusted a
+  self-asserted identity and wrote no audit row.
+- Import batches had no lease, so a crashed worker left one `running` forever.
+- The admin token refresh held a mutex across the HTTP call, serialising every request
+  of an instance.
+- The five self-ledgered money tools wrote their outcome audit row after committing.
+- `product.create` accepted `bundle`/`downloadable`, producing unsellable products.
+- Addresses could not express `region_id`, so order creation failed on Poland.
+- Document lists stopped at 100 rows with no total and no truncation flag.
+- Attribute option ids returned as a bare number were reported as unreadable.
+- Media uploads did not dedupe and moved the `image` role silently.
+
+### Added
+
+- `test/live/` — a harness that drives a deployed gateway against a real store.
+- `test/fixtures/magento/` — payloads recorded from a real store, replayed in CI.
+- `.github/workflows/live.yml` — runs the read matrix when store secrets are set.
+- Per-scope coverage floors in CI (security 85%, core 84%, mcp 78%) as a ratchet.
+- Result correlation in MCP `_meta`: `instance`, `tool`, `subject`, `request_id`.
+
+### Changed
+
+- Every required tool input and every output property carries a description, enforced
+  at registration by `requireDescribedOutput`.
+- The initialize instructions declare tool results to be upstream data, never
+  instructions.
+- Magento tools declare `openWorldHint: false`; a nil value reads as true.
+- Read tools derive their capability from their own namespace.
+
 ## [0.11.1] - 2026-11-20
 
 Production-readiness remediation: a full audit of the security, Magento,
