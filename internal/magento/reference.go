@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
@@ -29,18 +30,22 @@ func (s *Service) CustomerGroups(ctx context.Context) ([]CustomerGroup, error) {
 	if s == nil || s.client == nil {
 		return nil, errs.New(errs.CodeInternal, "Magento customer service is not configured")
 	}
-	raw, err := s.client.do(ctx, http.MethodGet, "/customerGroups", nil, nil)
+	query := make(url.Values)
+	query.Set("searchCriteria[pageSize]", "100")
+	raw, err := s.client.do(ctx, http.MethodGet, "/customerGroups/search", query, nil)
 	if err != nil {
 		return nil, err
 	}
-	var groups []CustomerGroup
-	if err := json.Unmarshal(raw, &groups); err != nil {
+	var envelope struct {
+		Items []CustomerGroup `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable customer-group payload").WithCause(err)
 	}
-	if groups == nil {
-		groups = []CustomerGroup{}
+	if envelope.Items == nil {
+		envelope.Items = []CustomerGroup{}
 	}
-	return groups, nil
+	return envelope.Items, nil
 }
 
 // TaxClasses lists tax classes with GET /taxClasses.
@@ -48,16 +53,20 @@ func (s *Service) TaxClasses(ctx context.Context) ([]TaxClass, error) {
 	if s == nil || s.client == nil {
 		return nil, errs.New(errs.CodeInternal, "Magento product service is not configured")
 	}
-	raw, err := s.client.do(ctx, http.MethodGet, "/taxClasses", nil, nil)
+	query := make(url.Values)
+	query.Set("searchCriteria[pageSize]", "100")
+	raw, err := s.client.do(ctx, http.MethodGet, "/taxClasses/search", query, nil)
 	if err != nil {
 		return nil, err
 	}
-	var classes []TaxClass
-	if err := json.Unmarshal(raw, &classes); err != nil {
+	var envelope struct {
+		Items []TaxClass `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable tax-class payload").WithCause(err)
 	}
-	if classes == nil {
-		classes = []TaxClass{}
+	if envelope.Items == nil {
+		envelope.Items = []TaxClass{}
 	}
-	return classes, nil
+	return envelope.Items, nil
 }
