@@ -271,11 +271,24 @@ remediation:
 
 | Status | Count |
 |---|---|
-| Closed (fixed, verified, already fixed, or recorded as documentation) | 113 |
-| Partial | 1 (`PERF-16`) |
-| Open P0, P1 or P2 | **0** |
+| Closed (fixed, verified, already fixed, or recorded as documentation) | 112 |
+| Partial | 3 |
+| Open P0, P1 or P2 | **2** (`REL-16`, `MCP-08`) |
 
-The one partial item is a performance optimisation, not a behavioural defect.
+The two open P2 items are bounded and were accepted by the audit, not overlooked:
+
+- **`REL-16`** — the outcome audit row is written by the middleware after the tool
+  commits for the five self-ledgered money tools. A crash in that window leaves the
+  `operations` row correct but its audit row missing. The ledger remains the authority
+  on whether the mutation happened, so the gap is in the audit trail, not in the money.
+  Closing it means letting those five Magento write files write their audit row inside
+  their own transaction.
+- **`MCP-08`** — every output property now carries a description, enforced at
+  registration. What is missing is a common output envelope (instance, request id),
+  which would change all 106 output schemas.
+
+The third partial item, `PERF-16`, is a performance optimisation, not a behavioural
+defect.
 `PERF-16`'s bulk update and bulk attribute-option paths now fan out under a bound; the
 configurable children path is deliberately left sequential because it fails fast on the
 first child error and reports that one SKU. Running children concurrently would make
