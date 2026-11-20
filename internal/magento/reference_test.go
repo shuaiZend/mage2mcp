@@ -15,10 +15,10 @@ func TestCustomerGroupsAndTaxClasses(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/default/V1/customerGroups":
-			_, _ = w.Write([]byte(`[{"id":0,"code":"NOT LOGGED IN","tax_class_id":3},{"id":1,"code":"General","tax_class_id":3}]`))
-		case "/rest/default/V1/taxClasses":
-			_, _ = w.Write([]byte(`[{"class_id":2,"class_name":"Taxable Goods","class_type":"PRODUCT"}]`))
+		case "/rest/default/V1/customerGroups/search":
+			_, _ = w.Write([]byte(`{"items":[{"id":0,"code":"NOT LOGGED IN","tax_class_id":3},{"id":1,"code":"General","tax_class_id":3}],"total_count":2}`))
+		case "/rest/default/V1/taxClasses/search":
+			_, _ = w.Write([]byte(`{"items":[{"class_id":2,"class_name":"Taxable Goods","class_type":"PRODUCT"}],"total_count":1}`))
 		default:
 			http.NotFound(w, r)
 		}

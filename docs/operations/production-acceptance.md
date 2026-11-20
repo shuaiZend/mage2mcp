@@ -46,7 +46,13 @@ between the documented Magento surface and this deployment:
    collection endpoints (`/invoices`, `/shipments`, `/creditmemos`) with an
    `order_id` search filter, which is the supported Magento route.
 
-After the fixes, all 23 read checks passed. The changes are covered by unit
+After the fixes, all 23 read checks passed.
+
+A second acceptance run with the released `v0.7.1` image found that the two new
+reference reads used non-existent collection routes. Magento exposes them as
+search collections, so the tools now call `/customerGroups/search` and
+`/taxClasses/search` and decode the `items` envelope. The fix ships in v0.7.2
+and is re-verified against the live instance. The changes are covered by unit
 tests in `internal/magento` (`tier_prices_test.go`, `product_links_test.go`,
 `order_documents_test.go`).
 

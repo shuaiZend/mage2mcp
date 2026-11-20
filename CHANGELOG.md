@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `magento.customer.groups` and `magento.tax.classes` use the Magento search
+  collection routes (`/customerGroups/search`, `/taxClasses/search`) and decode
+  the `items` envelope; the v0.7.1 release used non-existent collection routes,
+  which the read-only verification against the live instance caught.
+
 ## [0.7.1] - 2026-11-20
 
 Patch release: production endpoint-variance fixes from the read-only acceptance

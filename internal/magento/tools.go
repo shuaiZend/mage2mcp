@@ -1724,13 +1724,13 @@ const (
 	customerGroupsToolName  = "magento.customer.groups"
 	customerGroupsToolTitle = "List Magento customer groups"
 
-	customerGroupsToolDescription = "Lists customer groups (GET /rest/{store_code}/V1/customerGroups) with id, code, and tax class id, " +
+	customerGroupsToolDescription = "Lists customer groups (GET /rest/{store_code}/V1/customerGroups/search) with id, code, and tax class id, " +
 		"which the customer write tools accept as group_id. Read-only. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 	taxClassesToolName  = "magento.tax.classes"
 	taxClassesToolTitle = "List Magento tax classes"
 
-	taxClassesToolDescription = "Lists tax classes (GET /rest/{store_code}/V1/taxClasses) with id, name, and type, " +
+	taxClassesToolDescription = "Lists tax classes (GET /rest/{store_code}/V1/taxClasses/search) with id, name, and type, " +
 		"which product writes accept as tax_class_id. Read-only. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
