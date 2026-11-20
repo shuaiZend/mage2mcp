@@ -22,7 +22,8 @@ Legend: **Designed** = specified in this repository, not implemented; **Planned*
 | T2 | Every tool has a `title` and a description that states what it does and does not do | Required fields in the tool contract; descriptions are static and reviewed like code | Designed | Contract test asserts both fields exist for every catalog row |
 | T3 | `inputSchema` is a valid JSON Schema object with `additionalProperties: false` | Required; SDK validates inputs before the handler runs | Designed | Schema lint in Phase 1; reference schemas in the catalog |
 | T4 | `outputSchema` is present for structured results | Required for every tool that returns data; free-form text is the exception, not the default | Designed | Phase 1 registry test rejects a structured tool without an output schema |
-| T5 | Structured results use `structuredContent` and also return serialized JSON in a `TextContent` block for backward compatibility | Adopted: structured content plus a text fallback containing the same JSON | Designed | Conformance test parses both and compares |
+| T5 | Structured results use `structuredContent` and also return serialized JSON in a `TextContent` block for backward compatibility | Adopted: structured content plus a text fallback containing the same JSON | Implemented | Conformance test parses both and compares |
+| T6 | Tool errors carry a machine-readable envelope (`code`, `message`, `details`, `retryable`) in `structuredContent` | Adopted: every tool registers through `internal/mcp/toolerr`; schema failures return `invalid_argument` | Implemented | `internal/mcp/toolerr` tests cover handler errors, schema errors, and success |
 | T6 | Annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) are accurate | Required per tool; a write marked read-only is a defect | Designed | Matrix test compares annotation to the declared scope |
 | T7 | Invalid arguments are protocol errors; execution failures are tool errors (`isError: true`) | SDK handles schema rejection as a protocol error; handlers return typed tool errors | Designed | Integration test: bad schema → protocol error; upstream failure → `isError` |
 | T8 | List-shaped results paginate; no unbounded arrays | Opaque cursors, per-tool caps, `meta.pagination` | Designed | Test asserts a cursor is returned at the cap and that a page never exceeds it |
@@ -126,7 +127,7 @@ The MCP specification treats descriptions as model-facing interface text. Rules:
 
 ## 6. Verification status
 
-This document is a design conformance statement. No server exists yet, so every
-row is `Designed` or `Planned`. Phase 1 exit criteria include the conformance tests
-in §4 that are marked Phase 1; a release is not conformant until every `Designed`
-row has a passing test.
+The gateway is implemented and released as a pre-1.0 product. Rows marked
+`Implemented` have passing tests in the repository; remaining `Planned` or
+`Designed` rows are roadmap items tracked in the documentation. A release is not
+considered conformant until every `Designed` row has a passing test.

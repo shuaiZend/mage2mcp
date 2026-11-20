@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- G12: every tool now returns a structured error envelope
+  (`structuredContent: {code, message, details, retryable}`) for handler errors
+  and `invalid_argument` for schema failures, replacing text-only tool errors.
+
 ## [0.8.0] - 2026-11-20
 
 Minor release: fixes G1, G2, G4–G9 from the production business drill-down, adds

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/toolerr"
 
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
 )
@@ -76,7 +77,7 @@ func registerExtraTools(reg *registry.Registry, lookup serviceLookup) error {
 			Capability: capabilitiesCapability, Permission: registry.PermissionRead, Timeout: 60 * time.Second,
 			Annotations: *capabilities.Annotations,
 			Register: func(server *mcp.Server) error {
-				mcp.AddTool(server, capabilities, func(ctx context.Context, _ *mcp.CallToolRequest, input CapabilitiesInput) (*mcp.CallToolResult, PropertyCapabilities, error) {
+				toolerr.Add(server, capabilities, func(ctx context.Context, _ *mcp.CallToolRequest, input CapabilitiesInput) (*mcp.CallToolResult, PropertyCapabilities, error) {
 					svc, err := lookup(input.Instance)
 					if err != nil {
 						return nil, PropertyCapabilities{}, err
@@ -95,7 +96,7 @@ func registerExtraTools(reg *registry.Registry, lookup serviceLookup) error {
 			Capability: realtimeCapability, Permission: registry.PermissionRead, Timeout: 60 * time.Second,
 			Annotations: *realtime.Annotations,
 			Register: func(server *mcp.Server) error {
-				mcp.AddTool(server, realtime, func(ctx context.Context, _ *mcp.CallToolRequest, input RealtimeInput) (*mcp.CallToolResult, RealtimeOutput, error) {
+				toolerr.Add(server, realtime, func(ctx context.Context, _ *mcp.CallToolRequest, input RealtimeInput) (*mcp.CallToolResult, RealtimeOutput, error) {
 					svc, err := lookup(input.Instance)
 					if err != nil {
 						return nil, RealtimeOutput{}, err
@@ -214,7 +215,7 @@ func newEcommerceTool(lookup serviceLookup) registry.Tool {
 		Capability: ecommerceCapability, Permission: registry.PermissionRead, Timeout: 60 * time.Second,
 		Annotations: *definition.Annotations,
 		Register: func(server *mcp.Server) error {
-			mcp.AddTool(server, definition, func(ctx context.Context, _ *mcp.CallToolRequest, in EcommerceInput) (*mcp.CallToolResult, EcommerceOutput, error) {
+			toolerr.Add(server, definition, func(ctx context.Context, _ *mcp.CallToolRequest, in EcommerceInput) (*mcp.CallToolResult, EcommerceOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
 					return nil, EcommerceOutput{}, err
@@ -262,7 +263,7 @@ func newProductsTool(lookup serviceLookup) registry.Tool {
 		Capability: productsCapability, Permission: registry.PermissionRead, Timeout: 60 * time.Second,
 		Annotations: *definition.Annotations,
 		Register: func(server *mcp.Server) error {
-			mcp.AddTool(server, definition, func(ctx context.Context, _ *mcp.CallToolRequest, in ProductsInput) (*mcp.CallToolResult, ProductsOutput, error) {
+			toolerr.Add(server, definition, func(ctx context.Context, _ *mcp.CallToolRequest, in ProductsInput) (*mcp.CallToolResult, ProductsOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
 					return nil, ProductsOutput{}, err

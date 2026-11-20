@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/toolerr"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
@@ -41,7 +42,7 @@ func Register(reg *registry.Registry, svc *Service) error {
 		Annotations: mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: boolPtr(false)},
 	}
 	tool.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, &mcp.Tool{
+		toolerr.Add(srv, &mcp.Tool{
 			Name: compareToolName, Title: compareToolTitle, Description: compareToolDescription,
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: boolPtr(false)},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in compareInput) (*mcp.CallToolResult, compareOutput, error) {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/toolerr"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
@@ -113,7 +114,7 @@ type importCancelOutput struct {
 func newImportStartTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 	t := writeToolMetadata(importStartToolName, importStartToolTitle, importStartToolDescription, "magento.import.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(importStartToolName, importStartToolTitle, importStartToolDescription, importStartSchema),
+		toolerr.Add(srv, mcpWriteTool(importStartToolName, importStartToolTitle, importStartToolDescription, importStartSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importStartInput) (*mcp.CallToolResult, importStartOutput, error) {
 				data, err := DecodeImportPayload(in.Data)
 				if err != nil {
@@ -155,7 +156,7 @@ func newImportStatusTool(queue ImportQueue) registry.Tool {
 	t := toolMetadata(importStatusToolName, importStatusToolTitle, importStatusToolDescription)
 	t.Capability = "magento.import.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(importStatusToolName, importStatusToolTitle, importStatusToolDescription, importStatusSchema),
+		toolerr.Add(srv, mcpTool(importStatusToolName, importStatusToolTitle, importStatusToolDescription, importStatusSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importStatusInput) (*mcp.CallToolResult, importStatusOutput, error) {
 				record, err := queue.GetJob(ctx, in.JobID)
 				if err != nil {
@@ -171,7 +172,7 @@ func newImportStatusTool(queue ImportQueue) registry.Tool {
 func newImportCancelTool(queue ImportQueue) registry.Tool {
 	t := writeToolMetadata(importCancelToolName, importCancelToolTitle, importCancelToolDescription, "magento.import.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(importCancelToolName, importCancelToolTitle, importCancelToolDescription, importCancelSchema),
+		toolerr.Add(srv, mcpWriteTool(importCancelToolName, importCancelToolTitle, importCancelToolDescription, importCancelSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importCancelInput) (*mcp.CallToolResult, importCancelOutput, error) {
 				if err := queue.Cancel(ctx, in.JobID); err != nil {
 					return nil, importCancelOutput{}, err
@@ -242,7 +243,7 @@ type importResumeOutput struct {
 func newImportResumeTool(queue ImportQueue, batches ImportBatchReader) registry.Tool {
 	t := writeToolMetadata(importResumeToolName, importResumeToolTitle, importResumeToolDescription, "magento.import.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(importResumeToolName, importResumeToolTitle, importResumeToolDescription, importResumeSchema),
+		toolerr.Add(srv, mcpWriteTool(importResumeToolName, importResumeToolTitle, importResumeToolDescription, importResumeSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importResumeInput) (*mcp.CallToolResult, importResumeOutput, error) {
 				record, err := queue.GetJob(ctx, in.JobID)
 				if err != nil {
@@ -334,7 +335,7 @@ func newImportBatchListTool(resolver *Resolver, batches ImportBatchReader) regis
 	t := toolMetadata(importBatchListToolName, importBatchListToolTitle, importBatchListToolDescription)
 	t.Capability = "magento.import.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(importBatchListToolName, importBatchListToolTitle, importBatchListToolDescription, importBatchListSchema),
+		toolerr.Add(srv, mcpTool(importBatchListToolName, importBatchListToolTitle, importBatchListToolDescription, importBatchListSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importBatchListInput) (*mcp.CallToolResult, importBatchListOutput, error) {
 				if _, err := resolver.Resolve(in.Instance); err != nil {
 					return nil, importBatchListOutput{}, err
@@ -357,7 +358,7 @@ func newImportBatchGetTool(batches ImportBatchReader) registry.Tool {
 	t := toolMetadata(importBatchGetToolName, importBatchGetToolTitle, importBatchGetToolDescription)
 	t.Capability = "magento.import.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(importBatchGetToolName, importBatchGetToolTitle, importBatchGetToolDescription, importBatchGetSchema),
+		toolerr.Add(srv, mcpTool(importBatchGetToolName, importBatchGetToolTitle, importBatchGetToolDescription, importBatchGetSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importBatchGetInput) (*mcp.CallToolResult, importBatchGetOutput, error) {
 				if batches == nil {
 					return nil, importBatchGetOutput{}, errs.New(errs.CodeInternal, "import batch store is not configured")

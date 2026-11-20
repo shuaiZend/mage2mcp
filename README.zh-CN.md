@@ -1,28 +1,66 @@
 # mage2mcp
 
-mage2mcp 是一个独立的 [Model Context Protocol](https://modelcontextprotocol.io)（MCP）网关，
-通过类型化、可审计、默认只读的工具，把 Magento 2、Cloudflare 和 Google Analytics 4
-暴露给 AI 智能体。
+[![CI](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/shuaiZend/mage2mcp?include_prereleases&sort=semver)](https://github.com/shuaiZend/mage2mcp/releases)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](go.mod)
 
-> **状态：Phase 1 —— 基础设施。**
-> 已具备可运行的 MCP 服务器：Streamable HTTP、Cloudflare Access JWT 认证、RBAC、
-> 审计、Prometheus 指标，以及 Magento 商品、Cloudflare 分析/安全、GA4 流量与元数据的
-> 只读工具与统一流量对比。一个网关可同时服务多个 Magento 店铺、Cloudflare zone 与
-> GA4 属性，并具备按实例的授权与审计；可选 PostgreSQL 持久化、审计与任务队列构成
-> 完整部署（无 Redis）。写操作需要两步人工审批。[v0.8.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.0)
-> 是首个公开预发布版本（签名产物、SBOM、多架构镜像），接口在 1.0 之前仍可能通过 ADR 变更。
+**面向 Magento 2、Cloudflare 与 Google Analytics 4 的开源 MCP 网关。**
+一个端点、一套认证、一条审计链，提供类型化、有文档、可安全使用的 AI 工具。
+写操作默认关闭并需要两步人工审批；读操作默认只读且 PII 安全。
 
-## 当前已有的内容
+> **状态：v0.8.0（1.0 之前）。** 112 个工具（Magento 101 个）。已在真实 Magento
+> 生产店铺完成只读验收（23 项检查）与 30 天经营下钻（924 单），全程无写入。
+> 发布包含签名产物、SBOM 与多架构镜像；1.0 之前接口仍可能通过 ADR 变更。
+
+## 为什么用 mage2mcp
+
+- **类型化契约**：每个工具都有稳定名称、JSON Schema、权限、超时与注解；契约测试
+  固定 Magento 工具名，文档与实现不一致会让 CI 失败。
+- **安全写入**：写操作需要由**不同身份**审批的一次性确认；参数在创建审批**之前**
+  按 schema 校验，审批与参数哈希绑定，避免“批准后被篡改”。
+- **PII 不出 Magento**：客户/地址读取只返回国家/地区/默认标记；订单读取不含邮箱、
+  地址与支付信息。
+- **为运维而生**：PostgreSQL 队列（无需 Redis）、advisory lock 迁移、异步导入
+  （幂等、进度、失败行恢复、30 天保留）。
+- **多实例**：多个 Magento 店铺、Cloudflare zone、GA4 属性共用一个网关，按实例
+  授权与审计。
+
+## 工具面（112 个）
+
+| 模块 | 数量 | 示例 |
+|---|---:|---|
+| Magento 2 | 101 | 商品、可配置变体、分类、MSI 库存、订单、发票/发货/贷记单、客户、媒体、导入、经营分析 |
+| Cloudflare | 3 | 流量、安全事件、安全汇总 |
+| Google Analytics 4 | 6 | 流量报告、实时、电商、属性元数据/能力 |
+| 统一分析 | 1 | Magento 与 GA4 流量对比 |
+| 平台 | 1 | `platform.info` |
+
+Magento 重点能力：商品与 SEO、可配置商品全链路、MSI 库存、订单与单据、客户与地址、
+媒体、异步导入（含恢复）、经营分析（复购/券/运费方式/AOV 分布/时区/退款/履约时效）。
+
+## 当前状态
 
 | 项目 | 状态 |
 |---|---|
-| 设计文档 | [`docs/`](docs/) 中已完成 Phase 0 基线 |
-| 研究基线 | [`docs/development/research-baseline.md`](docs/development/research-baseline.md) |
-| 源代码 | Phase 1 基础：MCP 服务器、认证、RBAC、审计、指标、配置、Docker |
-| 测试与 CI | 每个 PR 运行单元、集成、竞态、静态、安全与供应链门禁 |
-| 写工具 | 商品/变体/库存/导入写工具，由 `tools.writes` 控制并强制两步人工审批 |
-| 版本发布与容器镜像 | v0.0.1 预发布（签名 + SBOM + 多架构镜像） |
-| 许可证与社区文档 | [Apache-2.0](LICENSE)、[NOTICE](NOTICE)、[CONTRIBUTING.md](CONTRIBUTING.md)、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)、[SECURITY.md](SECURITY.md)、[SUPPORT.md](SUPPORT.md) |
+| 源代码 | 生产级 Go 网关：MCP、认证、RBAC、审计、指标、PostgreSQL 队列、Docker |
+| 测试与 CI | 单元、集成（PostgreSQL）、竞态、静态、安全、供应链与端到端任务 |
+| 发布 | v0.8.0 预发布：签名产物、校验和、SBOM、多架构 GHCR 镜像 |
+| 生产验证 | 真实 Magento 店铺只读验收 + 30 天经营报告 |
+| 文档 | 架构、22 份 ADR、工具目录、字段参考、兼容性、运维、发布说明 |
+| 许可证 | [Apache-2.0](LICENSE) |
+
+## 文档入口
+
+| 文档 | 用途 |
+|---|---|
+| [docs/index.md](docs/index.md) | 文档总入口 |
+| [docs/mcp-tools.md](docs/mcp-tools.md) | 设计目录与实现状态 |
+| [docs/implemented-tools.md](docs/implemented-tools.md) | 当前注册的 112 个工具 |
+| [docs/magento-fields.md](docs/magento-fields.md) | 字段要求与 SEO 指南 |
+| [docs/compatibility.md](docs/compatibility.md) | 兼容性与稳定性承诺 |
+| [docs/operations/production-acceptance.md](docs/operations/production-acceptance.md) | 生产只读验收与修复记录 |
+| [docs/development/mcp-gaps.md](docs/development/mcp-gaps.md) | 已知缺口与状态 |
 
 ## 快速开始（开发）
 
@@ -103,7 +141,7 @@ mage2mcp 选择了第三种定位：由运维方自行部署、配置和审计�
   "调用任意端点"工具。
 - 源代码、威胁模型和决策记录全部公开，运维方可以在把生产凭据交给网关之前先行评估。
 
-## 架构概览
+## 架构图
 
 ```mermaid
 flowchart TB
@@ -158,120 +196,16 @@ flowchart TB
 | `slog` | 带脱敏的结构化 JSON 日志 |
 | YAML + 环境变量 | 配置，密钥仅通过环境变量提供 |
 
-## 网关将提供的能力
+## 架构一览
 
-状态列只记录当前进展，表中没有任何能力在今天可用，也没有任何能力达到"设计完成"或"已实现"。
+- **`cmd/server`** — Streamable HTTP MCP 端点（`/mcp`）、`/healthz`、`/readyz`、`/metrics`，以及认证/RBAC/审计中间件。
+- **`internal/magento`、`cloudflare`、`ga4`、`unified`** — 各模块自有的工具与客户端，模块之间不互相依赖。
+- **`internal/mcp`** — 工具注册表、契约校验、确认门、结构化错误信封。
+- **`internal/storage`** — PostgreSQL：审计、确认、任务队列、导入批次（无需 Redis）。
+- **`cmd/worker`** — 异步导入执行器：租约、进度、重试、失败行恢复。
+- **部署** — distroless 多架构镜像；本地/测试用 Compose；签名发布。
 
-| 状态 | 含义 |
-|---|---|
-| 计划中 | 在范围内，尚未详细设计 |
-| 设计中 | 设计文档正在 Phase 0 编写或评审 |
-| 设计完成 | 设计已评审通过（目前没有） |
-| 已实现 | 可用代码已合并（目前没有） |
-
-### 支持矩阵
-
-| 模块 | 能力 | 状态 |
-|---|---|---|
-| 平台 | 基于官方 Go SDK 的 Streamable HTTP MCP 端点 | 设计中 |
-| 平台 | Cloudflare Access JWT 认证 | 设计中 |
-| 平台 | RBAC 权限与按实例授权 | 计划中 |
-| 平台 | 带类型化 Schema 和风险分级的工具注册表 | 设计中 |
-| 平台 | 绑定规范化参数哈希的确认机制 | 设计中 |
-| 平台 | 审计日志、Prometheus 指标、健康检查端点 | 计划中 |
-| 平台 | 带校验的 YAML + 环境变量配置 | 计划中 |
-| 平台 | 容器镜像与 Compose 编排 | 计划中 |
-| Magento 2 | simple、configurable、virtual、downloadable、bundle 商品读取 | 设计中 |
-| Magento 2 | 通过 REST 写入商品，包括 configurable 选项和子商品 | 计划中 |
-| Magento 2 | EAV 属性与属性集发现 | 计划中 |
-| Magento 2 | MSI 库存读取与批量 source 操作 | 计划中 |
-| Magento 2 | 媒体库读取与上传 | 计划中 |
-| Magento 2 | 分类读取与商品分类归属 | 计划中 |
-| Magento 2 | 订单读取 | 计划中 |
-| Magento 2 | 带显式校验策略的批量导入（CSV/JSON） | 计划中 |
-| Magento 2 | 批量与异步操作状态轮询 | 计划中 |
-| Magento 2 | GraphQL 只读店面验证 | 计划中 |
-| Cloudflare | zone、套餐与数据集清单（只读） | 计划中 |
-| Cloudflare | GraphQL Analytics 查询 | 设计中 |
-| Cloudflare | Security Events 查询 | 计划中 |
-| Cloudflare | Logpush 任务清单与字段发现（可选启用，只读） | 计划中 |
-| Cloudflare | 基于客户自行配置目标的 Logpush 日志分析 | 计划中 |
-| Cloudflare | WAF 与 bot 事件检查（只读） | 计划中 |
-| GA4 | property 元数据与维度/指标兼容性发现 | 设计中 |
-| GA4 | 流量、获客与互动报告 | 计划中 |
-| GA4 | 带显式数据存在性探测的电商报告 | 计划中 |
-| GA4 | 实时报告 | 计划中 |
-| GA4 | 配额感知的执行与退避 | 计划中 |
-| 统一分析 | 带声明语义的跨源指标目录 | 设计中 |
-| 统一分析 | 跨源实体与时间基准映射 | 计划中 |
-| 统一分析 | 基于声明连接键的跨源报告 | 计划中 |
-
-### Magento 2
-
-Magento 模块将通过 REST API 管理商品与库存数据，并且只用 GraphQL 验证店面实际渲染的内容。
-商品写入必须使用 REST：Magento GraphQL 没有商品写入 mutation。模块将覆盖：
-
-- 所有标准商品类型，包括 configurable 选项和子商品。
-- EAV 属性集与属性，使工具输入可以按商店的真实 Schema 校验，而不是依赖硬编码列表。
-- MSI source 与 source item，包括批量分配、取消分配和转移操作。
-- 媒体库资源、分类与订单读取。
-- 通过 `POST /V1/import/csv` 和 `POST /V1/import/json` 执行批量导入，并在工具输入中明确声明
-  校验策略与允许的错误数量。
-- 批量与异步操作状态轮询。
-
-不会有 Magento 插件，不会有 `app/code` 包，也不会有数据库连接。模块无法通过官方 API 完成
-的事情一律不在范围内。
-
-### Cloudflare
-
-Cloudflare 模块在 v0.x 中为只读。它将提供：
-
-- zone、套餐与数据集清单。
-- 针对账户可用数据集的 GraphQL Analytics 查询。
-- 来自 `firewallEventsAdaptive` 数据集的 Security Events。
-- Logpush 任务清单与字段发现，以及针对客户自行配置的目标所投递日志的分析。
-
-Logpush 并非仅限 Enterprise，Free、Pro 和 Business 套餐也可使用，但按用量计费：每个账户每月
-包含 25 GB，超出后发往内部目标为 $0.03/GB，发往外部目标为 $0.10/GB。Logpush 不支持历史回填，
-任务失败时日志会丢失。Bot Score 与 verified-bot 字段需要 Bot Management（Enterprise 附加组件）。
-模块会在工具输出中说明这些限制，而不是静默返回不完整的数据。
-
-原始请求日志按 zone 选择性启用。启用后，Cloudflare 将记录推送到 R2，由 ClickHouse 查询层
-提供请求级查询；PostgreSQL 从不存储原始日志。只需要聚合分析的运维方可以不启用 Logpush。
-
-Logpush 任务与字段检查同样需要选择性启用。Cloudflare 要求所有 Logpush API 调用（包括读取）
-都具备 `Logs Write` 权限，因此网关为此使用单独的令牌配置，并且从不发起写操作。不接受该权限
-的运维方可以在外部管理任务，并通过 R2 文件到达情况推断任务健康状态。
-
-### Google Analytics 4
-
-GA4 模块按只读范围设计，将使用 Data API v1。它将提供流量、获客、互动、电商和实时报告，以及元数据发现，
-使智能体可以在查询前确认哪些维度与指标能够组合使用。
-
-Data API 只返回聚合数据。维度与指标的兼容性按字段对逐对判定，并需要按 property 验证：部分
-商品级维度不能与会话级指标组合，而另一些组合则可以使用。网关会逐次校验请求，而不是按作用域
-规则推断。原始事件数据需要客户自行拥有并配置的 BigQuery 导出。网关不查询 BigQuery，只说明
-这一边界。由于 property 可能有流量但未配置电商跟踪，电商工具会先探测数据是否存在，并在缺失
-时如实报告，而不是把零当作收入返回。
-
-### 统一分析
-
-统一分析模块将通过共享的数据源契约组合其他模块。它将提供一个指标目录，其中每个指标都带有定义、
-分母、归因窗口和时区，并提供仅基于已声明连接键的跨源报告。它不会把在不同系统中含义不同的指标
-相加，从而编造一个混合的"收入"或"转化"数字。
-
-### v0.x 明确不做的事
-
-| 不计划 | 原因 |
-|---|---|
-| Magento 插件或 `app/code` 包 | 网关只使用官方 API，不在 Magento 中安装任何东西 |
-| 直接访问 Magento 数据库 | 绕过业务逻辑，且跨版本升级时会失效 |
-| Adobe Commerce as a Cloud Service（IMS OAuth） | 认证模型不同，推迟到 v0.x 之后 |
-| Cloudflare 写操作（DNS、WAF 规则、Logpush 任务） | Cloudflare 模块在 v0.x 中为只读 |
-| GA4 Admin API 与 property 配置变更 | GA4 模块为只读 |
-| 通用 `execute_api` 或 `execute_sql` 工具 | 无类型、不可审计，且与 RBAC 和确认机制冲突 |
-| 跨设备身份拼接 | 需要网关并不拥有的身份数据 |
-| 在网关内查询 GA4 原始事件 | Data API 只提供聚合数据；原始事件保留在客户自有的 BigQuery 导出中 |
+请求链路：客户端 → 认证 → RBAC → schema 校验 → 确认门（仅写操作）→ 模块客户端 → 审计 → 结构化结果。
 
 ## 安全策略
 
@@ -336,9 +270,9 @@ Data API 只返回聚合数据。维度与指标的兼容性按字段对逐对�
 | PostgreSQL | 16 或更高 | 配置元数据、审计日志、任务状态 |
 | 容器运行时 | Docker 与 Compose | 本地栈与部署 |
 
-## 文档地图
+## 完整文档索引
 
-设计文档在 Phase 0 期间公开编写。以下链接指向正在并行创建、并会在本 README 合并前存在的文件。
+文档公开编写并与代码保持同步；当工具目录与文档不一致时，契约测试会让 CI 失败。
 
 | 文档 | 内容 |
 |---|---|
@@ -377,8 +311,7 @@ Data API 只返回聚合数据。维度与指标的兼容性按字段对逐对�
 
 ## 参与贡献
 
-项目处于 Phase 0。目前欢迎通过 GitHub issue 提交设计评审意见、威胁模型反馈和文档修正。
-代码贡献从 Phase 1 开始。
+欢迎通过 GitHub issue 提交设计评审意见、威胁模型反馈、缺陷报告与文档修正；代码贡献需遵循 DCO 与 CONTRIBUTING 中的评审/CI 流程。
 
 所有贡献都需要 Developer Certificate of Origin 签署（`git commit -s`），不要求 CLA。
 开发环境、分支与提交规范、测试要求以及模块归属规则见 [CONTRIBUTING.md](CONTRIBUTING.md)，

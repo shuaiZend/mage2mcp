@@ -18,7 +18,7 @@ These are scheduled for a single follow-up fix, not fixed individually here.
 | G9 | Fixed | Coupon normalization | Coupon codes appear as `BF2026`/`Bf2026` and `D4`/`d4` | Future coupon reporting would split the same promotion | Normalize case when coupon data is added |
 | G10 | Gap | Catalog drift | 193 of 624 parent SKUs from the window are absent from the product catalog (discontinued) | 17.4% of item revenue is "unmapped" and cannot be categorized | Snapshot category/name on order items or fall back to the order item name with an explicit "unmapped" bucket |
 | G11 | Gap | Scale | `sales.analysis` caps at 20,000 orders per call with a truncation flag, no cursor | Fine at 924 orders; larger stores must slice windows manually | Add window slicing or a cursor to the tool |
-| G12 | Gap | Error ergonomics | Argument-validation failures are text-only; no `structuredContent.code` | Agents must parse text to branch on errors | Return a structured error envelope for every tool (known since the v0.7.1 acceptance) |
+| G12 | Fixed | Error ergonomics | Argument-validation failures are text-only; no `structuredContent.code` | Agents must parse text to branch on errors | Return a structured error envelope for every tool (known since the v0.7.1 acceptance) |
 | G13 | Gap | Guest checkout | The store records 0 guest orders (all registered), so analysis cannot measure guest-vs-registered conversion | Conversion work needs a guest cohort once enabled | Add a customer-type dimension and revisit after enabling guest checkout |
 
 ## Status
@@ -30,5 +30,10 @@ by SKU, shipment latency, mixed-currency flags and per-currency AOV; the product
 projection carries category and website ids; and `store.configs` /
 `categories.flat` provide timezone and flat category paths.
 
+G12 is fixed too: every tool now registers through `internal/mcp/toolerr`, which
+returns `{code, message, details, retryable}` in `structuredContent` for handler
+errors and `invalid_argument` for schema failures, so agents no longer parse
+text to branch on errors.
+
 Still open: G3 (GA4 conversion data), G10 (catalog-drift snapshot), G11 (scale),
-G12 (structured error envelope), G13 (guest-checkout measurement).
+G13 (guest-checkout measurement).
