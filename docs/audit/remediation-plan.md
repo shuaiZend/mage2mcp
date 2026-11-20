@@ -111,7 +111,7 @@ wiring is reverted.
 | MAG-20 | P1 | FIXED | Addresses carry `region_id`; Magento rejects Polish addresses without it, so order creation could not succeed | `TestOrderAddressCarriesRegionID` |
 | MAG-21 | P2 | FIXED | `writableTypeIDs` and the schema enum now offer only `simple`/`virtual`; the other types are refused with the missing capability named | `TestCreateProductRejectsBundleAndDownloadable` |
 | MAG-22 | P3 | DEFER | Grouped product creation | limitations |
-| MAG-23 | P1 | PARTIAL | Payloads recorded from a real store are replayed in CI (12 fixtures) | `TestConformanceProductList`; not an integration test, so the live matrix stays manual |
+| MAG-23 | P1 | PARTIAL | Recorded real payloads replayed in CI (12 fixtures), and a `live` workflow runs the read matrix against a real store when secrets are configured | `TestConformanceProductList`, `.github/workflows/live.yml`; needs secrets, so the default pipeline still skips it |
 | MAG-24 | P3 | DOC | Configurable price relationship | `t34` |
 | MAG-25 | P3 | DOC | Capability matrix said sales read-only | `t33` |
 | MAG-26 | P3 | DEFER | Numeric attribute option id | limitations |
