@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `magento.orders.geography` now reports `total_available` from Magento's
+  `total_count`, sorts by `created_at desc` for a deterministic newest-first
+  sample, and sets `truncated` when the scan cap hides orders.
+
 ## [0.7.3] - 2026-11-20
 
 Minor release: PII-free order geography aggregation by shipping country.
