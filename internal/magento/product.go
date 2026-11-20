@@ -31,30 +31,30 @@ var (
 
 // Product is the explicit product projection this slice exposes.
 type Product struct {
-	ID             int     `json:"id"`
-	SKU            string  `json:"sku"`
-	Name           string  `json:"name"`
-	TypeID         string  `json:"type_id"`
-	Status         int     `json:"status"`
-	Visibility     int     `json:"visibility"`
-	Price          float64 `json:"price"`
-	AttributeSetID int     `json:"attribute_set_id"`
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      string  `json:"updated_at"`
-	CategoryIDs    []int   `json:"category_ids,omitempty"`
-	WebsiteIDs     []int   `json:"website_ids,omitempty"`
+	ID             int     `json:"id" jsonschema:"Magento entity id. Stable within the store, not globally unique."`
+	SKU            string  `json:"sku" jsonschema:"Stock keeping unit. The identifier every other product tool takes."`
+	Name           string  `json:"name" jsonschema:"Display name as shown in the storefront."`
+	TypeID         string  `json:"type_id" jsonschema:"simple, virtual, configurable, bundle, downloadable or grouped."`
+	Status         int     `json:"status" jsonschema:"1 enabled, 2 disabled."`
+	Visibility     int     `json:"visibility" jsonschema:"1 not visible, 2 catalog, 3 search, 4 catalog and search."`
+	Price          float64 `json:"price" jsonschema:"Base price in the store currency, as a number, not a string."`
+	AttributeSetID int     `json:"attribute_set_id" jsonschema:"Attribute set the product belongs to; it decides which custom attributes exist."`
+	CreatedAt      string  `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	UpdatedAt      string  `json:"updated_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	CategoryIDs    []int   `json:"category_ids,omitempty" jsonschema:"Categories the product is assigned to. Absent when the product has none."`
+	WebsiteIDs     []int   `json:"website_ids,omitempty" jsonschema:"Websites the product is published to. Absent when it is on none."`
 
-	Description      string  `json:"description,omitempty"`
-	ShortDescription string  `json:"short_description,omitempty"`
-	URLKey           string  `json:"url_key,omitempty"`
-	MetaTitle        string  `json:"meta_title,omitempty"`
-	MetaDescription  string  `json:"meta_description,omitempty"`
-	MetaKeywords     string  `json:"meta_keywords,omitempty"`
-	Weight           float64 `json:"weight,omitempty"`
+	Description      string  `json:"description,omitempty" jsonschema:"Full description, HTML allowed. Absent when empty."`
+	ShortDescription string  `json:"short_description,omitempty" jsonschema:"Short description, HTML allowed. Absent when empty."`
+	URLKey           string  `json:"url_key,omitempty" jsonschema:"URL path segment for the product page. Absent when unset."`
+	MetaTitle        string  `json:"meta_title,omitempty" jsonschema:"SEO title tag. 30-60 characters is the useful range."`
+	MetaDescription  string  `json:"meta_description,omitempty" jsonschema:"SEO meta description. 120-160 characters is the useful range."`
+	MetaKeywords     string  `json:"meta_keywords,omitempty" jsonschema:"Comma-separated keywords. Low ranking value; keep it short."`
+	Weight           float64 `json:"weight,omitempty" jsonschema:"Shipping weight in the store's weight unit. Absent for virtual products."`
 
 	// Attributes carries the product's custom attributes (for example the
 	// variant attribute of a configurable child) as string values.
-	Attributes map[string]string `json:"attributes,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty" jsonschema:"Custom attribute code to value, always as strings. Empty attributes are omitted."`
 }
 
 // UnmarshalJSON lifts category_links and website_ids out of extension_attributes

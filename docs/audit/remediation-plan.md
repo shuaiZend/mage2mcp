@@ -163,7 +163,7 @@ wiring is reverted.
 | MCP-05 | P2 | **FIXED** (`t19`) — declared timeout enforced as a deadline |
 | MCP-06 | P2 | **FIXED** (`t18`) — 55 write disclosures, test-enforced |
 | MCP-07 | P2 | PARTIAL — documented; full schema polish deferred |
-| MCP-08 | P2 | PARTIAL — `inventory.sources` reports `total` and `truncated` so a capped list is visible (`TestInventorySourcesReportsTruncation`); the common output envelope and the property descriptions remain open |
+| MCP-08 | P2 | PARTIAL — the `Product` and `Order` projections every read tool returns now describe all 36 of their properties, and `inventory.sources` reports `total`/`truncated` (`TestProductAndOrderOutputsCarryDescriptions`). The remaining output types and a common envelope are still open |
 | MCP-09 | P2 | **FIXED** (`t18`+`t19`) — one envelope shape, code once, no SQLSTATE leak |
 | MCP-10 | P3 | DEFER — naming register recorded |
 | QA-01 | P2 | **FIXED** — `local-ci.sh` runs the suite with `-json` and fails on any skipped test, so the durability layer can no longer be skipped silently |

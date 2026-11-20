@@ -53,22 +53,22 @@ type OrderItem struct {
 // order analytics does not need them, and omitting them keeps the tool free of
 // personal data. Items are populated by GetOrder, not by SearchOrders.
 type Order struct {
-	EntityID        int         `json:"entity_id"`
-	IncrementID     string      `json:"increment_id"`
-	Status          string      `json:"status"`
-	State           string      `json:"state"`
-	StoreID         int         `json:"store_id"`
-	CustomerID      *int        `json:"customer_id,omitempty"`
-	CreatedAt       string      `json:"created_at"`
-	UpdatedAt       string      `json:"updated_at"`
-	GrandTotal      float64     `json:"grand_total"`
-	Subtotal        float64     `json:"subtotal"`
-	DiscountAmount  float64     `json:"discount_amount"`
-	ShippingAmount  float64     `json:"shipping_amount"`
-	TaxAmount       float64     `json:"tax_amount"`
-	TotalQtyOrdered float64     `json:"total_qty_ordered"`
-	Currency        string      `json:"order_currency_code"`
-	Items           []OrderItem `json:"items,omitempty"`
+	EntityID        int         `json:"entity_id" jsonschema:"Magento entity id. Every order tool takes this, not the increment id."`
+	IncrementID     string      `json:"increment_id" jsonschema:"Human-facing order number, for example 000000123. Stable and unique per store."`
+	Status          string      `json:"status" jsonschema:"Order status, for example pending, processing, complete, closed, canceled, holded."`
+	State           string      `json:"state" jsonschema:"Order state, the coarser machine state behind status."`
+	StoreID         int         `json:"store_id" jsonschema:"Store view the order was placed in."`
+	CustomerID      *int        `json:"customer_id,omitempty" jsonschema:"Customer id, or absent for a guest order."`
+	CreatedAt       string      `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	UpdatedAt       string      `json:"updated_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	GrandTotal      float64     `json:"grand_total" jsonschema:"Order total including shipping and tax, in order_currency_code."`
+	Subtotal        float64     `json:"subtotal" jsonschema:"Line subtotal before shipping, tax and discount."`
+	DiscountAmount  float64     `json:"discount_amount" jsonschema:"Total discount applied, as a positive number."`
+	ShippingAmount  float64     `json:"shipping_amount" jsonschema:"Shipping charged on this order."`
+	TaxAmount       float64     `json:"tax_amount" jsonschema:"Total tax charged on this order."`
+	TotalQtyOrdered float64     `json:"total_qty_ordered" jsonschema:"Sum of line quantities. A number, not an integer: Magento allows fractional quantities."`
+	Currency        string      `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts above are expressed in."`
+	Items           []OrderItem `json:"items,omitempty" jsonschema:"Order lines. Absent on the list projection, present on a single-order read."`
 }
 
 // OrderQuery selects orders; zero values mean no filter except Limit (50).

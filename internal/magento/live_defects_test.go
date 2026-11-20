@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/jsonschema-go/jsonschema"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -600,3 +602,27 @@ func TestUploadMediaDifferentBytesAreNotDeduplicated(t *testing.T) {
 
 // otherPNGBase64 is a different 1x1 PNG, used to prove the hash is over content.
 const otherPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+// MCP-08: output schemas were not self-describing — 0 of 1103 output properties
+// carried a description, so an agent had to guess what a field meant. The Product
+// and Order projections are the ones every read tool returns.
+func TestProductAndOrderOutputsCarryDescriptions(t *testing.T) {
+	for name, typ := range map[string]any{"Product": Product{}, "Order": Order{}} {
+		schema, err := jsonschema.ForType(reflect.TypeOf(typ), nil)
+		if err != nil {
+			t.Fatalf("%s: infer schema: %v", name, err)
+		}
+		described, total := 0, 0
+		for field, prop := range schema.Properties {
+			total++
+			described++
+			if prop.Description == "" {
+				described--
+				t.Errorf("%s.%s has no description", name, field)
+			}
+		}
+		if described == 0 || described != total {
+			t.Fatalf("%s: %d of %d properties described", name, described, total)
+		}
+	}
+}
