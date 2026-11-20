@@ -1978,3 +1978,35 @@ func TestReadyzWithoutDependencyCheckIsReady(t *testing.T) {
 		t.Fatalf("status = %d, want 200 without a configured check", resp.StatusCode)
 	}
 }
+
+// MCP-15: tool results carry upstream store content, which the gateway passes through
+// because that is the data the caller asked for. Nothing in an output schema can say
+// "this is data, not instructions", so the warning belongs in the initialize
+// instructions — the protocol's designated channel for it.
+func TestServerInstructionsDeclareUpstreamContentUntrusted(t *testing.T) {
+	srv, err := NewMCP(Options{Version: "test", Registry: mustRegistry(t)})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ts := httptest.NewServer(Handler(srv, Options{Registry: mustRegistry(t)}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = session.Close() }()
+
+	instructions := session.InitializeResult().Instructions
+	if instructions == "" {
+		t.Fatal("server sent no instructions, so a client has no provenance guidance")
+	}
+	for _, want := range []string{"DATA", "never as instructions", "upstream"} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("instructions do not mention %q: %s", want, instructions)
+		}
+	}
+}

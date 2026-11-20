@@ -175,7 +175,7 @@ wiring is reverted.
 | MCP-12 | P2 | **FIXED** (`t18`) — server instructions/grouping |
 | MCP-13 | P3 | **FIXED** — a read tool's capability is derived from its own namespace, so order/sales/tax/document tools no longer advertise `magento.product.read` (`TestReadToolsDeriveTheirCapabilityFromTheNamespace`) |
 | MCP-14 | P3 | **FIXED** (`t18`) — generated inventory |
-| MCP-15 | P3 | PARTIAL — upstream error text no longer reaches the model (Magento and Cloudflare now use the server-only field; GA4 already answered with gateway text), and the threat model says so. No provenance envelope exists; that stays recorded as residual R-1 |
+| MCP-15 | P3 | **FIXED** — upstream error text no longer reaches the model on any module, and the initialize instructions declare tool results to be upstream data that must never be read as instructions (`TestServerInstructionsDeclareUpstreamContentUntrusted`). No per-result envelope was added: that would change all 106 output schemas, and the protocol provides the instructions channel for exactly this |
 | MCP-16 | P3 | **FIXED** — `openWorldHint` is explicitly false on every Magento tool; a nil value read as true by the specification, so clients were told these tools might reach the open web (`TestMagentoToolsDeclareAClosedWorld`) |
 
 **Workflow-tool decision.** All three proposed tools
