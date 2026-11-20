@@ -149,7 +149,7 @@ Each is real, was verified, and is **not** fixed in this release.
 |---|---|---|---|
 | SEC-04 | P1 | The approval CLI trusts a self-asserted `-as` approver identity | CLI requires DB access (root-equivalent). Use a single trusted operator host; the approval trail records what the operator claimed, not a verified identity |
 | SEC-10 | P2 | Bounded upstream error text and the request path reach the agent | Only an already-authorized caller sees it; text is control-character stripped and length-bounded |
-| SEC-15 | P2 | The MCP session is not bound to the caller identity | Requires a session store change. A stolen session id is usable for its lifetime; transport auth still gates each request |
+| SEC-15 | FIXED | An MCP session is now bound to the subject that created it | A different subject presenting the id gets 404 (not 403, per the anti-probing rule); an untracked id still falls through to the SDK, which rejects ids it does not know |
 | SEC-17 | P3 | Credentials are inline config strings with no redacting type | Protect the config file by permissions; do not dump config into logs or tickets |
 | SEC-18 | P3 | Import base64 is decoded before the size check | Bounded by the HTTP body cap; peak memory is ~4/3 of the body limit per concurrent request |
 

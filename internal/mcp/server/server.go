@@ -506,7 +506,9 @@ func Handler(srv *mcp.Server, opts Options) http.Handler {
 			MaxRequestBodyBytes: maxBody,
 		},
 	)
-	mcpHandler := http.Handler(streamable)
+	// The session binding sits inside the auth middleware: the identity has to be
+	// on the context before a session can be tied to it.
+	mcpHandler := http.Handler(sessionBinding(newSessionOwners())(streamable))
 	if opts.AuthMiddleware != nil {
 		mcpHandler = opts.AuthMiddleware(mcpHandler)
 	}
