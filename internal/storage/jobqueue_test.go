@@ -21,12 +21,15 @@ func TestJobRetryBackoffGrowsWithAttempts(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	queue := NewJobQueue(store)
-	// Claim is global: it returns the oldest due job in the schema, whatever test
-	// created it. Push leftovers out of the way so this test observes its own.
+	// Claim is global and recovers expired leases before it selects, so a job left
+	// queued or running by an earlier run is a candidate. Retire everything else
+	// outright: deferring only the queued ones left abandoned running rows to be
+	// recovered and claimed instead of this test's job.
 	if _, err := store.pool.Exec(ctx,
-		`UPDATE jobs SET scheduled_at = now() + interval '1 hour'
-		 WHERE state = 'queued' AND scheduled_at <= now()`); err != nil {
-		t.Fatalf("defer leftover jobs: %v", err)
+		`UPDATE jobs SET state = 'failed', finished_at = now(),
+		        lease_token = NULL, lease_expires_at = NULL
+		 WHERE state IN ('queued','running','canceling')`); err != nil {
+		t.Fatalf("retire leftover jobs: %v", err)
 	}
 
 	id, err := queue.Enqueue(ctx, jobs.Task{
@@ -127,12 +130,13 @@ func TestJobQueueConcurrentClaimHasOneWinner(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	queue := NewJobQueue(store)
-	// Queue names are fixed by a CHECK constraint, so isolation comes from deferring
-	// whatever an earlier test left queued.
+	// Queue names are fixed by a CHECK constraint, so isolation comes from retiring
+	// whatever an earlier run left behind.
 	if _, err := store.pool.Exec(ctx,
-		`UPDATE jobs SET scheduled_at = now() + interval '1 hour'
-		 WHERE state = 'queued' AND scheduled_at <= now()`); err != nil {
-		t.Fatalf("defer leftover jobs: %v", err)
+		`UPDATE jobs SET state = 'failed', finished_at = now(),
+		        lease_token = NULL, lease_expires_at = NULL
+		 WHERE state IN ('queued','running','canceling')`); err != nil {
+		t.Fatalf("retire leftover jobs: %v", err)
 	}
 
 	id, err := queue.Enqueue(ctx, jobs.Task{

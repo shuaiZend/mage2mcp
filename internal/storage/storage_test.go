@@ -156,9 +156,10 @@ func TestJobQueueLifecycle(t *testing.T) {
 	// to do with the code under test. Pushing leftovers aside removes that order
 	// dependence (QA-10); the queue names themselves are fixed by a CHECK constraint.
 	if _, err := store.pool.Exec(ctx,
-		`UPDATE jobs SET scheduled_at = now() + interval '1 hour'
-		 WHERE state = 'queued' AND scheduled_at <= now()`); err != nil {
-		t.Fatalf("defer leftover jobs: %v", err)
+		`UPDATE jobs SET state = 'failed', finished_at = now(),
+		        lease_token = NULL, lease_expires_at = NULL
+		 WHERE state IN ('queued','running','canceling')`); err != nil {
+		t.Fatalf("retire leftover jobs: %v", err)
 	}
 	id, err := queue.Enqueue(ctx, jobs.Task{
 		Kind: jobs.TypeNoop, Payload: []byte(`{"message":"hi"}`), MaxAttempts: 2,

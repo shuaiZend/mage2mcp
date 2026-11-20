@@ -117,10 +117,13 @@ func (s *Store) GetImportBatchByJob(ctx context.Context, jobID, instanceID, subj
 		return nil, nil
 	}
 	var batch jobs.ImportBatch
-	var payload []byte
+	// b.payload is deliberately not selected: it is a TOAST column holding the whole
+	// import body, and this path only needs the counts and the failure rows. Resume
+	// reads the payload from the job row, so fetching it here read and discarded up to
+	// 8 MiB per status poll.
 	err := s.pool.QueryRow(ctx, `
 		SELECT b.id::text, b.instance_id, COALESCE(b.job_id::text,''), b.format, b.state, b.total, b.processed,
-		       b.created, b.updated, b.skipped, b.failed, COALESCE(b.error_code,''), b.payload
+		       b.created, b.updated, b.skipped, b.failed, COALESCE(b.error_code,'')
 		FROM import_batches b
 		JOIN jobs j ON j.id = b.job_id
 		WHERE b.job_id = $1::uuid
@@ -131,7 +134,7 @@ func (s *Store) GetImportBatchByJob(ctx context.Context, jobID, instanceID, subj
 		ORDER BY b.created_at DESC, b.id DESC
 		LIMIT 1`, jobID, instanceID, subjectHash(subject)).
 		Scan(&batch.ID, &batch.InstanceID, &batch.JobID, &batch.Format, &batch.State, &batch.Total,
-			&batch.Processed, &batch.Created, &batch.Updated, &batch.Skipped, &batch.Failed, &batch.ErrorCode, &payload)
+			&batch.Processed, &batch.Created, &batch.Updated, &batch.Skipped, &batch.Failed, &batch.ErrorCode)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil

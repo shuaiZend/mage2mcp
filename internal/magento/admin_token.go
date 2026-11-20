@@ -194,63 +194,53 @@ func (s *AdminTokenSigner) tokenFor(ctx context.Context) (string, error) {
 	if now == nil {
 		now = time.Now
 	}
-	// The fast path holds the mutex only long enough to read the cached value.
-	s.mu.Lock()
-	if s.token != "" && now().Before(s.expiresAt.Add(-s.skew)) {
-		cached := s.token
-		s.mu.Unlock()
-		return cached, nil
-	}
-	// A refresh is already in flight: wait for it rather than starting a second one.
-	// Holding the mutex across the HTTP call serialized every request of the
-	// instance behind one token fetch, so a slow token endpoint queued a whole
-	// worker's traffic behind it.
-	wait := s.refreshing
-	s.mu.Unlock()
-	if wait != nil {
-		select {
-		case <-wait:
-		case <-ctx.Done():
-			return "", errs.New(errs.CodeUpstreamTimeout, "the admin token refresh did not finish before the deadline")
-		}
+	// One refresh at a time, and waiters block on the in-flight refresh rather than on
+	// the mutex. Holding the mutex across the HTTP call serialized every request of the
+	// instance behind one token fetch, so a slow token endpoint queued a whole worker's
+	// traffic behind it.
+	for {
 		s.mu.Lock()
-		cached := s.token
-		s.mu.Unlock()
-		if cached != "" {
+		if s.token != "" && now().Before(s.expiresAt.Add(-s.skew)) {
+			cached := s.token
+			s.mu.Unlock()
 			return cached, nil
 		}
-		return "", errs.New(errs.CodeUnauthenticated, "the admin token refresh failed; re-authentication is required")
-	}
-
-	s.mu.Lock()
-	if s.token != "" && now().Before(s.expiresAt.Add(-s.skew)) {
-		// Another goroutine refreshed while we waited for the lock.
-		cached := s.token
-		s.mu.Unlock()
-		return cached, nil
-	}
-	done := make(chan struct{})
-	s.refreshing = done
-	s.mu.Unlock()
-
-	token, err := s.fetchToken(ctx)
-
-	s.mu.Lock()
-	s.refreshing = nil
-	if err == nil {
-		ttl := s.ttl
-		if ttl <= 0 {
-			ttl = DefaultAdminTokenTTL
+		if wait := s.refreshing; wait != nil {
+			// A refresh is in flight: wait for it, then look at the cache again. The
+			// recheck is inside the loop because the refresh may have failed, in which
+			// case this caller starts the next one.
+			s.mu.Unlock()
+			select {
+			case <-wait:
+			case <-ctx.Done():
+				return "", errs.New(errs.CodeUpstreamTimeout,
+					"the admin token refresh did not finish before the deadline")
+			}
+			continue
 		}
-		s.token = token
-		s.expiresAt = now().Add(ttl)
+		done := make(chan struct{})
+		s.refreshing = done
+		s.mu.Unlock()
+
+		token, err := s.fetchToken(ctx)
+
+		s.mu.Lock()
+		s.refreshing = nil
+		if err == nil {
+			ttl := s.ttl
+			if ttl <= 0 {
+				ttl = DefaultAdminTokenTTL
+			}
+			s.token = token
+			s.expiresAt = now().Add(ttl)
+		}
+		s.mu.Unlock()
+		close(done)
+		if err != nil {
+			return "", err
+		}
+		return token, nil
 	}
-	s.mu.Unlock()
-	close(done)
-	if err != nil {
-		return "", err
-	}
-	return token, nil
 }
 
 func (s *AdminTokenSigner) fetchToken(ctx context.Context) (string, error) {

@@ -1,6 +1,21 @@
 # Testing strategy
 
-**Status:** Phase 0 baseline. Applies from Phase 1, when the first Go code lands.
+**Status:** the sections below describe the **intended** strategy, and not all of it is
+built. `docs/audit/regression-test-report.md` §2 is the current inventory and is the
+authority on what actually runs; this document is the plan it is measured against.
+
+Implemented today: unit tests beside the code, contract tests against `httptest`
+fakes, an independent QA suite under `test/qa` (build tag `qa`, run by
+`scripts/qa-independent.sh`, which fails on any skip), the Docker end-to-end smoke test
+under `test/e2e`, a live functional harness under `test/live` (build tag `live`, driven
+by `.github/workflows/live.yml`), and a conformance suite that replays payloads recorded
+from a real store (`test/fixtures/magento`).
+
+Not implemented: the sandbox suite (`tests/sandbox`), the manual real-environment
+checklist (`tests/real`), a dedicated `tests/security` tree, load tests (`tests/load`),
+fuzz targets, and per-module `contract`/`mocktest` packages. The `tests/` directory does
+not exist. Those rows are marked **planned** below rather than left to read as current
+evidence.
 **Owner:** QA, with each module owner responsible for its own suite.
 **Related:** [CI/CD](ci-cd.md), [Review process](review-process.md),
 [Module boundaries](../module-boundaries.md), [Architecture](../architecture.md),
@@ -15,14 +30,14 @@ it, what it asserted, and what it did not cover.
 | Level | What belongs here | Location | Runs on | Network | Target |
 |---|---|---|---|---|---|
 | Unit | Pure functions, DTO mapping, error mapping tables, validation, cache-key building, time and currency conversion | `_test.go` beside the code | Every PR | None | Seconds |
-| Contract | Behavior every implementation of a public interface must satisfy; the fake and the real service both run it | `internal/<module>/contract`, `faketest` | Every PR | None | Seconds |
-| Integration, mock upstream | Client behavior against an `httptest` server: status codes, pagination, error envelopes, rate limits, malformed bodies, timeouts | `internal/<module>/*_test.go`, `tests/fixtures/` | Every PR | Loopback only | Under 60 s per module |
-| Sandbox | The real vendor API against a dedicated non-production account | `tests/sandbox`, build tag `sandbox` | Nightly or manual | Yes | Minutes |
-| Real environment | Storefront GraphQL verification, configurable rendering, MSI effect, WAF rule effect | `tests/real`, manual checklist | Before a release | Yes | Hours |
-| Security | Auth, RBAC, confirmation, SSRF, injection, redaction, tenancy isolation | `tests/security` | PR subset, nightly full | None | Under 2 min subset |
+| Contract | Behaviour every implementation of a public interface must satisfy | `_test.go` against `httptest` fakes **(no separate `contract`/`mocktest` packages)** | Every PR | None | Seconds |
+| Integration, mock upstream | Client behavior against an `httptest` server: status codes, pagination, error envelopes, rate limits, malformed bodies, timeouts | `internal/<module>/*_test.go`, `test/fixtures/magento/` | Every PR | Loopback only | Under 60 s per module |
+| Sandbox **(planned)** | The real vendor API against a dedicated non-production account | `tests/sandbox`, build tag `sandbox` | Nightly or manual | Yes | Minutes |
+| Real environment **(planned)** | Storefront GraphQL verification, configurable rendering, MSI effect, WAF rule effect | `tests/real`, manual checklist | Before a release | Yes | Hours |
+| Security | Auth, RBAC, confirmation, SSRF, injection, redaction, tenancy isolation | `_test.go` and `test/qa` **(no dedicated `tests/security` tree)** | PR subset, nightly full | None | Under 2 min subset |
 | Race | Any test touching shared state, caches, sessions, or jobs | All packages | Every PR | None | 2x runtime |
-| Fuzz | Config parsing, import payloads, strict JSON, identifiers, cursors | `*_fuzz_test.go` | Nightly, 10 min per target | None | 10 min |
-| Load | Concurrency limits, queue depth, quota behavior, latency, memory | `tests/load`, build tag `load` | Weekly, mocks only | Loopback | 10–20 min |
+| Fuzz **(planned)** | Config parsing, import payloads, strict JSON, identifiers, cursors | `*_fuzz_test.go` | Nightly, 10 min per target | None | 10 min |
+| Load **(planned)** | Concurrency limits, queue depth, quota behavior, latency, memory | `tests/load`, build tag `load` | Weekly, mocks only | Loopback | 10–20 min |
 
 Security, race, fuzz, and load are cross-cutting concerns, not layers: they apply to
 several levels. A security test can be a unit test; a load test is always integration.
@@ -40,8 +55,11 @@ module's contract with its vendor, expressed as executable fixtures.
 - **One fake per module.** `internal/<module>/mocktest` exposes a server that can be
   configured per scenario: success, pagination, `429` with `Retry-After`, `500`, `401`,
   malformed JSON, truncated body, HTML error page, duplicate keys, slow response.
-- **Fixtures on disk.** `tests/fixtures/<module>/<scenario>/` holds the response bodies
-  and a `meta.json` with status, headers, and delay. Fixtures are reviewed like code.
+- **Fixtures on disk.** `test/fixtures/magento/` holds response bodies recorded from a
+  real store, replayed by `internal/magento/conformance_test.go`. They carry no
+  `meta.json`: the replay serves each body as a 200 and the test asserts the parsed
+  result, which is what those fixtures exist to pin. Fakes that need status codes and
+  delays build them inline in the test.
 - **Request assertions.** The fake asserts the method, path, query, and body shape, so
   a wrong URL or a missing store code fails the test instead of silently returning
   plausible data.
