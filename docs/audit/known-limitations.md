@@ -56,8 +56,13 @@ non-placement — only a surviving cart does — and the observer no longer read
 rather than a defect: this store's reconciler cannot confirm the placement, so the
 operation escalates to a human after its retry budget.
 
-That run is manual and is not part of CI. It narrows the risk; it does not close
-it.
+That run is manual and is not part of CI. What is in CI is a **conformance suite
+over payloads recorded from that store** (`internal/magento/conformance_test.go`,
+fixtures under `test/fixtures/magento`): 12 real responses replayed unchanged, so
+the shapes a real Magento returns are under regression even though no store is
+reachable. It cannot notice a store changing its behaviour, because the fixtures are
+frozen — the full live matrix stays a manual run. This narrows the risk; it does not
+close it.
 
 Consequence: Magento 2.4.9 compatibility is **unverified**, not "verified". The
 gateway may still be wrong about a field name, an id type, an extension
