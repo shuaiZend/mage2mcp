@@ -176,7 +176,7 @@ wiring is reverted.
 | MCP-13 | P3 | DEFER — capability metadata |
 | MCP-14 | P3 | **FIXED** (`t18`) — generated inventory |
 | MCP-15 | P3 | PARTIAL — upstream error text no longer reaches the model (Magento and Cloudflare now use the server-only field; GA4 already answered with gateway text), and the threat model says so. No provenance envelope exists; that stays recorded as residual R-1 |
-| MCP-16 | P3 | DEFER — annotation hints |
+| MCP-16 | P3 | **FIXED** — `openWorldHint` is explicitly false on every Magento tool; a nil value read as true by the specification, so clients were told these tools might reach the open web (`TestMagentoToolsDeclareAClosedWorld`) |
 
 **Workflow-tool decision.** All three proposed tools
 (`configurable.create_complete`, `inventory.reconcile`, `order.fulfillment`)

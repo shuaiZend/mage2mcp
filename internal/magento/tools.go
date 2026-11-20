@@ -155,18 +155,26 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 	}
 	return nil
 }
+
+// openWorldFalse marks a tool as operating on the configured Magento instance
+// rather than the open web. The MCP specification reads a nil openWorldHint as
+// true, which told every client the opposite of what these tools do.
+func openWorldFalse() *bool { return &boolFalse }
+
+var boolFalse = false
+
 func toolMetadata(name, title, description string) registry.Tool {
 	return registry.Tool{
 		Name: name, Title: title, Description: description,
 		Capability: capabilityProductRead, Permission: registry.PermissionRead, Timeout: toolTimeout,
-		Annotations: mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+		Annotations: mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: openWorldFalse()},
 	}
 }
 func mcpTool(name, title, description, schema string) *mcp.Tool {
 	return &mcp.Tool{
 		Name: name, Title: title, Description: description,
 		InputSchema: json.RawMessage(schema),
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: openWorldFalse()},
 	}
 }
 func newGetTool(lookup serviceLookup) registry.Tool {

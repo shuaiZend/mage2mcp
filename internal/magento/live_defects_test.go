@@ -696,3 +696,23 @@ func TestMoneyPathOutputsDocumentTheirFlags(t *testing.T) {
 		}
 	}
 }
+
+// MCP-16: a nil openWorldHint is read as true by the MCP specification, so every
+// Magento tool was telling clients it might reach the open web. These tools only
+// ever talk to the configured instance.
+func TestMagentoToolsDeclareAClosedWorld(t *testing.T) {
+	tool := toolMetadata("magento.example.read", "Example", "An example read tool.")
+	if tool.Annotations.OpenWorldHint == nil {
+		t.Fatal("openWorldHint is nil, which the specification reads as true")
+	}
+	if *tool.Annotations.OpenWorldHint {
+		t.Fatal("openWorldHint = true, want false for a configured instance")
+	}
+	definition := mcpTool("magento.example.read", "Example", "An example read tool.", `{"type":"object"}`)
+	if definition.Annotations == nil || definition.Annotations.OpenWorldHint == nil {
+		t.Fatal("registered tool has no openWorldHint")
+	}
+	if *definition.Annotations.OpenWorldHint {
+		t.Fatal("registered tool claims an open world")
+	}
+}
