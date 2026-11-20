@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -691,4 +693,92 @@ func TestMaxImportPayloadPassesHTTPCap(t *testing.T) {
 			len(data), len(call), config.DefaultMaxBodyBytes)
 	}
 	t.Logf("max decoded import=%d request_body=%d cap=%d status=%d", len(data), len(call), config.DefaultMaxBodyBytes, resp.StatusCode)
+}
+
+// PERF-06: existence used to be resolved with one GET per row, so an import cost
+// exactly two requests per row (lookup + write). The lookup is now batched, so a
+// 10-row import costs one list request plus ten writes. This test counts the wire
+// calls rather than trusting the shape of the code.
+func TestExecuteImportBatchesExistenceLookups(t *testing.T) {
+	var lists, perRowGets, writes int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/products"):
+			lists++
+			// Rows 5..9 already exist; rows 0..4 do not.
+			_, _ = io.WriteString(w, `{"items":[{"sku":"OLD-5"},{"sku":"OLD-6"},{"sku":"OLD-7"},{"sku":"OLD-8"},{"sku":"OLD-9"}]}`)
+		case r.Method == http.MethodGet:
+			perRowGets++
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost || r.Method == http.MethodPut:
+			writes++
+			_, _ = io.WriteString(w, `{"id":1,"sku":"X","type_id":"simple"}`)
+		default:
+			http.Error(w, "unexpected", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	svc := newImportServiceAgainst(t, server.URL)
+
+	var csv strings.Builder
+	csv.WriteString("sku,name,type_id,price,attribute_set_id\n")
+	for i := 0; i < 5; i++ {
+		fmt.Fprintf(&csv, "NEW-%d,New %d,simple,9.99,4\n", i, i)
+	}
+	for i := 5; i < 10; i++ {
+		fmt.Fprintf(&csv, "OLD-%d,Old %d,simple,9.99,4\n", i, i)
+	}
+	result, err := svc.ExecuteImport(context.Background(), "csv", []byte(csv.String()), true)
+	if err != nil {
+		t.Fatalf("ExecuteImport: %v", err)
+	}
+	if result.Total != 10 || result.Created != 5 || result.Updated != 5 {
+		t.Fatalf("result = %+v, want 5 created and 5 updated", result)
+	}
+	if lists != 1 {
+		t.Fatalf("list requests = %d, want the existence check batched into 1", lists)
+	}
+	if perRowGets != 0 {
+		t.Fatalf("per-row GETs = %d, want 0 once the batch answered", perRowGets)
+	}
+	total := lists + perRowGets + writes
+	if total > 11 {
+		t.Fatalf("requests = %d for 10 rows, want <= 11 (was 20 before the batch)", total)
+	}
+}
+
+// A store that cannot answer the batched form must not turn every row into a
+// spurious create: the per-row read stays the fallback.
+func TestExecuteImportFallsBackWhenBatchLookupFails(t *testing.T) {
+	var perRowGets int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/products"):
+			http.Error(w, "unsupported", http.StatusBadRequest)
+		case r.Method == http.MethodGet:
+			perRowGets++
+			_, _ = io.WriteString(w, `{"id":1,"sku":"OLD-1","type_id":"simple"}`)
+		case r.Method == http.MethodPut:
+			_, _ = io.WriteString(w, `{"id":1,"sku":"OLD-1","type_id":"simple"}`)
+		default:
+			http.Error(w, "unexpected", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	svc := newImportServiceAgainst(t, server.URL)
+
+	result, err := svc.ExecuteImport(context.Background(), "csv",
+		[]byte("sku,name,type_id,price,attribute_set_id\nOLD-1,Old,simple,9.99,4\n"), true)
+	if err != nil {
+		t.Fatalf("ExecuteImport: %v", err)
+	}
+	if result.Updated != 1 || result.Created != 0 {
+		t.Fatalf("result = %+v, want the row updated through the fallback read", result)
+	}
+	if perRowGets != 1 {
+		t.Fatalf("per-row GETs = %d, want 1 fallback read", perRowGets)
+	}
 }

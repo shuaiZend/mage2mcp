@@ -162,27 +162,38 @@ type InventoryStock struct {
 	Name    string `json:"name"`
 }
 
-// Sources lists the configured inventory sources.
-func (s *Service) Sources(ctx context.Context) ([]InventorySource, error) {
+// Sources lists the configured inventory sources and reports how many the store
+// holds.
+//
+// The list is capped at maxInventoryList, so a caller that only receives the slice
+// cannot tell a complete answer from a capped one — and could conclude a source
+// does not exist when it is merely past the cap. The total comes from the store
+// and is at least the number returned.
+func (s *Service) Sources(ctx context.Context) ([]InventorySource, int, error) {
 	if s == nil || s.client == nil {
-		return nil, errs.New(errs.CodeInternal, "Magento inventory service is not configured")
+		return nil, 0, errs.New(errs.CodeInternal, "Magento inventory service is not configured")
 	}
 	query := make(url.Values)
 	query.Set("searchCriteria[pageSize]", strconv.Itoa(maxInventoryList))
 	raw, err := s.client.do(ctx, http.MethodGet, "/inventory/sources", query, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var payload struct {
-		Items []InventorySource `json:"items"`
+		Items      []InventorySource `json:"items"`
+		TotalCount int               `json:"total_count"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable inventory-source payload").WithCause(err)
+		return nil, 0, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable inventory-source payload").WithCause(err)
 	}
 	if payload.Items == nil {
 		payload.Items = []InventorySource{}
 	}
-	return payload.Items, nil
+	total := payload.TotalCount
+	if total < len(payload.Items) {
+		total = len(payload.Items)
+	}
+	return payload.Items, total, nil
 }
 
 // Stocks lists the configured inventory stocks.

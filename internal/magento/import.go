@@ -338,6 +338,38 @@ type ImportResultRow struct {
 	Error     string `json:"error,omitempty"`
 }
 
+// existingSKUs resolves which import rows already exist in Magento, in batches.
+//
+// The second return value is false when the batched form could not be answered,
+// in which case the caller must fall back to a per-row read: a store that rejects
+// `sku in (...)` must not turn every row into a spurious create.
+func (s *Service) existingSKUs(ctx context.Context, rows []ImportRow) (map[string]struct{}, bool) {
+	found := make(map[string]struct{}, len(rows))
+	skus := make([]string, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if _, duplicate := seen[row.SKU]; duplicate {
+			continue
+		}
+		seen[row.SKU] = struct{}{}
+		skus = append(skus, row.SKU)
+	}
+	for start := 0; start < len(skus); start += maxBatchGetSKUs {
+		end := start + maxBatchGetSKUs
+		if end > len(skus) {
+			end = len(skus)
+		}
+		products, err := s.BatchGet(ctx, skus[start:end])
+		if err != nil {
+			return nil, false
+		}
+		for _, product := range products {
+			found[product.SKU] = struct{}{}
+		}
+	}
+	return found, true
+}
+
 // ImportResult reports a partial-success execution. It never claims atomicity.
 type ImportResult struct {
 	Total   int               `json:"total"`
@@ -401,9 +433,24 @@ func (s *Service) executeImportRows(ctx context.Context, format string, data []b
 	if progress != nil {
 		progress(0, len(rows))
 	}
+	// Existence is resolved in batches before the loop. Asking per row cost one
+	// GET per row on top of the write, so a 5,000-row import issued 10,000 requests
+	// where ~200 suffice. The batch answer is authoritative for rows that already
+	// existed; SKUs created during this run are added as they succeed, so a
+	// duplicate SKU later in the file still updates rather than collides.
+	existing, known := s.existingSKUs(ctx, rows)
 	for i, row := range rows {
 		outcome := ImportResultRow{RowNumber: row.RowNumber, SKU: row.SKU}
-		_, getErr := s.Get(ctx, row.SKU)
+		getErr := error(nil)
+		if known {
+			if _, present := existing[row.SKU]; !present {
+				getErr = errs.New(errs.CodeNotFound, "Magento has no such resource or route")
+			}
+		} else {
+			// The batch pre-fetch failed: fall back to the per-row read so behaviour
+			// is unchanged when the store cannot answer the batched form.
+			_, getErr = s.Get(ctx, row.SKU)
+		}
 		switch {
 		case getErr == nil:
 			if !updateExisting {
@@ -454,6 +501,11 @@ func (s *Service) executeImportRows(ctx context.Context, format string, data []b
 			} else {
 				outcome.Action, outcome.Status = "create", "succeeded"
 				result.Created++
+				// A later row with the same SKU must update what this row created,
+				// not collide with it.
+				if known {
+					existing[row.SKU] = struct{}{}
+				}
 			}
 		default:
 			outcome.Action, outcome.Status, outcome.Error = "lookup", "failed", importErrorMessage(getErr)

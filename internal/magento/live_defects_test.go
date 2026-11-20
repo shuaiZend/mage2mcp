@@ -436,3 +436,46 @@ func TestUploadMediaClearsPreviousRoleHolder(t *testing.T) {
 
 // onePixelPNGBase64 is a 1x1 PNG, enough for the upload validation path.
 const onePixelPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+// MCP-08 (list completeness): inventory.sources is capped at maxInventoryList, and
+// a caller that only receives the slice cannot tell a complete answer from a
+// capped one. The tool now reports the store's total and whether it truncated.
+func TestInventorySourcesReportsTruncation(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// One source returned, but the store says it holds 250.
+		_, _ = io.WriteString(w, `{"items":[{"source_code":"default","name":"Default"}],"total_count":250}`)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	sources, total, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+	if len(sources) != 1 {
+		t.Fatalf("sources = %d, want 1", len(sources))
+	}
+	if total != 250 {
+		t.Fatalf("total = %d, want the store's 250", total)
+	}
+}
+
+// A store that omits total_count must not report a total smaller than what it
+// returned.
+func TestInventorySourcesTotalNeverBelowReturned(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"items":[{"source_code":"a"},{"source_code":"b"}]}`)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	sources, total, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+	if total < len(sources) {
+		t.Fatalf("total = %d, want at least %d", total, len(sources))
+	}
+}

@@ -597,7 +597,7 @@ func (s *Service) CreateSource(ctx context.Context, in InventorySourceInput) (*I
 
 // sourceByCode reads one source back after a create that returned no body.
 func (s *Service) sourceByCode(ctx context.Context, code string) (*InventorySource, error) {
-	sources, err := s.Sources(ctx)
+	sources, _, err := s.Sources(ctx)
 	if err != nil {
 		return nil, err
 	}

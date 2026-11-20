@@ -149,12 +149,15 @@ func TestInventorySourcesAndStocks(t *testing.T) {
 	}))
 	defer ts.Close()
 	svc := testService(t, ts.URL)
-	sources, err := svc.Sources(context.Background())
+	sources, total, err := svc.Sources(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(sources) != 1 || sources[0].SourceCode != "default" || !sources[0].Enabled || sources[0].City != "Shanghai" {
 		t.Fatalf("sources = %+v", sources)
+	}
+	if total < len(sources) {
+		t.Fatalf("total = %d, want at least the number returned (%d)", total, len(sources))
 	}
 	stocks, err := svc.Stocks(context.Background())
 	if err != nil {

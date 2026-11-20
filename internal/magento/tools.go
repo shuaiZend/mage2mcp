@@ -1546,6 +1546,11 @@ const (
 
 type inventorySourcesOutput struct {
 	Sources []InventorySource `json:"sources"`
+	// Total is how many sources the store holds; the list itself is capped.
+	Total int `json:"total"`
+	// Truncated is true when the store holds more sources than were returned, so
+	// a caller never concludes a source is missing when it is merely past the cap.
+	Truncated bool `json:"truncated"`
 }
 
 type inventoryStocksOutput struct {
@@ -1564,11 +1569,15 @@ func newInventorySourcesTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, inventorySourcesOutput{}, err
 				}
-				sources, err := svc.Sources(ctx)
+				sources, total, err := svc.Sources(ctx)
 				if err != nil {
 					return nil, inventorySourcesOutput{}, err
 				}
-				return nil, inventorySourcesOutput{Sources: sources}, nil
+				return nil, inventorySourcesOutput{
+					Sources:   sources,
+					Total:     total,
+					Truncated: total > len(sources),
+				}, nil
 			})
 		return nil
 	}

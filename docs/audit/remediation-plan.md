@@ -163,7 +163,7 @@ wiring is reverted.
 | MCP-05 | P2 | **FIXED** (`t19`) — declared timeout enforced as a deadline |
 | MCP-06 | P2 | **FIXED** (`t18`) — 55 write disclosures, test-enforced |
 | MCP-07 | P2 | PARTIAL — documented; full schema polish deferred |
-| MCP-08 | P2 | DEFER — no output-schema envelope |
+| MCP-08 | P2 | PARTIAL — `inventory.sources` reports `total` and `truncated` so a capped list is visible (`TestInventorySourcesReportsTruncation`); the common output envelope and the property descriptions remain open |
 | MCP-09 | P2 | **FIXED** (`t18`+`t19`) — one envelope shape, code once, no SQLSTATE leak |
 | MCP-10 | P3 | DEFER — naming register recorded |
 | MCP-11 | P2 | **FIXED** (`t19`) — `order.summary` is a distinct deprecated alias |
@@ -188,7 +188,7 @@ operation. Recorded in `known-limitations.md`.
 | PERF-03 | P2 | **FIXED** → `MCP-05` |
 | PERF-04 | P2 | **FIXED** (`t17`) — tuned `Transport`; 8 connections for 160 requests vs 41–64 |
 | PERF-05 | P2 | **FIXED** — per-instance token bucket + concurrency cap (`t53`) |
-| PERF-06 | P2 | DEFER — 2 requests per import row |
+| PERF-06 | P2 | **FIXED** — existence resolved with one batched `sku in (...)` read per 50 rows instead of one GET per row, with a per-row fallback; a 10-row import costs 11 requests, not 20 (`TestExecuteImportBatchesExistenceLookups`) |
 | PERF-07 | P2 | **FIXED** (`t17`) — 1,000-order cap now reported |
 | PERF-08 | P2 | **FIXED** (`t17`) — `truncated` reflects reality |
 | PERF-09 | P2 | **FIXED** (`t17`) — deterministic paging with an explicit caveat |
