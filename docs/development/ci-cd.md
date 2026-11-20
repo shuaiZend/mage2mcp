@@ -16,7 +16,7 @@ Day-to-day commits are verified locally with `scripts/local-ci.sh`; GitHub does
 
 - `ci.yml` (manual `workflow_dispatch` only): `verify` (gofmt, go mod verify, vet,
   golangci-lint, race tests, 70% coverage floor, docs lint/links/contracts,
-  actions-pinned, DCO on HEAD), `integration` (PostgreSQL storage tests), `docker`
+  actions-pinned), `integration` (PostgreSQL storage tests), `docker`
   (build + container smoke test), optional `e2e` (default on), and `ci-gate`.
 - `security.yml`: weekly schedule + manual dispatch (gitleaks, govulncheck, gosec,
   scorecard); no per-commit runs.
