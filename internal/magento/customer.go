@@ -3,6 +3,7 @@
 package magento
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -157,12 +158,12 @@ func (s *Service) CustomerAddresses(ctx context.Context, customerID int) ([]Cust
 	}
 	var payload struct {
 		Addresses []struct {
-			ID              int    `json:"id" jsonschema:"Magento entity id."`
-			CountryID       string `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
-			Region          string `json:"region" jsonschema:"Region name."`
-			RegionID        int    `json:"region_id" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
-			DefaultBilling  bool   `json:"default_billing" jsonschema:"True when this is the default billing address."`
-			DefaultShipping bool   `json:"default_shipping" jsonschema:"True when this is the default shipping address."`
+			ID              int         `json:"id" jsonschema:"Magento entity id."`
+			CountryID       string      `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+			Region          regionValue `json:"region" jsonschema:"Region name."`
+			RegionID        int         `json:"region_id" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
+			DefaultBilling  bool        `json:"default_billing" jsonschema:"True when this is the default billing address."`
+			DefaultShipping bool        `json:"default_shipping" jsonschema:"True when this is the default shipping address."`
 		} `json:"addresses" jsonschema:"Customer addresses."`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -170,8 +171,12 @@ func (s *Service) CustomerAddresses(ctx context.Context, customerID int) ([]Cust
 	}
 	addresses := make([]CustomerAddress, 0, len(payload.Addresses))
 	for _, address := range payload.Addresses {
+		regionID := address.RegionID
+		if regionID == 0 {
+			regionID = address.Region.ID
+		}
 		addresses = append(addresses, CustomerAddress{
-			ID: address.ID, CountryID: address.CountryID, Region: address.Region, RegionID: address.RegionID,
+			ID: address.ID, CountryID: address.CountryID, Region: address.Region.Name, RegionID: regionID,
 			DefaultBilling: address.DefaultBilling, DefaultShipping: address.DefaultShipping,
 		})
 	}
@@ -591,4 +596,36 @@ func addressRouteError(err error, action string) error {
 		"this Magento instance does not expose customer address "+action+
 			"; update the customer with an addresses array or use the admin UI").
 		WithDetail("upstream_status", "404")
+}
+
+// regionValue decodes Magento's `region` field, which is a string on some responses
+// and an object on others.
+//
+// The customer address read returns {"region_code","region","region_id"} while the
+// order address read returns a plain string. Decoding both into a string made the
+// customer address list fail with "unreadable customer payload" for any customer that
+// has an address — the array element was rejected, not the envelope.
+type regionValue struct {
+	Name string
+	ID   int
+}
+
+// UnmarshalJSON accepts either shape.
+func (r *regionValue) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	if trimmed[0] == '{' {
+		var object struct {
+			Region   string `json:"region"`
+			RegionID int    `json:"region_id"`
+		}
+		if err := json.Unmarshal(trimmed, &object); err != nil {
+			return err
+		}
+		r.Name, r.ID = object.Region, object.RegionID
+		return nil
+	}
+	return json.Unmarshal(trimmed, &r.Name)
 }

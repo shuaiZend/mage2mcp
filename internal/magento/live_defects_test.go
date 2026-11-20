@@ -1044,3 +1044,32 @@ func TestOperationRunWritesItsOwnAuditRow(t *testing.T) {
 func TestMarkOperationOwnedToleratesNoState(t *testing.T) {
 	audit.MarkOperationOwned(context.Background())
 }
+
+// Found by the v0.11.2 live run: Magento returns a customer address's `region` as an
+// object {"region_code","region","region_id"} while the order address returns a plain
+// string. Decoding both into a string made customer.addresses fail with "unreadable
+// customer payload" for any customer that has an address.
+func TestCustomerAddressesAcceptsBothRegionShapes(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":1,"addresses":[
+			{"id":1,"country_id":"US","region":{"region_code":"MI","region":"Michigan","region_id":33},"region_id":33,"default_billing":true},
+			{"id":2,"country_id":"PL","region":"Mazowieckie","default_shipping":true}]}`)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	addresses, err := svc.CustomerAddresses(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("CustomerAddresses: %v", err)
+	}
+	if len(addresses) != 2 {
+		t.Fatalf("addresses = %d, want 2", len(addresses))
+	}
+	if addresses[0].Region != "Michigan" || addresses[0].RegionID != 33 {
+		t.Fatalf("object region = %+v, want Michigan/33", addresses[0])
+	}
+	if addresses[1].Region != "Mazowieckie" {
+		t.Fatalf("string region = %+v, want Mazowieckie", addresses[1])
+	}
+}

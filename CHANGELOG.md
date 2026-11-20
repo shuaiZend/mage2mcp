@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`magento.customer.addresses` failed for any customer that has an address.** Magento
+  returns a customer address's `region` as an object
+  (`{region_code, region, region_id}`) while the order address returns a plain string.
+  Both were decoded as a string, so the address array element was rejected and the tool
+  reported "unreadable customer payload" — pointing at the envelope rather than the
+  element. Found by the v0.11.2 live run; see
+  [docs/audit/live-magento-test-report-v0.11.2-zh.md](docs/audit/live-magento-test-report-v0.11.2-zh.md).
+
 ## [0.11.2] - 2026-11-21
 
 The defects a live Magento run found, fixed, plus the audit findings that did not need

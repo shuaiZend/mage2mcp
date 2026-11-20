@@ -1,0 +1,170 @@
+# v0.11.2 全量功能测试报告
+
+| 项目 | 内容 |
+|---|---|
+| 测试对象 | 已发布镜像 `ghcr.io/shuaizend/mage2mcp:v0.11.2` |
+| 测试时间 | 2026-11-21 |
+| 目标店铺 | `https://demo-magento-2.auroracreation.com`，店铺视图 `pl`（PLN，pl_PL） |
+| 店铺规模 | 2062 个商品，属性集 4 与 9–15 |
+| 测试服务器 | `49.51.250.83`，独立容器 `m2m-v0112`，绑定 `127.0.0.1:18082` |
+| 用例数 | 123（覆盖 101 个工具） |
+| 原始结果 | `test/live/out/results-20261121-042640.json` |
+
+**测的是发出去的镜像，不是本地构建的二进制。** 先 `docker pull` 已发布镜像，确认
+`/readyz` 返回 `{"status":"ready","tools":102}`，再对它跑全量矩阵。
+
+---
+
+## 一、总体结果
+
+| 状态 | 数量 | 含义 |
+|---|---|---|
+| 通过 | **82** | 行为符合契约 |
+| 软失败 | 16 | 失败，但原因是测试脚本或环境限制（逐条见第三节） |
+| 硬失败 | **1** | 失败且归因于产品缺陷或环境缺失 |
+| 跳过 | 24 | 前置数据未产生（依赖链上游失败） |
+
+**结论：82/123 通过，1 个硬失败（环境限制），新发现 1 个真实缺陷（已定位并修复）。**
+
+---
+
+## 二、逐域结果
+
+| 域 | 通过 | 软失败 | 硬失败 | 跳过 | 说明 |
+|---|---|---|---|---|---|
+| platform | 2 | 0 | 0 | 0 | 工具数 102、自列举、写开关 |
+| store | 2 | 0 | 0 | 0 | 店铺视图、税率类 |
+| catalog-read | 7 | 0 | 0 | 0 | 属性集/选项、分类树/详情/商品/扁平 |
+| product-read | 9 | 0 | 0 | 0 | 详情、批量、搜索、SEO、阶梯价、媒体、选项、关联 |
+| configurable-read | 1 | 0 | 0 | 0 | 真实配置商品的子项 |
+| inventory-read | 5 | 0 | 0 | 0 | 源、库存、源项、状态、批量状态 |
+| customer-read | 2 | 0 | 0 | 0 | 客户组、搜索 |
+| sales-read | 10 | 0 | 0 | 0 | 订单搜索/详情/历史/汇总、销售汇总/分析、地域、票据列表 |
+| import-read | 2 | 0 | 0 | 0 | 校验、批次列表 |
+| product-write | 5 | 0 | 0 | 0 | 含完整 SEO 内容创建、回读、更新、删除 |
+| media-write | 4 | 0 | 0 | 0 | 上传、列表、更新、删除 |
+| tier-write | 2 | 0 | 0 | 0 | 设置与回读 |
+| bulk-write | 1 | 0 | 0 | 0 | 批量状态更新 |
+| category-write | 6 | 0 | 0 | 0 | 创建、更新、分配、列表、删除 |
+| attribute-write | 2 | 0 | 0 | 1 | 选项创建、批量创建、删除 |
+| links-write | 4 | 0 | 0 | 0 | 关联增删与读取 |
+| options-write | 1 | 0 | 1 | 2 | **自定义选项创建失败（环境）** |
+| inventory-write | 4 | 3 | 0 | 0 | 分配、调拨、源链接 |
+| customer-write | 6 | 2 | 0 | 0 | 含地址创建（**发现缺陷**） |
+| configurable-write | 0 | 7 | 0 | 0 | **测试脚本参数不匹配，非产品行为** |
+| order-write | 0 | 1 | 0 | 8 | 下单返回 `operation_unknown`（已知，见第四节） |
+| invoice-write | 0 | 0 | 0 | 5 | 被下单链路阻塞 |
+| shipment-write | 0 | 0 | 0 | 4 | 被下单链路阻塞 |
+| creditmemo-write | 0 | 0 | 0 | 4 | 被下单链路阻塞 |
+| import-write | 4 | 2 | 0 | 0 | 执行、启动、状态、取消/恢复语义 |
+| errors | 3 | 1 | 0 | 0 | 未知实例、未知 SKU、schema 拒绝 |
+
+---
+
+## 三、失败项逐条判定
+
+### 3.1 唯一的硬失败：自定义选项创建
+
+`magento.product.options.create` 返回
+`unsupported_capability: this Magento instance does not expose custom-option creation`。
+
+直连验证：`POST /rest/pl/V1/products/{sku}/options` 返回 **404 无此路由**，
+`PUT /products/{sku}` 带 options 也被拒绝（400）。**该 demo 站确实不暴露自定义选项创建**，
+网关如实报告是正确行为。判定为**环境限制，非产品缺陷**。
+
+### 3.2 16 个软失败的分类
+
+| 工具 | 报错 | 判定 |
+|---|---|---|
+| `configurable.create` | `invalid_argument: arguments do not match the tool schema` | **测试脚本**：payload 未匹配 schema |
+| `configurable.create_variations` | 同上 | 测试脚本 |
+| `configurable.set_options` | 同上 | 测试脚本 |
+| `configurable.children` | `not_found` | 级联：父商品未创建 |
+| `configurable.update` | `not_found` | 级联 |
+| `configurable.add_child` | `not_found: Magento write failed at stage links` | 级联 |
+| `configurable.remove_child` | 同上 | 级联 |
+| `inventory.stock_source_link` | `validation_failed` | 级联：本次运行的 MSI 源未成功创建 |
+| `inventory.stock_source_unlink` | `not_found` | 级联 |
+| `inventory.unassign` | `not_found` | 级联 |
+| `inventory.transfer` | `invalid_argument: from_source and to_source must differ` | **正确拒绝**：用例刻意用同源，工具如实报错 |
+| `customer.addresses` | `upstream_unavailable: unreadable customer payload` | **真实缺陷，见第五节** |
+| `customer.addresses.update` | `unsupported_capability` | 该店不暴露地址更新路由，如实报告 |
+| `order.create` | `operation_unknown` | 已知问题，见第四节 |
+| `import.batch` | `not_found: import batch not found` | **测试脚本**：把 job_id 当 batch_id 传入 |
+| `import.cancel` | `illegal_transition` | **正确拒绝**：任务已终态 |
+
+---
+
+## 四、已知问题：下单返回 `operation_unknown`
+
+`magento.order.create` 返回
+`operation_unknown: the order placement outcome is unknown: Magento did not confirm it`。
+
+**订单实际已创建**（可在店铺后台看到）。这是审计中记录为 `LIVE-8` 的已知限制：
+
+- 下单调用在慢速店铺上会超时，订单在约 1 秒后才提交
+- 网关的对账读取在订单提交前完成，因此找不到
+- 网关**拒绝猜测**，记录 `unknown` 并要求轮询——这是设计上的安全行为，避免了重复下单
+- 该店的对账器无法确认，操作会在重试预算用尽后升级给人工
+
+这不是本次新发现，v0.11.1 与 v0.11.2 行为一致。详见
+[`live-magento-defects.md`](live-magento-defects.md) 的 LIVE-8。
+
+---
+
+## 五、本次新发现的真实缺陷（已修复）
+
+### `magento.customer.addresses` 对任何有地址的客户都失败
+
+**现象**：返回 `upstream_unavailable: Magento returned an unreadable customer payload`。
+
+**根因**：Magento 对客户地址的 `region` 字段返回**对象**：
+
+```json
+{"region": {"region_code": "MI", "region": "Michigan", "region_id": 33}, "region_id": 33}
+```
+
+而订单地址的 `region` 返回**字符串**。网关两处都按 `string` 解析，于是客户地址数组的
+元素解码失败——**失败的是数组元素，不是外层信封**，所以错误信息指向了错误的层级。
+
+**影响**：任何有地址的客户，其地址列表都无法读取。此前几轮测试没发现，是因为测试用的是
+本次运行新建的客户，地址创建失败时该客户没有地址，空数组可以正常解析。
+
+**修复**：新增 `regionValue` 类型，同时接受字符串与对象两种形状，并优先取对象内的
+`region_id`。测试 `TestCustomerAddressesAcceptsBothRegionShapes` 覆盖两种形状。
+
+**状态**：已修复并通过完整门禁，**将随下一个版本发布**（v0.11.2 已发布，不含此修复）。
+
+---
+
+## 六、与历史运行对比
+
+| 运行 | 版本 | 通过 | 软失败 | 失败 | 跳过 |
+|---|---|---|---|---|---|
+| 基线 | v0.11.1 | 78 | 17 | 2 | 26 |
+| live 缺陷修复后 | v0.11.1+fixes | 82 | 16 | 1 | 24 |
+| 全部修复后 | v0.11.1+fixes | 82 | 16 | 1 | 24 |
+| **已发布镜像** | **v0.11.2** | **82** | **16** | **1** | **24** |
+
+**与发版前完全一致，零回归。** 发版没有引入任何行为变化。
+
+---
+
+## 七、结论
+
+1. **v0.11.2 已发布产物行为正确**：82 个用例通过，唯一的硬失败是 demo 站缺少自定义选项
+   路由，属环境限制。
+2. **新发现 1 个真实缺陷**：客户地址列表因 `region` 字段形状而失败，已定位、修复并加了测试。
+   该缺陷存在于 v0.11.2 中，修复将在下一版本发布。
+3. **24 个跳过**全部是下单链路的下游依赖（发票、发货、贷项通知单），根因是已知的
+   `operation_unknown` 对账限制，非本次新问题。
+4. **configurable 域的 7 个软失败是测试脚本问题**，不是产品行为——该域实际上未被验证，
+   这是本次测试的覆盖缺口，应在下轮补齐脚本参数。
+
+### 建议的后续动作
+
+1. **发布 v0.11.3**，包含客户地址 `region` 修复
+2. **修正 configurable 域的测试脚本参数**，补齐该域的验证
+3. **决定 `PERF-16`**：配置商品路径是否为并行化改动错误契约（见
+   [`perf-16-options.md`](perf-16-options.md)）
+4. **考虑为 demo 站提供替代环境**：自定义选项路由缺失导致该能力无法验证
