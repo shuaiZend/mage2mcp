@@ -220,7 +220,10 @@ func (c *Client) graphql(ctx context.Context, query string, variables map[string
 	if len(envelope.Errors) > 0 {
 		e := errs.New(errs.CodeUpstreamUnavailable, "Cloudflare GraphQL returned an error")
 		if msg := truncate(strings.TrimSpace(envelope.Errors[0].Message), maxGraphQLErrorDetail); msg != "" {
-			e = e.WithDetail("upstream_message", msg)
+			// Server-side only: Cloudflare's GraphQL errors can quote the query and
+			// the account it ran against, which is reconnaissance for a caller
+			// (SEC-10). The reason is logged with the tool and code instead.
+			e = e.WithUpstream(msg)
 		}
 		return e
 	}

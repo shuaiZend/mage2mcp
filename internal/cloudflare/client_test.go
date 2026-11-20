@@ -291,8 +291,13 @@ func TestGraphQLErrors(t *testing.T) {
 	if !errors.As(err, &typed) {
 		t.Fatalf("error is not *errs.Error: %T", err)
 	}
-	if typed.Details["upstream_message"] != "cannot request data older than 2678400s" {
-		t.Fatalf("detail = %q", typed.Details["upstream_message"])
+	// SEC-10: the upstream reason is kept for the server log, not the agent. It must
+	// reach Upstream and must not appear in the serialised details.
+	if typed.Upstream != "cannot request data older than 2678400s" {
+		t.Fatalf("upstream = %q, want the reason kept server-side", typed.Upstream)
+	}
+	if _, leaked := typed.Details["upstream_message"]; leaked {
+		t.Fatal("upstream_message leaked into the agent-visible details")
 	}
 	if strings.Contains(err.Error(), "leak") {
 		t.Fatalf("error leaked the raw payload: %v", err)
@@ -314,8 +319,8 @@ func TestGraphQLErrorMessageIsBounded(t *testing.T) {
 	if !errors.As(err, &typed) {
 		t.Fatalf("error is not *errs.Error: %T", err)
 	}
-	if got := len([]rune(typed.Details["upstream_message"])); got != maxGraphQLErrorDetail {
-		t.Fatalf("detail length = %d, want %d", got, maxGraphQLErrorDetail)
+	if got := len([]rune(typed.Upstream)); got != maxGraphQLErrorDetail {
+		t.Fatalf("upstream length = %d, want %d", got, maxGraphQLErrorDetail)
 	}
 }
 

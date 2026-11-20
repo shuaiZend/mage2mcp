@@ -119,7 +119,7 @@ func (s *Service) CreateProductOption(ctx context.Context, sku string, in Custom
 				WithDetail("fallback_code", string(errs.CodeOf(fallbackErr)))
 			var typed *errs.Error
 			if errors.As(fallbackErr, &typed) {
-				if message := typed.Details["upstream_message"]; message != "" {
+				if message := typed.Details["upstream_message"]; message != "" { //nolint:staticcheck // read from a cause that may predate the server-side channel
 					e = e.WithDetail("fallback_message", message)
 				}
 			}

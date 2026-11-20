@@ -279,6 +279,13 @@ so an injected write cannot execute silently; RBAC limits what the caller can
 reach; the confirmation summary is built from validated arguments, not upstream
 text. Reads can still be influenced.
 
+**Upstream error text no longer reaches the model (SEC-10).** Magento's validation
+message and Cloudflare's GraphQL error are kept in a server-only field and logged
+with the tool and taxonomy code; they are not serialised into the tool result. GA4
+already answered with gateway-authored text. The remaining exposure is upstream
+*data* — a product name, an order comment, a WAF field — which is the content the
+tools exist to return and cannot be withheld.
+
 **Residual risk R-1.** A successful injection can influence a read-only answer or
 persuade an operator to approve a write. No test proves otherwise; an injection
 corpus is PLANNED.
