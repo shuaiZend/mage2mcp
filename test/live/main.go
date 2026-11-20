@@ -90,6 +90,14 @@ func main() {
 			fmt.Printf("%-10s %-46s %-44s %s\n", r.Status, r.Tool, r.Case, r.Detail)
 		}
 		summarize(results)
+		// A hard failure must fail the run: a harness that always exits 0 turns a
+		// red live check into a green one the moment it is wired into CI.
+		hardFailures := 0
+		for _, r := range results {
+			if r.Status == StatusFail {
+				hardFailures++
+			}
+		}
 		out := *outPath
 		if out == "" {
 			out = "test/live/out/results-" + ts + ".json"
@@ -103,6 +111,10 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("\nresults written to %s\n", out)
+		if hardFailures > 0 {
+			fmt.Fprintf(os.Stderr, "\n%d case(s) failed\n", hardFailures)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "mode %q not implemented yet\n", *mode)
 		os.Exit(2)

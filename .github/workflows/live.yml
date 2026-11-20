@@ -1,0 +1,160 @@
+# Live functional test against a real Magento store.
+#
+# The rest of CI runs against a fake Magento (test/e2e/fakemagento), so the shapes a
+# real store returns are only covered by the recorded fixtures. This workflow closes
+# that gap when an environment is configured, and skips cleanly when it is not: the
+# live store is a shared public demo, so its credentials are not in the repository and
+# the job must not fail just because they are absent.
+#
+# Required repository secrets:
+#   MAGENTO_ENDPOINT    e.g. https://demo-magento-2.auroracreation.com
+#   MAGENTO_CREDENTIAL  admin:<user>:<password>, or bearer:<token>
+# Optional repository variable:
+#   MAGENTO_STORE_CODE  store view code, defaults to the Magento default
+name: live
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "read (safe on any store) or all (writes; needs a throwaway store)"
+        type: choice
+        options: [read, all]
+        default: read
+      store_code:
+        description: "Store view code to exercise; empty uses the Magento default"
+        type: string
+        default: ""
+  schedule:
+    # Weekly, so a store that changes under us is noticed without anyone asking.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    name: live
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: mage2mcp
+          POSTGRES_PASSWORD: test-password
+          POSTGRES_DB: mage2mcp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mage2mcp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      - name: Check the live environment is configured
+        id: env
+        env:
+          ENDPOINT: ${{ secrets.MAGENTO_ENDPOINT }}
+          CREDENTIAL: ${{ secrets.MAGENTO_CREDENTIAL }}
+        run: |
+          if [ -z "$ENDPOINT" ] || [ -z "$CREDENTIAL" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Live test skipped"
+              echo ""
+              echo "MAGENTO_ENDPOINT and MAGENTO_CREDENTIAL are not set, so no real store"
+              echo "was exercised. The recorded-fixture conformance suite still ran in"
+              echo "\`verify\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Write the gateway configuration
+        if: steps.env.outputs.configured == 'true'
+        env:
+          ENDPOINT: ${{ secrets.MAGENTO_ENDPOINT }}
+          CREDENTIAL: ${{ secrets.MAGENTO_CREDENTIAL }}
+          STORE_CODE: ${{ inputs.store_code }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          store_code="${STORE_CODE:-default}"
+          # The surface is always the full one: the read matrix asserts the tool
+          # count, the write schemas and the import tools, so a deployment without
+          # writes would fail those cases for a reason that is not a gateway defect.
+          # What keeps a read run safe is -mode=read, which never issues a mutating
+          # call — not a reduced deployment.
+          cat > /tmp/config.yaml <<YAML
+          server:
+            listen: "127.0.0.1:8080"
+            max_body_bytes: 16777216
+          auth:
+            enabled: false
+          log:
+            level: "info"
+            format: "json"
+          tools:
+            writes: true
+          database:
+            url: "postgres://mage2mcp:test-password@127.0.0.1:5432/mage2mcp?sslmode=disable"
+          datasources:
+            magento:
+              enabled: true
+              instances:
+                - id: "live"
+                  endpoint: "$ENDPOINT"
+                  store_code: "$store_code"
+                  credential: "$CREDENTIAL"
+                  limits:
+                    requests_per_second: 20
+                    burst: 40
+                    max_concurrent: 4
+          YAML
+
+      - name: Start the gateway
+        if: steps.env.outputs.configured == 'true'
+        run: |
+          go build -o /tmp/mage2mcp-server ./cmd/server
+          /tmp/mage2mcp-server -config /tmp/config.yaml >/tmp/gateway.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/readyz >/dev/null 2>&1; then
+              curl -sS http://127.0.0.1:8080/readyz
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "gateway did not become ready" >&2
+          cat /tmp/gateway.log >&2
+          exit 1
+
+      - name: Run the live matrix
+        if: steps.env.outputs.configured == 'true'
+        env:
+          MCP_LIVE: "1"
+          MCP_ENDPOINT: "http://127.0.0.1:8080/mcp"
+          MCP_INSTANCE: live
+          MODE: ${{ inputs.mode }}
+        run: |
+          # Write cases need a second identity to approve confirmations. Without one
+          # the harness reports those as failed, which is honest: the environment is
+          # incomplete, not the gateway. Read mode is the default for that reason.
+          if [ "$MODE" = "all" ] && [ -z "${MCP_APPROVE_CMD:-}" ]; then
+            echo "mode=all needs MCP_APPROVE_CMD for the approval identity" >&2
+            exit 1
+          fi
+          go run -tags live ./test/live -mode "$MODE"
+
+      - name: Gateway log
+        if: always() && steps.env.outputs.configured == 'true'
+        run: cat /tmp/gateway.log || true

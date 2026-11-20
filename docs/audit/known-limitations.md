@@ -61,8 +61,15 @@ over payloads recorded from that store** (`internal/magento/conformance_test.go`
 fixtures under `test/fixtures/magento`): 12 real responses replayed unchanged, so
 the shapes a real Magento returns are under regression even though no store is
 reachable. It cannot notice a store changing its behaviour, because the fixtures are
-frozen — the full live matrix stays a manual run. This narrows the risk; it does not
-close it.
+frozen — the full live matrix still cannot be run without an environment.
+
+**Update, same day.** That gap now has a workflow: `.github/workflows/live.yml` starts
+the gateway against a real store from `MAGENTO_ENDPOINT`/`MAGENTO_CREDENTIAL`
+repository secrets and runs the read matrix, and skips cleanly with a notice when
+they are unset. It is verified end to end locally against the demo store — 43 pass,
+0 fail — but it has not run on GitHub Actions yet, and it needs the secrets to do
+anything. The full write matrix still needs an approval identity and a throwaway
+store.
 
 Consequence: Magento 2.4.9 compatibility is **unverified**, not "verified". The
 gateway may still be wrong about a field name, an id type, an extension
