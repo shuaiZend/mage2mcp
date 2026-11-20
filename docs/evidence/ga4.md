@@ -1,6 +1,6 @@
 # GA4 evidence log
 
-**Property:** `properties/354542598` ("Giztop - GA4"), account `accounts/102070720`.
+**Property:** `properties/<ga4-property-id>` ("Giztop - GA4"), account `<ga4-account-id>`.
 **Date:** 2026-11-18 (property time zone `America/Los_Angeles`; queries issued from
 `Asia/Hong_Kong`).
 **Method:** read-only Data API calls through the already-configured GA4 MCP server
@@ -94,7 +94,7 @@ parsing.
 
 ## Replayable requests
 
-Set `PROPERTY=354542598`; each body goes to
+Set `PROPERTY=<ga4-property-id>`; each body goes to
 `POST https://analyticsdata.googleapis.com/v1beta/properties/$PROPERTY:runReport` (or
 `:runRealtimeReport`). All are read-only.
 

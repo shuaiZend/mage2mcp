@@ -1,29 +1,29 @@
-# MCP tool catalog and contract
+# MCP tool contract
 
-**Status:** Phase 0 design baseline. Tool names, scopes, and permissions are
-frozen. Full input and output schemas are specified here for the Phase 1–2 tools
-and are finalized per tool in Phase 1–2; the two schemas below are the reference
-style. Additive changes are allowed; breaking changes require an ADR.
+**Status:** as-built for v0.11.1
+(2026-11-20). This document defines how tools are named, validated, authorized,
+confirmed, and versioned. The authoritative list of registered tools is
+[implemented-tools.md](implemented-tools.md); this page does not duplicate it.
 
-This document defines how tools are named, described, validated, authorized, and
-versioned, and lists the initial catalog. It is the contract between the MCP layer
-and the module services in [module-boundaries.md](module-boundaries.md).
+**Verification boundary.** Magento tools are tested against the REST contract and
+`httptest` fakes (`CONTRACT`). No live Magento integration test exists, and
+nothing here is `INTEGRATION_TESTED`.
 
 ## 1. Principles
 
 1. **No universal escape hatch.** There is no `execute_api`, `execute_sql`, or
    raw GraphQL tool. Every tool maps to a typed service method.
 2. **One tool, one intent.** A tool that does two unrelated things is split.
-3. **Schemas are strict.** `additionalProperties: false`, every required field
-   listed, enums for fixed values, patterns for identifiers.
+3. **Schemas are strict.** `additionalProperties: false`, required fields listed,
+   enums for fixed values, patterns for identifiers.
 4. **Permissions are declared, not inferred.** A tool without a permission is a
-   startup error.
-5. **Read-only by default.** Write tools are registered only when the module's
-   write capability is enabled in configuration.
-6. **Results are self-describing.** Every result states its instance, time range,
-   and data-quality metadata; analytics results also state time zone and currency.
-7. **Upstream text is data, not instructions.** Tool descriptions are static and
-   authored by the project; they never interpolate upstream content.
+   registration error.
+5. **Read-only by default.** Write tools are registered only when
+   `tools.writes: true`; every write requires two-step human approval.
+6. **Descriptions are static.** Tool descriptions are compiled constants and never
+   interpolate upstream content.
+7. **Every write is gated.** A write either uses the middleware operation gate or
+   is explicitly declared self-ledgered (the five money tools).
 
 ## 2. Naming
 
@@ -31,468 +31,245 @@ and the module services in [module-boundaries.md](module-boundaries.md).
 <module>.<domain>.<action>
 ```
 
-- `module`: `magento`, `cloudflare`, `ga4`, `unified`.
+- `module`: `magento`, `cloudflare`, `ga4`, `unified`, `platform`.
 - `domain`: the resource or analysis area (`product`, `configurable`,
   `attribute`, `inventory`, `order`, `import`, `category`, `media`, `analytics`,
-  `security`, `logs`, `ecommerce`, `traffic`, `property`).
-- `action`: a verb, lower_snake_case, no abbreviations that are not obvious
-  (`get`, `search`, `create`, `update`, `delete`, `list`, `assign`, `summary`).
+  `security`, `ecommerce`, `traffic`, `property`, `job`).
+- `action`: a lower_snake_case verb (`get`, `search`, `create`, `update`,
+  `delete`, `list`, `assign`, `summary`).
 
 Examples: `magento.product.get`, `magento.configurable.add_child`,
 `cloudflare.security.events`, `ga4.ecommerce.products`,
-`unified.traffic.compare`.
+`unified.traffic.compare`, `platform.info`.
 
-Rules:
+Rules enforced by `internal/mcp/registry`:
 
-- No version suffix in the name. Versioning is handled by additive fields and
-  deprecation (see §9).
-- No instance-specific names. Instances are a parameter.
-- Names are stable once released; renaming requires a deprecation cycle.
+- The name matches `^(magento|cloudflare|ga4|unified|platform)\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`
+  and the MCP 1–128 character `[A-Za-z0-9_.-]` rule.
+- No version suffix; no instance-specific name. Instances are a parameter.
+- Names are stable once released; a rename requires a deprecation cycle.
 
 ## 3. Tool definition fields
 
-| Field | Required | Rules |
+| Field | Required | Rule enforced by the registry |
 |---|---|---|
-| `name` | yes | §2 |
-| `title` | yes | ≤ 60 characters, human-readable |
-| `description` | yes | What it does, what it does not do, data source, read/write |
-| `inputSchema` | yes | JSON Schema 2020-12, object root, `additionalProperties: false` |
-| `outputSchema` | yes for structured results | Same dialect; every tool that returns data declares one before registration |
-| `capability` | yes | Capability ID from the owning module |
-| `permission` | yes | `read`, `write`, `destructive`, or `admin` scope string |
-| `timeout` | yes | Default 30 s; max 120 s synchronous |
-| `annotations` | yes | `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` |
-| `audit` | implicit | Identity, instance, param hash, outcome recorded for every call |
+| `Name` | yes | §2 |
+| `Title` | yes | 1–60 characters |
+| `Description` | yes | 1–1024 characters, static |
+| `InputSchema` | yes | JSON Schema object, `additionalProperties: false` |
+| `OutputSchema` | inferred | `toolerr.Add` infers it from the handler's output type when not set |
+| `Capability` | yes | Non-empty; it is metadata and is **not** used for gating |
+| `Permission` | yes | `read`, `write`, `destructive`, or `admin` |
+| `Timeout` | yes | > 0 and ≤ 120 s |
+| `RequiresConfirmation` | write/destructive | Destructive tools must set it |
+| `Annotations` | yes | `readOnlyHint` must match the permission; destructive tools must set `destructiveHint` |
 
-Annotations must be accurate. A tool that writes and is marked `readOnlyHint:
-true` is a defect, because clients use annotations to decide whether to prompt.
+A read tool must set `readOnlyHint`, must not be destructive, and must not require
+confirmation. A destructive tool must require confirmation and set
+`destructiveHint`. The registry rejects a tool that violates the contract at
+registration time; `internal/mcp/registry/registry_test.go` and
+`internal/magento/write_tools_test.go` pin it.
 
-## 4. Input schema rules
+## 4. Input schemas
 
-- Root type is `object`.
-- `additionalProperties: false` at every level.
-- Identifiers use `pattern` and `maxLength`; SKUs allow `[A-Za-z0-9._:-]` and up
-  to 128 characters; attribute codes `[a-z0-9_]+`.
-- Dates use RFC 3339 strings with an explicit zone, or a `date` string
-  (`YYYY-MM-DD`) for day-granularity reports.
-- Time ranges are `{ "start": ..., "end": ... }` and are validated server-side
-  against the instance's allowed window (default max 400 days for GA4, 31 days
-  for Cloudflare security events).
-- Pagination uses `{ "cursor": "...", "limit": N }` with `limit` capped per tool.
-- Enums are used for every fixed choice; free-form strings are allowed only where
-  the upstream accepts arbitrary text (product name, description) and are length
-  bounded.
+- Root type is `object`; `additionalProperties: false` at every level.
+- Identifiers use `pattern` and length caps: Magento SKUs `[A-Za-z0-9._:-]`,
+  attribute codes `[a-z0-9_]`, instance ids
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`.
+- Dates are RFC 3339 or `YYYY-MM-DD`; date-only windows are converted and the
+  response states the time zone where it matters.
+- Pagination is `{ "cursor": "<offset>", "limit": N }` for Magento list tools.
+  The cursor is a zero-based row offset that must be a multiple of `limit`; the
+  cap is per tool (for example 200 for product/order search, 100 for some reads).
+- Enums cover every fixed choice; free-form strings are length-bounded.
 - No field may contain a URL, SQL fragment, or GraphQL document.
 - Defaults are expressed in the schema, not hidden in the handler.
+- The request body cap is `server.max_body_bytes` (default 16 MiB, validated to
+  admit a maximum import; a write-enabled deployment must use at least 12 MiB).
+  The body is rejected with `413` above the cap.
 
-## 5. Result envelope
+## 5. Result shape
 
-Every tool returns structured content with a stable shape:
+There is **no common `{data, meta}` envelope**. Each tool returns its own typed
+JSON object. `internal/mcp/toolerr` puts that JSON in `structuredContent` and, for
+backward compatibility, the same serialized JSON in a `TextContent` block. A
+result is never silently truncated; the tool's output schema declares its fields.
 
-```json
-{
-  "data": { },
-  "meta": {
-    "instance": "store-us",
-    "source": "magento",
-    "retrieved_at": "2026-11-18T12:00:00Z",
-    "time_range": { "start": "...", "end": "...", "zone": "UTC" },
-    "quality": {
-      "sampled": false,
-      "partial": false,
-      "freshness_seconds": 3600,
-      "notes": []
-    },
-    "pagination": { "next_cursor": null, "total_known": 42 }
-  }
-}
-```
+There is no 8 KiB inline cap and no `resource_link` path. Large results are
+returned inline up to the tool's own row caps; the resource-link design is
+**PLANNED** (ADR-0017).
 
-Analytics results add `time_zone` and `currency`. A result missing `meta.source`
-or `meta.retrieved_at` is a contract violation.
+Some results carry explicit quality fields where they matter: GA4 reports include
+`time_zone` and `currency`; Cloudflare security results include `sampled` and
+`retention_days`; `magento.inventory.transfer` returns an outcome enum and
+before/after quantities. There is no universal `meta.source` or
+`meta.retrieved_at` field.
 
-Structured results are returned in `structuredContent` and, for backward
-compatibility, the same JSON is also returned in a `TextContent` block. A result
-larger than the 8 KiB inline cap is stored as an object and returned as a
-`resource_link`; it is never truncated.
+## 6. Errors
 
-Invalid arguments are rejected by the SDK as protocol errors before the handler
-runs. Failures during execution are tool errors (`isError: true`) with a typed
-`errs.Code`.
-
-Errors are returned as tool errors (`isError: true`) with:
+Invalid arguments are rejected before the handler runs: the SDK's schema check
+and `toolerr`'s compiled validator both produce a tool error with
+`invalid_argument` (the SDK may reject malformed JSON-RPC as a protocol error).
+Execution failures are tool errors (`isError: true`) with a structured envelope:
 
 ```json
 {
-  "error": {
-    "code": "confirmation_required",
-    "message": "This operation requires confirmation.",
-    "retryable": false,
-    "details": { "confirmation_id": "...", "expires_at": "2026-11-18T12:15:00Z" }
-  },
-  "meta": { "correlation_id": "..." }
+  "code": "operation_unknown",
+  "message": "the mutation may have been applied; poll the operation",
+  "details": { "operation_id": "..." },
+  "retryable": true
 }
 ```
 
-## 6. Permissions
+`retryable` is present only when true; `op` and `details` are optional. The
+closed code set is in [module-boundaries.md](module-boundaries.md) §4.2. The codes
+that matter to agents:
 
-| Scope | Meaning | Examples |
+- `confirmation_required` — create/approve the confirmation, then resubmit with
+  `confirmation_id`.
+- `operation_unknown` — the mutation may have been applied; **poll, never retry**.
+- `idempotency_key_reuse` — the key was reused with different arguments.
+- `unsupported_capability` — the instance cannot perform the operation.
+- `rate_limited`, `upstream_timeout`, `upstream_unavailable` — upstream signals;
+  check `retryable`.
+
+## 7. Permissions and scopes
+
+| Scope | Meaning | Shipped examples |
 |---|---|---|
-| `read` | Reads upstream data; no side effects | `magento.product.get`, `ga4.analytics.report` |
-| `write` | Creates or updates. **Confirmation is required by default**; an operator may disable it per tool only for additive writes that accept no free-form text | `magento.product.create`, `magento.inventory.assign` |
-| `destructive` | Deletes or overwrites. Confirmation is always required | `magento.product.delete`, `magento.configurable.remove_child`, `magento.import.start` |
-| `admin` | Inspects gateway or credential metadata only (job metadata, never upstream content or destination credentials) | `cloudflare.logs.jobs` |
+| `read` | No side effects | product/order reads, analytics reports |
+| `write` | Creates or updates; requires confirmation | product create/update, imports, document creation |
+| `destructive` | Deletes or overwrites; requires confirmation | product/category/option/media delete, order cancel, inventory transfer, source unlink |
+| `admin` | Reserved for gateway/credential metadata | none of the shipped tools use it |
 
-Roles map to scopes: `viewer` → read; `analyst` → read; `operator` → read + write;
-`admin` → read + write + destructive. A deployment may narrow this per instance.
-Cloudflare and GA4 tools are read-only except `cloudflare.logs.jobs`, which is `admin` and returns metadata only.
+The required scope is read from the registry and enforced by RBAC
+(`internal/mcp/server.authorizeCall`); an unregistered tool is denied before the
+authorizer is consulted. The default policy grants `viewer`/`analyst` read,
+`operator` write, and `admin` admin. A tool that is a write but is declared
+`read` is a defect.
 
-## 7. Catalog
+## 8. Confirmation
 
-### 7.1 Magento — products and catalog
+Every tool with `RequiresConfirmation` follows the two-step protocol:
 
-| Tool | Scope | Purpose |
+1. The first call without `confirmation_id` validates the arguments against the
+   schema, computes `sha256(canonical(args))`, and creates a pending
+   `confirmation_tokens` row bound to the tool, the instance, and the hash.
+2. The response is `confirmation_required` with an opaque id, a summary, and an
+   expiry. The requester never receives an approval secret.
+3. A different human approves it through `mage2mcp-admin` (which needs
+   `database.url`). Self-approval is rejected; the TTL is 300 s by default, 900 s
+   maximum.
+4. The requester resubmits the same arguments plus `confirmation_id`. The gateway
+   verifies state, hash, identity, tool, instance, and TTL, then consumes it in a
+   compare-and-set. For gated writes the consume is atomic with the ledger row.
+
+A confirmation for one tool or instance cannot be replayed against another. The
+approval CLI's `-as` identity is self-asserted (SEC-04, accepted): the trail is
+only as trustworthy as the operator and database access controls.
+
+## 9. Idempotency, replay, and `operation_unknown`
+
+Every write is gated by the operation ledger. The five self-ledgered money tools
+(`magento.invoice.create`, `magento.invoice.capture`, `magento.creditmemo.create`,
+`magento.order.create`, `magento.order.cancel`) accept an optional
+`idempotency_key`; the middleware derives one for the other write tools when the
+caller does not supply it.
+
+- A repeat with the same key returns the recorded result with `replayed: true`
+  and does not call upstream.
+- A repeat with the same key and different arguments is
+  `idempotency_key_reuse`.
+- An ambiguous outcome (timeout, transport failure after send, 5xx) becomes
+  `operation_unknown`; the operation is `unknown` in the ledger and is resolved by
+  the reconciler. A retry while `unknown` is refused.
+
+The ledger states and transitions are documented in
+[database-design.md](database-design.md) §3.11 and analysed in the
+[threat model](security/threat-model.md) §8.12.
+
+## 10. Inventory and conditional surface
+
+The generated inventory is [implemented-tools.md](implemented-tools.md). The
+count is configuration-dependent:
+
+| Configuration | Magento | Total |
+|---|---:|---:|
+| Read-only, no database, no bindings | 43 | 53 |
+| Read-only, no database, with bindings | 43 | 54 |
+| Writes, no database, no bindings | 95 | 105 |
+| Writes, no database, with bindings | 95 | 106 |
+| Read-only, database, no bindings | 46 | 56 |
+| Writes + database, no bindings | 101 | 111 |
+| Writes + database + bindings (maximum) | 101 | 112 |
+
+The maximum also requires single-instance Cloudflare and GA4 modules (multi-instance
+bindings are rejected; see ADR-0018).
+
+Do not build a client from this page's prose; read the inventory for names,
+scopes, timeouts, and confirmation flags.
+
+## 11. Planned, not shipped
+
+These are designed but **not registered**:
+
+- `cloudflare.logs.*` and the R2/ClickHouse raw-log path.
+- `cloudflare.zone.list`, `analytics.status_codes`, `analytics.top`,
+  `analytics.cache`, `security.bots`.
+- GA4 acquisition, landing-page, event, and funnel reports.
+- Unified bot-vs-human, WAF impact, product funnel, channel revenue, geography,
+  SKU performance, decline correlation, and SKU mapping.
+- `platform.job.get` / `platform.job.cancel` (job inspection is per feature:
+  `magento.import.status`, `.batches`, `.batch`, `.cancel`).
+- `magento.configurable.verify_storefront` — not planned; the gateway is REST
+  admin only (ADR-0022).
+- Progress notifications, cancellation propagation, `resource_link`, and
+  `notifications/tools/list_changed`.
+
+## 12. Timeouts and long-running work
+
+| Class | Timeout | Behaviour |
 |---|---|---|
-| `magento.product.get` | read | Fetch one product by SKU, including type-specific attributes **Implemented.** |
-| `magento.product.search` | read | Search products with filters, sorting, and pagination **Implemented.** |
-| `magento.product.create` | write | Create a simple, virtual, downloadable, or bundle product **Implemented.** |
-| `magento.product.update` | write | Update attributes, websites, categories, status, visibility, price **Implemented.** |
-| `magento.product.delete` | destructive | Delete a product by SKU **Implemented.** |
-| `magento.product.media_list` | read | List media entries and roles for a product |
-| `magento.product.media_upload` | write | Upload a base64 image and assign roles |
-| `magento.product.media_delete` | destructive | Delete a media entry |
-| `magento.category.list` | read | List categories with hierarchy |
-| `magento.category.get` | read | Fetch one category **Implemented.** |
-| `magento.category.create` | write | Create a category **Implemented.** |
-| `magento.category.update` | write | Update a category **Implemented.** |
-| `magento.category.assign_products` | write | Assign products to a category |
+| Read | 30 s | Returns `upstream_timeout` |
+| Write | 60 s | The ledger records the outcome; an ambiguous failure is `unknown` |
+| Bulk write / analysis | 120 s | Per-item partial-success report |
+| Import start / status / cancel | 30 s | Queues or reads a PostgreSQL job |
+| Reconciliation | worker task | Minute cadence; 8 attempts then escalation |
 
-### 7.2 Magento — attributes and EAV
+The declared timeout is applied by the MCP middleware as a real deadline. A tool
+that exceeds it returns `upstream_timeout`; for a write that becomes `unknown`,
+not `failed`. Long work is a job, not an inline call. There is no MCP
+`progressToken` or cancellation notification.
 
-| Tool | Scope | Purpose |
-|---|---|---|
-| `magento.attribute.list` | read | List product attributes with scope and type metadata |
-| `magento.attribute.get` | read | Fetch one attribute definition |
-| `magento.attribute.options` | read | List options for a select-type attribute |
-| `magento.attribute.sets` | read | List attribute sets **Implemented.** |
-| `magento.attribute.set_attributes` | read | List attributes in a set, with groups and required flags |
-
-### 7.3 Magento — configurable products
-
-| Tool | Scope | Purpose |
-|---|---|---|
-| `magento.configurable.create` | write | Create a configurable parent with variants in one validated operation **Implemented.** |
-| `magento.configurable.get` | read | Fetch a configurable product with options and children |
-| `magento.configurable.update` | write | Update parent attributes, status, visibility, websites **Implemented.** |
-| `magento.configurable.add_child` | write | Link an existing simple product as a variant **Implemented.** |
-| `magento.configurable.remove_child` | destructive | Remove a variant link (optionally delete the child) **Implemented.** |
-| `magento.configurable.children` | read | List variant children with their attribute values **Implemented.** |
-| `magento.configurable.set_options` | write | Declare the variant attributes and option ordering **Implemented.** |
-| `magento.configurable.create_variations` | write | Create missing child products from an attribute matrix **Implemented.** |
-| `magento.configurable.verify_storefront` | read | Verify variants through the storefront GraphQL API |
-
-### 7.4 Magento — inventory (MSI)
-
-| Tool | Scope | Purpose |
-|---|---|---|
-| `magento.inventory.sources` | read | List inventory sources **Implemented.** |
-| `magento.inventory.stocks` | read | List stocks and their source links **Implemented.** |
-| `magento.inventory.source_items` | read | List per-source quantities for SKUs **Implemented.** |
-| `magento.inventory.assign` | write | Assign sources and quantities to products **Implemented.** |
-| `magento.inventory.unassign` | destructive | Remove sources from products (clears quantities) **Implemented.** |
-| `magento.inventory.transfer` | destructive | Transfer quantities between sources **Implemented.** |
-
-### 7.5 Magento — orders, sales, import
-
-| Tool | Scope | Purpose |
-|---|---|---|
-| `magento.order.get` | read | Fetch one order with items and totals **Implemented.** |
-| `magento.order.search` | read | Search orders by date, status, store, customer email hash **Implemented.** |
-| `magento.order.summary` | read | Aggregated sales for a time range: revenue, orders, AOV, top SKUs **Implemented.** |
-| `magento.import.validate` | read | Validate a CSV/JSON/XLSX import through the bounded converter and return a preview **Implemented.** |
-| `magento.import.start` | destructive | Start an async import (requires confirmation) **Implemented.** |
-| `magento.import.status` | read | Batch status by `batch_id`, counts, and per-item errors **Implemented.** |
-| `magento.import.resume` | destructive | Resume a paused or failed batch from its last checkpoint; confirmation is bound to the batch id, not the payload **Implemented.** |
-| `magento.import.cancel` | write | Cancel a running import **Implemented.** |
-| `magento.import.report` | read | Export per-item results |
-
-Import endpoints (`/V1/import/csv`, `/V1/import/json`) are Adobe Commerce features.
-On Magento Open Source the import tools return `unsupported_capability` and point to
-the chunked REST write path.
-
-### 7.5a Jobs
-
-| Tool | Scope | Purpose |
-|---|---|---|
-| `platform.job.get` | read | Status, progress, attempt count, and typed error for any job the caller may see |
-| `platform.job.cancel` | write | Cooperative cancellation; terminal state is checked before each upstream call |
-
-A tool that returns a job handle always returns a `job_id` usable with these tools.
-Jobs are scoped to the caller's identity and to the instances or binding the job touches.
-
-### 7.6 Cloudflare
-
-Cloudflare exposes no "list Logpush datasets" API; dataset identifiers are static
-and documented. There is therefore no `cloudflare.logs.datasets` tool. Field-level
-entitlement for a dataset is checked per query and reported as
-`unsupported_capability` when absent.
-
-| Tool | Scope | Purpose |
-|---|---|---|
-| `cloudflare.zone.list` | read | List zones visible to the token, with plan names |
-| `cloudflare.analytics.traffic` | read | Requests, bytes, cached ratio over time by dimension **Implemented.** |
-| `cloudflare.analytics.status_codes` | read | Status-code distribution |
-| `cloudflare.analytics.top` | read | Top hostnames, paths, countries, or ASNs where the dataset exposes the field |
-| `cloudflare.analytics.cache` | read | Cache hit ratio and origin response breakdown |
-| `cloudflare.security.events` | read | Sampled security events with action and rule metadata **Implemented.** |
-| `cloudflare.security.summary` | read | Counts by action, service, and rule for a window **Implemented.** |
-| `cloudflare.security.bots` | read | Bot-related events where the plan exposes them |
-| `cloudflare.logs.query` | read | Request-level queries over the Logpush archive (R2/ClickHouse). Requires Logpush ingestion to be enabled and a `pii:read` grant to return client IPs; otherwise IPs are truncated. Bounded time range and row cap |
-| `cloudflare.logs.jobs` | admin | List Logpush job metadata (id, name, enabled, dataset, last error). The destination configuration is never returned, because it contains storage credentials. Cloudflare requires `Logs: Write` even for this GET; registered only when the optional log-inspection profile is enabled |
-
-### 7.7 GA4
-
-| Tool | Scope | Purpose |
-|---|---|---|
-| `ga4.analytics.report` | read | Validated report over allowlisted dimensions and metrics |
-| `ga4.analytics.traffic` | read | Sessions, users, views, engagement over time **Implemented.** |
-| `ga4.analytics.acquisition` | read | Channels, sources, campaigns |
-| `ga4.analytics.landing_pages` | read | Landing page performance |
-| `ga4.analytics.events` | read | Event counts and key events |
-| `ga4.analytics.realtime` | read | Last 30 minutes of activity **Implemented.** |
-| `ga4.ecommerce.overview` | read | Revenue, transactions, AOV — requires ecommerce capability **Implemented.** |
-| `ga4.ecommerce.products` | read | Item-level views, carts, purchases, revenue **Implemented.** |
-| `ga4.ecommerce.funnel` | read | View → cart → checkout → purchase with rates |
-| `ga4.property.metadata` | read | Available dimensions and metrics for the property **Implemented.** |
-| `ga4.property.capabilities` | read | Capability profile: ecommerce present, currency, time zone **Implemented.** |
-
-### 7.8 Unified analytics
-
-`instance` is always present in the schema. When exactly one instance of a module
-exists, the server fills it from configuration and the caller may omit it; the
-schema does not change between deployments.
-
-Unified tools take `binding` instead of `instance`: a named `(magento, cloudflare, ga4)`
-triple declared in configuration. The caller must be authorized for every member
-instance; a grant on one member is not sufficient. When exactly one binding exists it
-is the default and may be omitted.
-
-| Tool | Scope | Purpose |
-|---|---|---|
-| `unified.traffic.compare` | read | Cloudflare requests vs GA4 sessions over aligned windows **Implemented.** |
-| `unified.traffic.bot_vs_human` | read | Bot-classified requests vs human sessions |
-| `unified.security.waf_impact` | read | Security actions against observed traffic and sessions |
-| `unified.ecommerce.product_funnel` | read | GA4 item funnel vs Magento sales for matched SKUs |
-| `unified.ecommerce.channel_revenue` | read | GA4 channel attribution vs Magento revenue |
-| `unified.analytics.sku_performance` | read | Views, carts, orders, and revenue per SKU with mapping confidence |
-| `unified.traffic.geography` | read | Country and ASN distribution compared across Cloudflare and GA4 |
-| `unified.analytics.decline_correlation` | read | Correlate a traffic decline with a sales decline over aligned windows |
-| `unified.mapping.sku_propose` | write | Propose a GA4 itemId to Magento SKU mapping from normalized keys, with confidence |
-| `unified.mapping.sku_confirm` | destructive | Confirm or supersede a SKU mapping; requires confirmation bound to the mapping hash |
-
-## 8. Example schemas
-
-### 8.1 `magento.product.search`
-
-```json
-{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["instance"],
-  "properties": {
-    "instance": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
-    "query": { "type": "string", "maxLength": 256 },
-    "sku": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
-    "type": { "enum": ["simple", "configurable", "virtual", "downloadable", "bundle"] },
-    "status": { "enum": ["enabled", "disabled"] },
-    "category_id": { "type": "integer", "minimum": 1 },
-    "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },
-    "cursor": { "type": "string", "maxLength": 512 }
-  }
-}
-```
-
-### 8.2 `magento.configurable.create`
-
-```json
-{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["instance", "idempotency_key", "parent", "variant_attributes", "children"],
-  "properties": {
-    "instance": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
-    "parent": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["sku", "name", "attribute_set_id", "price"],
-      "properties": {
-        "sku": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
-        "name": { "type": "string", "maxLength": 255 },
-        "attribute_set_id": { "type": "integer", "minimum": 1 },
-        "price": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]{1,4})?$" },
-        "website_ids": { "type": "array", "items": { "type": "integer" }, "minItems": 1 },
-        "category_ids": { "type": "array", "items": { "type": "integer" } },
-        "status": { "enum": ["enabled", "disabled"], "default": "disabled" },
-        "visibility": { "enum": ["not_visible", "catalog", "search", "catalog_search"] }
-      }
-    },
-    "variant_attributes": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 5,
-      "items": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$" }
-    },
-    "children": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 50,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["sku", "attributes"],
-        "properties": {
-          "sku": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
-          "attributes": { "type": "object", "additionalProperties": false, "propertyNames": { "pattern": "^[a-z0-9_]{1,64}$" }, "patternProperties": { "^[a-z0-9_]{1,64}$": { "type": "string", "maxLength": 255 } } },
-          "price": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]{1,4})?$" },
-          "quantity": { "type": "integer", "minimum": 0 }
-        }
-      }
-    },
-    "idempotency_key": {
-      "type": "string",
-      "maxLength": 128,
-      "description": "Required for multi-write operations. A replay with the same key returns the original result instead of creating duplicates."
-    },
-    "confirmation_id": {
-      "type": "string",
-      "maxLength": 128,
-      "description": "Opaque id returned by a confirmation_required error. It becomes usable only after a different human identity approves it on the approval surface; the requester never receives the approval secret."
-    }
-  }
-}
-```
-
-## 9. Versioning and deprecation
+## 13. Versioning and deprecation
 
 - Tool names do not carry versions.
-- Additive changes (new optional field, new enum value) are minor releases.
+- Additive changes (a new optional field, a new enum value) are minor releases.
 - Removing or renaming a field, changing a type, or changing semantics is a
-  breaking change: it requires an ADR, a minor release with both fields, a
-  deprecation warning in the description and result metadata, and removal no
-  earlier than the next minor.
-- A deprecated tool remains registered and functional until removal; it returns
-  `meta.quality.notes: ["deprecated: use <new tool>"]`.
-- Tool schemas are covered by contract tests; a schema change without a test
-  update fails CI.
+  breaking change: an ADR, a minor release with both fields, a deprecation note in
+  the description/result, and removal no earlier than the next minor.
+- Pre-1.0, a breaking change still requires an ADR and a changelog entry.
+- A deprecated tool remains registered until removal; the deprecation is recorded
+  in the changelog and release notes.
 
-## 10. Tool description guidelines
+## 14. Description guidelines
 
-Descriptions are read by models and are a prompt-injection surface if they ever
-contain upstream data. Rules:
+Descriptions are model-facing interface text and a prompt-injection surface if
+they ever contain upstream data. Rules:
 
 - Static text only, reviewed like code.
-- State the data source and the read/write nature in the first sentence.
-- State the most important limitation (sampling, freshness, missing ecommerce).
+- First sentence: what it does, the data source, and whether it reads or writes.
+- State the most important limitation (sampling, freshness, missing ecommerce,
+  confirmation, `operation_unknown`).
 - Never include examples that look like instructions to the agent.
-- Never promise a capability that is not guaranteed by the instance.
+- Never promise a capability the instance may not have.
+- Keep descriptions under 1,024 characters; put detail in the output schema and
+  docs.
 
-## 11. Timeouts and long-running work
+## 15. Related
 
-| Operation class | Timeout | Behavior |
-|---|---|---|
-| Single read | 30 s | Return error on timeout |
-| Search with pagination | 30 s | Return partial page with cursor if upstream is slow |
-| Report (GA4, Cloudflare) | 60 s | Return `upstream_timeout` with a narrower-window hint |
-| Import start | 30 s | Returns job handle; execution is async |
-| Import status | 15 s | Reads local job state, not upstream |
-
-Long-running tools honor `progressToken` with `notifications/progress` and stop
-upstream work when `notifications/cancelled` arrives. The cancellation path is
-tested by asserting that no upstream request is issued after cancellation.
-| Storefront verification | 60 s | May wait for cache warm-up; documented |
-
-## 12. Open questions
-
-| Question | Owner | Resolution point |
-|---|---|---|
-| Whether `ga4.analytics.report` should remain public or be internal-only behind the named tools | GA4 owner | Phase 4 |
-| Whether unified tools should accept explicit source mappings or rely on configured SKU maps | Unified owner | Phase 5 |
-| Whether tool results should support MCP resource links for large payloads | MCP owner | Phase 2 |
-
-## Design names and implemented equivalents
-
-Some planned names shipped under a different name. These are not gaps:
-
-| Design name | Implemented as |
-|---|---|
-| `magento.product.media_list` | `magento.product.media` |
-| `magento.product.media_upload` | `magento.product.media.upload` |
-| `magento.product.media_delete` | `magento.product.media.delete` |
-| `magento.category.list` | `magento.category.tree` (children per parent) |
-| `magento.category.assign_products` | `magento.category.assign_product` |
-| `magento.attribute.list` | `magento.attributes.list` |
-| `magento.attribute.get` | `magento.attributes.list` (attributes of one set) |
-| `magento.attribute.options` | `magento.attributes.options` |
-| `magento.attribute.set_attributes` | `magento.attributes.list` |
-| `magento.configurable.get` | `magento.configurable.children` (parent + children) |
-| `magento.import.report` | `magento.import.batch` / `magento.import.status` |
-
-## Not planned
-
-| Design name | Reason |
-|---|---|
-| `magento.configurable.verify_storefront` | Requires a storefront GraphQL session and storefront configuration; the gateway is a REST admin surface by design (ADR-0022). |
-| `platform.job.get`, `platform.job.cancel` | Job inspection is exposed per feature (`magento.import.status`, `.batches`, `.batch`, `.cancel`); a generic job tool would leak the queue model. |
-| `unified.mapping.sku_propose`, `unified.mapping.sku_confirm` | SKU mapping is configured and reviewed as data (ADR and docs), not mutated at runtime by an agent. |
-
-## Roadmap (not yet implemented)
-
-The remaining design names are planned but not built: Cloudflare analytics/security
-breakdowns and Logpush jobs, the GA4 acquisition/landing-page/event/funnel
-reports, the unified analytics funnels and geography, and `magento.category.list`
-as a flat listing. They are additive and keep the same scope and naming grammar.
-
-## Implemented tools outside this catalog
-
-These tools exist in the gateway but were not part of the original design table
-(mostly because implementation split or renamed a planned tool):
-
-- `magento.attributes.list`
-- `magento.attributes.options`
-- `magento.category.assign_product`
-- `magento.category.products`
-- `magento.category.tree`
-- `magento.creditmemo.create`
-- `magento.creditmemo.get`
-- `magento.creditmemo.list`
-- `magento.customer.addresses`
-- `magento.customer.get`
-- `magento.customer.search`
-- `magento.import.execute`
-- `magento.inventory.status`
-- `magento.inventory.status_batch`
-- `magento.invoice.capture`
-- `magento.invoice.create`
-- `magento.invoice.get`
-- `magento.invoice.list`
-- `magento.order.comment`
-- `magento.order.create`
-- `magento.order.email`
-- `magento.order.hold`
-- `magento.order.status_history`
-- `magento.order.unhold`
-- `magento.product.links`
-- `magento.product.links.add`
-- `magento.product.links.remove`
-- `magento.product.media`
-- `magento.product.media.delete`
-- `magento.product.media.upload`
-- `magento.product.seo`
-- `magento.product.tier_prices`
-- `magento.product.tier_prices.set`
-- `magento.products.get`
-- `magento.sales.summary`
-- `magento.shipment.create`
-- `magento.shipment.get`
-- `magento.shipment.list`
-- `platform.info`
+- [implemented-tools.md](implemented-tools.md) — the generated inventory.
+- [module-boundaries.md](module-boundaries.md) — error taxonomy and module rules.
+- [database-design.md](database-design.md) — confirmation and ledger tables.
+- [security/threat-model.md](security/threat-model.md) — replay and injection analysis.
+- [mcp-conformance.md](mcp-conformance.md) — transport and protocol matrix.

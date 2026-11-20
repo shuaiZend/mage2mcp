@@ -1,6 +1,6 @@
 # ADR-0002: MCP transport, protocol version, and session model
 
-- **Status:** Accepted
+- **Status:** Accepted (as-built: SDK stateful sessions; no Redis session store, no identity binding — SEC-15)
 - **Date:** 2026-11-18
 - **Deciders:** maintainer, Architect
 - **Supersedes:** none
@@ -32,22 +32,18 @@ gateway must sit behind Cloudflare Access and a Tunnel?
 Use **Streamable HTTP** through `mcp.NewStreamableHTTPHandler`.
 
 - Protocol versions 2025-11-25 through 2026-07-28, negotiated by the SDK.
-- Stateful sessions by default, with `Mcp-Session-Id` bound to the authenticated
-  identity so a session cannot be hijacked.
-- Session state is stored in Redis under `m2m:session:{session_id}` with an idle
-  TTL (default 30 minutes), so a restart does not orphan sessions and replicas do
-  not require sticky routing. The store holds session metadata only, never
-  conversation content.
-- Multi-replica deployments share the Redis session store; sticky routing is not
-  required. Stateless mode remains available for deployments that prefer it.
+- Stateful sessions by default with `Mcp-Session-Id`. The SDK holds session state
+  in memory; there is no Redis session store. Identity binding is **not**
+  implemented (SEC-15, accepted), so multi-replica deployments require sticky
+  routing. Stateless mode remains available for deployments that prefer it.
 - Stateless mode is a documented deployment option, not the default.
 
 ## Rationale
 
-Stateful Streamable HTTP gives full protocol fidelity (progress, cancellation,
-list-changed notifications) and matches the SDK's best-supported path. Binding a
-session to the verified identity closes the session-hijacking gap that remote
-MCP servers commonly have. Stateless mode remains available because some
+Stateful Streamable HTTP matches the SDK's best-supported path. Progress,
+cancellation, and list-changed notifications are **PLANNED** (ADR-0017), and
+session identity binding is **PLANNED** (SEC-15). Stateless mode remains
+available because some
 operators will prefer simple horizontal scaling over server-initiated messages.
 
 ## Consequences
@@ -60,7 +56,7 @@ operators will prefer simple horizontal scaling over server-initiated messages.
 
 ### Negative
 
-- Redis becomes part of the MCP availability path; a Redis outage ends sessions
+- The SDK session store is in-process; a restart ends sessions and multi-replica deployments need sticky routing.
   and clients must reinitialize.
 - Session data is operationally sensitive and must be protected like other
   ephemeral state.

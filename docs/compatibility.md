@@ -2,16 +2,16 @@
 
 ## Supported components
 
-| Component | Supported | Notes |
-|---|---|---|
-| Go (building from source) | 1.26, 1.27 | The module floor is `go 1.26.0`; CI tests both. |
-| PostgreSQL | 16+ | The job queue, audit, confirmations, and instance registry live here. |
-| Magento | 2.4.x | REST `V1` with an integration token (bearer or OAuth 1.0a). The primary target is 2.4.9. |
-| Cloudflare API | current v4 + GraphQL Analytics | Read-only; one zone per instance. |
-| GA4 Data API | v1beta | Aggregate-only; one property per instance. |
-| MCP protocol | `2025-11-25` and `2026-07-28` | Negotiated by the official Go SDK; older clients are rejected. |
-| Container runtime | Docker with Compose | Distroless image, non-root, loopback-bound dev stack. |
-| Redis | not required | Removed in ADR-0019; the queue is PostgreSQL-only. |
+| Component | Supported | Status | Notes |
+|---|---|---|---|
+| Go (building from source) | 1.26, 1.27 | IMPLEMENTED | The module floor is `go 1.26.0`; the manual CI matrix tests both. |
+| PostgreSQL | 16+ | IMPLEMENTED, TESTED (PostgreSQL) | The job queue, audit, confirmations, operation ledger, and instance registry live here. |
+| Magento | 2.4.x | IMPLEMENTED, TESTED (CONTRACT) | REST `V1` with a bearer, OAuth 1.0a, or `admin:<username>:<password>` credential. The primary target is 2.4.9. **No live instance was available, so 2.4.9 compatibility is unverified.** |
+| Cloudflare API | current v4 + GraphQL Analytics | IMPLEMENTED, TESTED (CONTRACT) | Read-only; one zone per instance. Live API behaviour is unverified. |
+| GA4 Data API | v1beta | IMPLEMENTED, TESTED (CONTRACT) | Aggregate-only; one property per instance. Live API behaviour is unverified. |
+| MCP protocol | `2026-07-28`, `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05` | IMPLEMENTED, TESTED (CONTRACT) | All versions returned by `mcp.SupportedProtocolVersions()`; negotiated by the official Go SDK. The SDK is expected to reject a client that offers none of them; that rejection is not directly tested. |
+| Container runtime | Docker with Compose | IMPLEMENTED | Distroless image, non-root, loopback-bound dev stack. |
+| Redis | not required | DEPRECATED | Removed in ADR-0019; the queue is PostgreSQL-only. |
 
 ## Interface stability
 
@@ -40,7 +40,7 @@ changelog entry record it (see [Upgrade](operations/upgrade.md)).
 
 | Version | Status |
 |---|---|
-| `v0.11.0` | Supported pre-release |
+| `v0.11.x` (latest: v0.11.1) | Supported pre-release |
 | `v0.10.0` | Superseded |
 | `v0.9.0` | Superseded |
 | `v0.8.1` | Superseded |
@@ -61,12 +61,22 @@ changelog entry record it (see [Upgrade](operations/upgrade.md)).
 | `v0.0.2` | Superseded |
 | `v0.0.1` | Superseded |
 
-Security fixes are provided for the latest pre-release only until 1.0.
+Security fixes are provided for the latest pre-release only until 1.0. The
+current release is v0.11.1; older minors are superseded and receive no fixes.
+
+## Verification status
+
+There is no automated Magento integration test: every Magento control is verified
+against the REST contract and `httptest` fakes (`CONTRACT`), and the end-to-end
+harness uses a fake Magento. Cloudflare and GA4 are likewise unverified against a
+live API. Treat the first production use as a verification period and see the
+[known limitations](audit/known-limitations.md).
 
 ## Data-source caveats
 
 - Magento's REST surface differs between Adobe Commerce and Magento Open Source;
-  Adobe-only endpoints (for example `import/csv`) are not used.
+  Adobe-only endpoints (for example `import/csv`) are not used. The gateway does
+  not use Magento GraphQL; storefront verification is not implemented (ADR-0022).
 - Cloudflare bot-score fields require Bot Management; the module degrades to
   documented fields when it is absent.
 - GA4 ecommerce data is only reported after the capability probe confirms

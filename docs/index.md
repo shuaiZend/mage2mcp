@@ -1,28 +1,36 @@
 # Documentation
 
-This is the entry point for mage2mcp documentation. The project is past the
-Phase 0 design baseline: the documents below describe a running gateway, with
-design catalogues kept alongside the implemented surface.
+This is the entry point for mage2mcp documentation. The documents below
+describe the shipped v0.11.1 gateway; design catalogues are kept alongside the
+implemented surface and are marked where they are not as-built.
 
 ## Latest release
 
-[**v0.9.0**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.9.0) (2026-11-20) is the
-current release: the write-verification release that fixes W1–W6, W9, W11, and W12 against
-a live Magento demo. Read the [v0.9.0 release notes](releases/v0.9.0.md), the
+[**v0.11.1**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1) (2026-11-20) is
+the current pre-1.0 release: the production-readiness remediation. Read
+the [v0.11.1 release notes](releases/v0.11.1.md), the
 [Releases page](https://github.com/shuaiZend/mage2mcp/releases) for artifacts and
 signatures, and [CHANGELOG.md](../CHANGELOG.md) for the full history.
 
-## Verification legend
+## Status labels
 
-Every capability claim is tagged:
+Capability claims in this documentation use the audit vocabulary:
 
-| Tag | Meaning |
+| Label | Meaning |
 |---|---|
-| `[V-live]` | Verified against a live system during Phase 0 |
-| `[V-docs]` | Verified against official vendor documentation or released source |
-| `[U]` | Not yet verified; the verification step is stated |
+| **TESTED (CONTRACT)** | A test exercises the behaviour against a fake upstream or an in-process client. |
+| **TESTED (PostgreSQL)** | A test exercises the behaviour against a real PostgreSQL instance. |
+| **IMPLEMENTED** | Code exists; no direct test or only partial coverage is stated. |
+| **PLANNED** | Designed, not implemented; the residual risk is in [known limitations](audit/known-limitations.md). |
+| **DEPRECATED** | Superseded; the old behaviour is no longer supported. |
 
-The consolidated evidence is in [development/research-baseline.md](development/research-baseline.md).
+`INTEGRATION_TESTED` is not used: no live Magento integration test exists. The
+integration documents additionally use source tags (`[V-live]`, `[V-docs]`,
+`[U]`) for the provenance of vendor facts; those tags do not imply that the
+gateway has an integration test.
+
+The consolidated evidence is in [development/research-baseline.md](development/research-baseline.md)
+and the release audit is in [audit/](audit/).
 
 ## Start here
 
@@ -43,6 +51,7 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Production acceptance](operations/production-acceptance.md) | Read-only acceptance against a live Magento instance and the fixes it produced |
 | [Actions bump review](development/actions-bump-review.md) | Review of the GitHub Actions major-version bump (PR #46) |
 | [Product copy run](development/product-copy-run.md) | End-to-end product copy on the demo and the 11 MCP defects it found |
+| [v0.11.1 release notes](releases/v0.11.1.md) | Remediation highlights, breaking changes, upgrade and verification checklist |
 | [v0.11.0 release notes](releases/v0.11.0.md) | Highlights, breaking changes, upgrade and verification checklist |
 | [v0.10.0 release notes](releases/v0.10.0.md) | Previous release notes |
 | [v0.9.0 release notes](releases/v0.9.0.md) | Previous release notes |
@@ -75,7 +84,7 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | Document | Scope |
 |---|---|
 | [Threat model](security/threat-model.md) | Assets, trust boundaries, STRIDE, attack trees, mitigations |
-| [Security review](security/security-review.md) | Control matrix, authn/authz design, residual risk |
+| [Security review](security/security-review.md) | As-built control matrix, status labels, residual risk |
 
 ## Development
 
@@ -88,7 +97,7 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [License policy](development/license-policy.md) | License choice, dependency matrix, SBOM |
 | [Risk register](development/risk-register.md) | Open risks and mitigations |
 | [Handoff](development/handoff.md) | Current state, next steps, known limitations |
-| [Reviews](reviews/phase-0-report.md) | Phase 0 report and independent review records |
+| [Reviews](reviews/phase-0-report.md) | Phase 0 report (historical) and independent review records |
 | [Research baseline](development/research-baseline.md) | Verified facts and sources |
 
 ## Module guides
@@ -117,11 +126,15 @@ has one; a change to an accepted decision requires a new ADR that supersedes it.
 
 ## Evidence
 
-Sanitized records of Phase 0 live verification:
+Sanitized verification records and the release audit:
 
 - [Magento evidence](evidence/magento.md)
 - [Cloudflare evidence](evidence/cloudflare.md)
 - [GA4 evidence](evidence/ga4.md)
+- [Production acceptance](operations/production-acceptance.md) (read-only, live store)
+- [Magento write verification](development/magento-write-verification.md) (disposable demo)
+- [Known limitations](audit/known-limitations.md)
+- [Documentation consistency audit](audit/documentation-consistency.md)
 
 ## Project policies
 

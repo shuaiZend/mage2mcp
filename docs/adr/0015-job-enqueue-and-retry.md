@@ -1,6 +1,6 @@
 # ADR-0015: Job enqueue path and retry semantics
 
-- **Status:** Accepted; queue storage superseded by ADR-0019 (PostgreSQL, no Redis)
+- **Status:** Accepted; queue storage superseded by ADR-0019 (PostgreSQL, no Redis). Enqueue/retry gating implemented in `internal/jobs`.
 - **Date:** 2026-11-19
 - **Deciders:** maintainer, Architect
 - **Supersedes:** none
@@ -40,9 +40,10 @@ Adopt option 3 and tighten retries.
   implementation.
 - `jobs.instance_id` becomes nullable and `jobs.binding_id` is added, with a CHECK
   that enforces exactly one scope per module class (`platform` jobs have neither).
-- Retry is gated on `Retryable` **and** on the tool's `idempotentHint`. Write and
-  import jobs default to `max_attempts = 1`; read and report jobs may retry. The
-  retry decision is recorded on `job_attempts`.
+- Retry is gated on `Retryable` **and** the task's `Idempotent` flag, and an
+  ambiguous outcome ("may have been applied") is never retried regardless. Write
+  and import jobs default to `max_attempts = 1`; a retry increments
+  `jobs.attempt_count` and records `jobs.last_error_code`.
 - Results larger than the 8 KiB inline cap are written to object storage and
   referenced by `result_ref`; the inline `result` column is not silently truncated.
 - `platform.job.get` and `platform.job.cancel` are part of the tool catalog, so a
@@ -78,11 +79,11 @@ Low: one interface, one column, one policy table.
 
 ## Follow-up
 
-- Phase 1: implement the enqueuer, the job tools, and retry gating.
-- Phase 3: object-storage result references for large reports.
+- Object-storage result references for large reports are **PLANNED** (ADR-0017
+  resource links); `jobs.result_ref` exists but no object-storage path ships.
 
 ## References
 
 - [Module boundaries](../module-boundaries.md) section 4.3
-- [Database design](../database-design.md) jobs, job_attempts
+- [Database design](../database-design.md) jobs, operations
 - [ADR-0010](0010-error-model-and-tool-contract.md)

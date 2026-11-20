@@ -13,8 +13,9 @@ them. From 1.0, tool names, schemas, and configuration keys are stable.
 2. Back up PostgreSQL (see [backup and restore](backup-restore.md)).
 3. Pull the new image or build the new binaries.
 4. Stop the worker, then the server (graceful shutdown drains in-flight calls).
-5. Start the new server once: embedded migrations run automatically and are
-   recorded in `schema_migrations`.
+5. Start the new server once: the six embedded migrations run automatically
+   under an advisory lock and are recorded in `schema_migrations` (there are no
+   down migrations; rollback is a database restore).
 6. Start the worker.
 7. Verify `/healthz`, `/readyz`, and one read-only tool call.
 8. Check the changelog's verification section and the release notes for
@@ -33,8 +34,16 @@ them. From 1.0, tool names, schemas, and configuration keys are stable.
 
 Unknown configuration keys are rejected, so an old config file fails loudly
 rather than silently ignoring a new control. Add new keys from
-`configs/config.example.yaml` before upgrading. Secrets are never part of the
-config file; rotate them through the secret manager.
+`configs/config.production.template.yaml` before upgrading. `server.public_url`
+was removed; delete it if present. Secrets are never part of the config file;
+rotate them through the secret manager.
+
+Two requirements are enforced at startup:
+
+- `database.url` is required for confirmations and async imports; without it the
+  import tools are not registered and the money tools fail closed.
+- A write-enabled deployment needs `server.max_body_bytes` ≥ 12 MiB (default
+  16 MiB); a smaller cap fails validation.
 
 ## Compatibility
 

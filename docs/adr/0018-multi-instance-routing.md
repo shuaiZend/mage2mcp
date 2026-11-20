@@ -1,6 +1,6 @@
 # ADR-0018: Multi-instance routing and per-instance authorization
 
-- **Status:** Accepted (implementation in progress)
+- **Status:** Accepted (per-tool routing implemented; unified bindings still single-instance — see Implementation progress)
 - **Date:** 2026-11-19
 - **Deciders:** maintainer, Architect
 - **Supersedes:** the single-instance limitation documented in the module READMEs
@@ -112,7 +112,19 @@ tests. The pattern is identical across modules.
 | Magento resolver (`internal/magento/resolver.go`) with tests | Done |
 | Magento read tools resolve `instance`; multi-store configuration enabled for reads | Done |
 | Magento write tools resolve `instance`; multi-store writes enabled | Done |
-| Configuration accepts N instances; module READMEs updated | Planned |
+| Configuration accepts N instances; module READMEs updated | Done |
+| Unified bindings resolve more than one Cloudflare zone or GA4 property | **Not implemented** |
+
+### Current limitation (2026-11-20)
+
+Per-tool routing is complete for Magento (reads and writes), Cloudflare, and GA4.
+Unified analytics is not: `unified.NewService` receives one traffic provider and
+one sessions provider, so a `bindings` configuration must have exactly one
+Cloudflare instance and exactly one GA4 instance. Magento may have several
+stores. Configuration validation rejects any other shape with an actionable
+error. The limitation is documented in
+[docs/configuration.md](../configuration.md#bindings) and the handoff's known
+limitations.
 
 ## Follow-up
 

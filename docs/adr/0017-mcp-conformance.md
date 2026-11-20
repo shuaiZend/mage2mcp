@@ -1,6 +1,6 @@
 # ADR-0017: MCP conformance requirements
 
-- **Status:** Accepted
+- **Status:** Accepted (partial: structured content, error envelope, output schemas ship; resource links, progress, cancellation, `platform.job.cancel`, session binding, and list-changed are PLANNED)
 - **Date:** 2026-11-19
 - **Deciders:** maintainer, Architect, MCP owner
 - **Supersedes:** none
@@ -38,16 +38,16 @@ Adopt option 2. The normative list is [mcp-conformance.md](../mcp-conformance.md
 
 - Every structured tool declares an output schema and returns `structuredContent`
   plus a serialized JSON `TextContent` fallback.
-- Results above the inline cap return a `resource_link` backed by object storage;
-  they are never silently truncated.
-- `progressToken` is honored and `notifications/cancelled` cancels the in-flight
-  context; long work is a job with `platform.job.cancel`.
+- Results above an inline cap were to return a `resource_link` backed by object
+  storage. **Not implemented**; results are returned inline within per-tool caps.
+- `progressToken`/`notifications/cancelled` and `platform.job.cancel` were to
+  cancel long work. **Not implemented**; long work is a polled job.
 - Invalid arguments are protocol errors (SDK-enforced); execution failures are
   tool errors with `isError: true` and a typed code.
 - The caller's token is never forwarded upstream (no token passthrough); `aud` is
   bound to the gateway and instance.
-- Session IDs are cryptographically random, bound to the verified identity, and
-  terminated on `DELETE` or idle timeout.
+- Session IDs are cryptographically random (SDK) but are **not** bound to the
+  verified identity (SEC-15, PLANNED); they expire on the SDK's idle timeout.
 - Origin validation, DNS-rebinding protection, and localhost protection stay
   enabled; disabling any of them requires a new ADR.
 - Tool descriptions follow the quality rules in the conformance document.

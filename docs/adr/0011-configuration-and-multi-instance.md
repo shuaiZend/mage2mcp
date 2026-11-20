@@ -1,6 +1,6 @@
 # ADR-0011: Configuration and multi-instance model
 
-- **Status:** Accepted
+- **Status:** Accepted (per-instance routing implemented; literal-secret rejection and per-instance disable/degraded readiness are PLANNED)
 - **Date:** 2026-11-18
 - **Deciders:** maintainer, Architect
 - **Supersedes:** none
@@ -37,10 +37,10 @@ Adopt option 3.
   not just the first.
 - Every instance has a stable `id`. Tools take `instance` as a required parameter
   when more than one instance of that module exists.
-- An invalid or unreachable instance is disabled individually; the process starts
-  if at least one module is usable, and `/readyz` reports degraded.
-- Secrets are resolved from environment or a secret-manager adapter; literal
-  secrets in YAML are rejected.
+- An invalid instance fails startup; per-instance disable and a degraded
+  `/readyz` are **PLANNED**.
+- Credentials are `${VAR}` references by convention. The loader does not reject a
+  literal secret (PLANNED); the guarantee is procedural.
 - Configuration is mounted read-only. No configuration is written back by the
   server.
 

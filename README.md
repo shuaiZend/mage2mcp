@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/shuaiZend/mage2mcp?include_prereleases&sort=semver)](https://github.com/shuaiZend/mage2mcp/releases)
-[![Latest release v0.9.0](https://img.shields.io/badge/latest-v0.9.0-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0)
+[![Latest release v0.11.1](https://img.shields.io/badge/latest-v0.11.1-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](go.mod)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25%20%7C%202026--07--28-7c3aed.svg)](docs/mcp-conformance.md)
@@ -12,30 +12,40 @@ One endpoint, one auth model, one audit trail — with typed, documented tools t
 agents can actually use safely. Writes are two-step human-approved; reads are
 read-only by default and PII-safe.
 
-> **Status: v0.11.0 (pre-1.0).** 112 tools (101 Magento). Validated against a live
-> Magento production store: 23 read-only checks plus a 30-day business drill-down
-> (924 orders) with no writes. Releases ship signed artifacts, SBOM, and a
-> multi-arch image. Interfaces may still change with an ADR before 1.0.
+> **Status: v0.11.1 (pre-1.0).** Up to 112 tools (101 Magento) at full
+> configuration; the default read-only configuration registers 54. Read-only
+> acceptance against a live Magento production store covered 23 checks and a
+> 30-day business drill-down (924 orders) with no writes; write verification ran
+> against a disposable demo. No live Magento integration test exists. Releases
+> ship signed artifacts, SBOM, and a multi-arch image. Interfaces may still
+> change with an ADR before 1.0. See [verification status](#verification-status).
 
 ## Why mage2mcp
 
 - **Typed contracts, not prompt glue.** Every tool has a stable name, JSON Schema,
   permission scope, timeout, and annotations. A contract test pins the Magento
-  tool names; a docs test fails if the catalog drifts.
+  tool names; a docs test fails if the Magento catalog drifts.
 - **Safe writes.** Writes require an opaque confirmation approved by a *different*
-  identity. Arguments are validated against the tool schema **before** the approval
-  is created, and the approval is bound to the canonical argument hash.
+  identity, bound to the canonical argument hash, the tool, and the instance.
+  Every write is gated by a durable operation ledger with fencing and idempotency
+  keys; an ambiguous outcome becomes `unknown` and is reconciled, never retried.
 - **PII stays inside Magento.** Customer and address reads return country/region/
   default flags only; order reads omit email, addresses, and payment data.
 - **Built for operations.** PostgreSQL job queue (no Redis), advisory-locked
-  migrations, async imports with idempotency, live progress, resumable failed rows,
-  and 30-day batch retention.
+  migrations, an operation ledger with a reconciler, async imports with
+  idempotency, live progress, resumable failed rows, and 30-day batch retention.
 - **Multi-instance.** Several Magento stores, Cloudflare zones, and GA4 properties
-  behind one gateway with per-instance authorization and audit.
+  behind one gateway with per-instance authorization and audit. Unified analytics
+  bindings currently require exactly one Cloudflare zone and one GA4 property.
 
-## Tool surface (112 tools)
+## Tool surface (up to 112 tools)
 
-| Module | Tools | Examples |
+The count is a function of configuration: the default read-only configuration
+registers 54 tools (43 Magento); `tools.writes: true` adds 52 Magento write
+tools, `database.url` adds 6 asynchronous import tools, and a `bindings` block
+adds the unified tool. The table below is the maximal surface.
+
+| Module | Tools at full configuration | Examples |
 |---|---:|---|
 | Magento 2 | 101 | products, configurable variants, categories, MSI inventory, orders, invoices/shipments/credit memos, customers, media, imports, business analysis |
 | Cloudflare | 3 | zone traffic, security events, security summary |
@@ -65,19 +75,32 @@ Highlights of the Magento surface:
 
 | Item | State |
 |---|---|
-| Source code | Production-grade Go gateway: MCP server, auth, RBAC, audit, metrics, PostgreSQL queue, Docker |
-| Tests and CI | Unit, integration (PostgreSQL), race, lint, security, supply-chain, and a full end-to-end job on every PR |
-| Releases | [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0) with signed artifacts, checksums, SBOM, multi-arch GHCR image |
-| Production validation | Read-only acceptance and a 30-day business report against a live Magento store |
-| Documentation | Architecture, ADRs (22), tool catalog, field reference, compatibility, operations, release notes |
+| Source code | Go gateway: MCP server, auth, RBAC, audit, metrics, PostgreSQL queue and operation ledger, Docker |
+| Tests and CI | Unit, race, contract, PostgreSQL-backed and fake-Magento e2e tests; GitHub CI is a manual pre-release workflow, `scripts/local-ci.sh` is the day-to-day gate |
+| Releases | [v0.11.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1) with signed artifacts, checksums, SBOM, multi-arch GHCR image |
+| Verification | Read-only acceptance against a live Magento store (23 checks, 924-order business report); write verification on a disposable demo; **no live Magento integration test** |
+| Documentation | Architecture, ADRs (22), tool catalog, field reference, configuration, compatibility, operations, release notes |
 | License and community | [Apache-2.0](LICENSE), [NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md) |
+
+## Verification status
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Read-only acceptance against a live Magento production store | TESTED (manual, read-only; no automated test) | [production acceptance](docs/operations/production-acceptance.md) |
+| 30-day business drill-down (924 orders) | TESTED (manual, read-only) | [business analysis report](docs/reports/business-analysis-2026-11-20.html) |
+| Write verification | TESTED (manual, disposable demo; v0.8.1 build) | [Magento write verification](docs/development/magento-write-verification.md) |
+| Automated Magento integration test | PLANNED | none exists (MAG-23); all Magento coverage is CONTRACT |
+| Cloudflare / GA4 live API behaviour | PLANNED (unverified) | no live instance was available |
+| Unit, contract, PostgreSQL and fake-Magento e2e tests | TESTED | `scripts/local-ci.sh`, `test/e2e/` |
 
 ## Releases
 
-The latest release is [**v0.9.0**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0)
-(2026-11-20), the write-verification release: it fixes W1–W6, W9, W11, and W12 against
-a live Magento demo, surfaces upstream 400/422 messages, and renames the
-`magento.category.tree` output key to `categories`.
+The latest release is [**v0.11.1**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1)
+(2026-11-20), the production-readiness remediation: a full audit of the security,
+Magento, reliability, MCP, performance and documentation surfaces, with every
+confirmed P0 fixed and independently reviewed. It adds the operation ledger, job
+fencing, per-instance outbound limits and a registry-generated tool inventory.
+Read the [v0.11.1 release notes](docs/releases/v0.11.1.md).
 
 Every tagged release publishes:
 
@@ -100,7 +123,10 @@ sha256sum --check checksums.txt
 
 | Release | Notes | Highlights |
 |---|---|---|
-| [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0) | [release notes](docs/releases/v0.9.0.md) | Write verification fixes W1–W6, W9, W11, W12; upstream error messages |
+| [v0.11.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1) | [release notes](docs/releases/v0.11.1.md) | Operation ledger and reconciler; RBAC scope ladder enforced; confirmation bound to tool and instance; job fencing; per-instance limits; generated tool inventory |
+| [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0) | [release notes](docs/releases/v0.11.0.md) | Write-safety prompt; product-copy fixes D1–D3, D5, D6, D8–D11; admin credential form |
+| [v0.10.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0) | [release notes](docs/releases/v0.10.0.md) | Admin-credential auto-token; CI speed-ups; Actions refresh; katex advisory |
+| [v0.9.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.9.0) | [release notes](docs/releases/v0.9.0.md) | Write-verification fixes W1–W6, W9, W11, W12; upstream error messages |
 | [v0.8.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.1) | [release notes](docs/releases/v0.8.1.md) | Structured tool errors (G12) |
 | [v0.8.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.0) | [release notes](docs/releases/v0.8.0.md) | Business analysis fixes; `store.configs` and `categories.flat` |
 
@@ -116,6 +142,7 @@ also recorded in [CHANGELOG.md](CHANGELOG.md).
 | [docs/mcp-tools.md](docs/mcp-tools.md) | Design catalog with implementation status |
 | [docs/implemented-tools.md](docs/implemented-tools.md) | The 112 tools registered today |
 | [docs/magento-fields.md](docs/magento-fields.md) | Field requirements and SEO guidance |
+| [docs/configuration.md](docs/configuration.md) | Every configuration key, default, and environment override |
 | [docs/compatibility.md](docs/compatibility.md) | Supported components and stability promises |
 | [docs/operations/production-acceptance.md](docs/operations/production-acceptance.md) | Live read-only acceptance and fixes |
 | [docs/write-safety.md](docs/write-safety.md) | Catalog/URL warnings and the `write_safety` prompt |
@@ -127,9 +154,8 @@ also recorded in [CHANGELOG.md](CHANGELOG.md).
 # 1. Build
 go build -o bin/mage2mcp ./cmd/server
 
-# 2. Configure: copy the example, then for a loopback-only development run set
-#    `auth.enabled: false`. The gateway refuses to start with auth disabled on a
-#    non-loopback listener.
+# 2. Configure: the development example is loopback-only, authentication off,
+#    and enables no data source, so it starts as shipped.
 cp configs/config.example.yaml config.yaml
 
 # 3. Run
@@ -140,9 +166,14 @@ curl -s localhost:8080/healthz
 curl -s localhost:8080/readyz
 ```
 
-The MCP endpoint is `POST /mcp` (Streamable HTTP). In production, run behind a
-Cloudflare Tunnel and keep authentication enabled with the `MAGE2MCP_AUTH_*`
-environment variables.
+`/readyz` reports the number of registry tools. `platform.info` is itself a
+registry tool, so a fresh development start reports `"tools":1` (that one tool);
+enable a data source in `config.yaml` (see
+[docs/configuration.md](docs/configuration.md)) to expose its tools. It disables authentication and refuses to start on a non-loopback
+listener. For production, copy
+[`configs/config.production.template.yaml`](configs/config.production.template.yaml),
+set the `MAGE2MCP_AUTH_*` and `MAGE2MCP_DATABASE_URL` values, and run behind a
+Cloudflare Tunnel. The MCP endpoint is `POST /mcp` (Streamable HTTP).
 
 ### Docker
 
@@ -168,8 +199,12 @@ For a production-shaped stack every secret and Access value is required:
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-Never expose the development stack to a network: it runs with authentication
-disabled and fixed placeholder passwords.
+The baked container configuration enables no data source, so either stack
+exposes only `platform.info` until you mount a real configuration over
+`/etc/mage2mcp/config.yaml` (see
+[docs/configuration.md](docs/configuration.md)). Never expose the development
+stack to a network: it runs with authentication disabled and fixed placeholder
+passwords.
 
 ### High-risk operations
 
@@ -210,7 +245,7 @@ configures, and audits.
 
 - The gateway runs as its own service, inside the operator's infrastructure. Magento is
   not modified, and no plugin is installed in it.
-- It talks only to official upstream APIs — Magento REST and GraphQL, the Cloudflare
+- It talks only to official upstream APIs — Magento REST (no GraphQL client; ADR-0022), the Cloudflare
   API, and the GA4 Data API. It never connects to the Magento database.
 - Each upstream is a separate **instance** with its own credentials and grants, so a
   single gateway can serve several stores, zones, and properties without sharing tokens.
@@ -241,17 +276,17 @@ flowchart TB
   magento --> unified
   cloudflare --> unified
   ga4 --> unified
-  magento --> mageapi["Magento REST / GraphQL"]
+  magento --> mageapi["Magento REST"]
   cloudflare --> cfapi["Cloudflare API"]
   ga4 --> gaapi["GA4 Data API"]
   gateway -.-> pg[("PostgreSQL<br/>config, audit, jobs")]
   gateway -.-> pgjobs[("PostgreSQL<br/>job queue")]
 ```
 
-The gateway will use the official
+The gateway uses the official
 [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) and the Streamable HTTP
-transport. SDK v1.8.0 supports MCP protocol version `2026-07-28` and negotiates down to
-`2025-11-25`.
+transport. SDK v1.8.0 negotiates its full supported list, currently `2026-07-28`
+through `2024-11-05` (five versions); `platform.info` reports that list verbatim.
 
 In the intended design, a tool call follows one path:
 
@@ -296,39 +331,38 @@ Request flow: client → auth → RBAC → schema validation → confirmation ga
 
 ## Security posture
 
-The design specifies the following properties, none of which is implemented yet:
+The shipped posture, with status labels (the full control matrix is in
+[`docs/security/security-review.md`](docs/security/security-review.md)). Labels
+are IMPLEMENTED, TESTED, PLANNED, and DEPRECATED; a parenthetical qualifies the
+label (CONTRACT, PostgreSQL, PARTIAL, deployment control, operator-configured):
 
-- **Read-only by default.** Write tools are disabled unless an operator explicitly
-  enables a write profile; the default configuration exposes no write capability.
-- **Confirmation for writes.** High-risk operations require a confirmation token bound to
-  a hash of the canonicalized parameters. The confirmation is invalid if any parameter
-  changes, so what the operator approves is what executes.
-- **Audit.** Every tool call is recorded with actor, tool, instance, parameter hash,
-  outcome, and duration. Secrets and sensitive values are redacted before storage.
-- **No plugin in Magento.** The gateway cannot alter Magento code, and Magento upgrades
-  do not depend on it.
-- **No direct database access.** All reads and writes go through official APIs, so
-  business logic, validation, and permissions are preserved.
-- **Least-privilege tokens.** Magento integration credentials scoped to the required
-  resources; Cloudflare API tokens scoped to read-only analytics and zone access by
-  default; and GA4 service accounts with Viewer access. The opt-in Logpush inspection
-  profile carries `Logs Write` only because Cloudflare requires it for read calls; the
-  code has no mutation path.
-- **Secrets stay outside configuration files.** Credentials are supplied through the
-  environment or a secret manager and are never logged or returned in tool output.
-- **No escape hatches.** There is no generic API passthrough and no SQL execution tool.
+| Property | Status | Notes |
+|---|---|---|
+| Read-only by default | IMPLEMENTED, TESTED | Write tools are registered only when `tools.writes: true`; the default exposes no write capability. |
+| Confirmation for writes | IMPLEMENTED, TESTED | Bound to the tool, the instance, and the canonical argument hash; approved by a different identity; single use; 300 s default / 900 s cap. |
+| Operation ledger and replay control | IMPLEMENTED, TESTED (PostgreSQL) | Fencing, idempotency keys, `UNKNOWN` on ambiguity, a reconciler, and recorded-result replay for every write. |
+| Audit | IMPLEMENTED (partial) | Intent and outcome rows; denials recorded as denials; secrets redacted. No hash chain yet, and the five self-ledgered money tools have an audit-outcome gap (REL-16-R). |
+| No plugin in Magento, no direct database access | IMPLEMENTED | All access is through the official APIs. |
+| Least-privilege tokens | IMPLEMENTED (operator-configured) | Use an ACL-scoped Magento integration or API-only admin, a read-only Cloudflare token, and a GA4 Viewer service account. |
+| Secrets outside configuration | IMPLEMENTED (partial) | Credentials are `${VAR}` references by convention; the loader does not reject a literal secret. Never commit one. |
+| No escape hatches | IMPLEMENTED | No generic API passthrough and no SQL execution tool. |
+| Gateway rate limiting | PLANNED | Limit concurrency at the agent or edge; see the [known limitations](docs/audit/known-limitations.md). |
+| Session identity binding | PLANNED | A stolen session id is usable for its lifetime (SEC-15). |
+| Tamper-evident audit chain | PLANNED | Restrict database grants and export to an immutable sink if you need non-repudiation. |
+| Origin lockdown / metrics isolation | DEPLOYMENT CONTROL | The gateway does not enforce Cloudflare-only origin access and serves `/metrics` on the same listener. |
 
 The full threat model, trust boundaries, and mitigations live in
-[`docs/security/threat-model.md`](docs/security/threat-model.md). The security review
-process is described in
-[`docs/security/security-review.md`](docs/security/security-review.md).
+[`docs/security/threat-model.md`](docs/security/threat-model.md); the control
+matrix and residual risks are in
+[`docs/security/security-review.md`](docs/security/security-review.md) and
+[`docs/audit/known-limitations.md`](docs/audit/known-limitations.md).
 
 ## Design principles
 
 1. **Modular boundaries.** Each data source is an independent module that implements the
    shared data source contract and declares its capabilities. Modules do not import each
    other's internals, and the core does not know vendor-specific details.
-2. **Official APIs only.** Magento REST and GraphQL, the Cloudflare API, and the GA4 Data
+2. **Official APIs only.** Magento REST (no GraphQL client), the Cloudflare API, and the GA4 Data
    API. No scraping, no database access, no plugin, no undocumented endpoints.
 3. **Typed tools, no escape hatches.** Every tool has a fixed name, a JSON Schema input
    and output, a risk class, and required permissions. A generic `execute_api` or `execute_sql`
@@ -351,27 +385,27 @@ process is described in
 These are target combinations for v0.x, not tested configurations. The vendor
 documentation behind each constraint is cited in the corresponding integration document.
 
-| Component | Target support | Notes |
-|---|---|---|
-| Magento Open Source and Adobe Commerce | 2.4.x; 2.4.9 is the primary target | REST with integration OAuth 1.0a credentials (bearer tokens only when explicitly enabled). GraphQL is used for read-only storefront verification |
-| Adobe Commerce as a Cloud Service | Not supported in v0.x | Uses Adobe IMS OAuth and does not support traditional token generation |
-| Cloudflare plans | Free, Pro, Business, Enterprise | Dataset and field availability differs by plan |
-| Cloudflare GraphQL Analytics | Planned | Default limit is 300 queries per 5-minute window; a zone-scoped query may cover up to 10 zones, an account-scoped query exactly one account |
-| Cloudflare Security Events | Planned | Backed by `firewallEventsAdaptive`; retention up to 31 days; results may be sampled |
-| Cloudflare Logpush | Opt-in job inventory and log analysis, read-only | Usage-billed with 25 GB/month included; no backfill; logs are lost if a job fails |
-| Cloudflare raw logs | Optional: R2 + ClickHouse | Only for request-level Logpush analysis; PostgreSQL never stores raw logs |
-| Cloudflare bot signals | Only where entitled | Bot score, bot tags, and verified-bot fields require Bot Management |
-| GA4 | Data API v1 | Aggregate-only; raw events require a BigQuery export |
-| GA4 quotas | Read and respected per property | A reference property reported 200,000 tokens/day, 40,000 tokens/hour, and 10 concurrent requests |
-| MCP protocol | Planned: `2026-07-28`, negotiating down to `2025-11-25` | Provided by MCP Go SDK v1.8.0 |
-| Go | 1.26 or newer | SDK v1.8.0 requires `go 1.25.0`; current direct dependencies require 1.26; 1.27.x is the current toolchain |
-| PostgreSQL | 16 or newer | Configuration metadata, audit log, job state |
-| Container runtime | Docker with Compose | Local stack and deployment |
+| Component | Target support | Status | Notes |
+|---|---|---|---|
+| Magento Open Source and Adobe Commerce | 2.4.x; 2.4.9 is the primary target | IMPLEMENTED, TESTED (CONTRACT) | REST with a bearer, OAuth 1.0a, or admin auto-token credential. No Magento GraphQL client; storefront verification is not implemented (ADR-0022). No live 2.4.9 instance was available, so compatibility is unverified. |
+| Adobe Commerce as a Cloud Service | Not supported in v0.x | UNSUPPORTED | Uses Adobe IMS OAuth and does not support traditional token generation. |
+| Cloudflare plans | Free, Pro, Business, Enterprise | IMPLEMENTED | Dataset and field availability differs by plan. |
+| Cloudflare GraphQL Analytics | Implemented | IMPLEMENTED, TESTED (CONTRACT) | Documented limit is 300 queries per 5-minute window; the gateway does not enforce it (PLANNED quota accounting). |
+| Cloudflare Security Events | Implemented | IMPLEMENTED, TESTED (CONTRACT) | Backed by `firewallEventsAdaptive`; retention up to 31 days; results may be sampled. |
+| Cloudflare Logpush | Job inventory and log analysis | PLANNED | No log tools ship; `internal/logs/` is empty. |
+| Cloudflare raw logs | R2 + ClickHouse | PLANNED | Not implemented; PostgreSQL never stores raw logs. |
+| Cloudflare bot signals | Only where entitled | IMPLEMENTED | Bot score, bot tags, and verified-bot fields require Bot Management. |
+| GA4 | Data API v1 | IMPLEMENTED, TESTED (CONTRACT) | Aggregate-only; raw events require a BigQuery export. |
+| GA4 quotas | Documented per property | PLANNED (not enforced) | A reference property reported 200,000 tokens/day, 40,000 tokens/hour, and 10 concurrent requests. The gateway does not account for them. |
+| MCP protocol | `2026-07-28` through `2024-11-05` (five SDK-supported versions) | IMPLEMENTED, TESTED (CONTRACT) | Provided by MCP Go SDK v1.8.0; `platform.info` reports the list. |
+| Go | 1.26 or newer | IMPLEMENTED | SDK v1.8.0 requires `go 1.25.0`; current direct dependencies require 1.26; 1.27.x is the current toolchain. |
+| PostgreSQL | 16 or newer | IMPLEMENTED, TESTED (PostgreSQL) | Configuration metadata, audit log, confirmations, operation ledger, job state. |
+| Container runtime | Docker with Compose | IMPLEMENTED | Local stack and deployment. |
 
 ## Full documentation index
 
-The documentation is written in public and kept in sync with the code; contract
-tests fail when the tool catalog and the docs drift.
+The documentation is written in public and kept in sync with the code; a
+contract test fails when the Magento tool catalog and the docs drift.
 
 | Document | Contents |
 |---|---|
@@ -385,7 +419,7 @@ tests fail when the tool catalog and the docs drift.
 | [`docs/unified-analytics.md`](docs/unified-analytics.md) | Metric semantics, join keys, cross-source report definitions |
 | [`docs/development-plan.md`](docs/development-plan.md) | Phase plan, deliverables, exit criteria |
 | [`docs/security/threat-model.md`](docs/security/threat-model.md) | Assets, trust boundaries, threats, mitigations |
-| [`docs/security/security-review.md`](docs/security/security-review.md) | Security review process and gates |
+| [`docs/security/security-review.md`](docs/security/security-review.md) | As-built control matrix and residual risk |
 | [`docs/integrations/magento.md`](docs/integrations/magento.md) | Magento endpoints, authentication, product and inventory flows |
 | [`docs/integrations/cloudflare.md`](docs/integrations/cloudflare.md) | Cloudflare datasets, Security Events, Logpush constraints |
 | [`docs/integrations/ga4.md`](docs/integrations/ga4.md) | GA4 dimensions, metrics, compatibility rules, quotas |
@@ -401,7 +435,7 @@ and the design documents for the next phase are consistent with the research bas
 |---|---|---|
 | 0 | Design | Architecture, boundaries, tool catalog, threat model, ADRs, and governance reviewed; documentation CI green |
 | 1 | Foundation | Server skeleton on Streamable HTTP, Cloudflare Access JWT auth, RBAC, tool registry, config validation, audit, PostgreSQL (including the job queue), Docker, CI gates |
-| 2 | Magento 2 | Read and write tools for products, EAV, MSI, media, categories, orders, bulk import, and GraphQL verification |
+| 2 | Magento 2 | Read and write tools for products, EAV, MSI, media, categories, orders, and bulk import; REST admin verification |
 | 3 | Cloudflare | GraphQL Analytics, Security Events, Logpush inventory and analysis, all read-only |
 | 4 | GA4 | Metadata discovery, core, ecommerce, and realtime reports, quota handling, and the documented BigQuery boundary |
 | 5 | Unified analytics | Metric catalog, entity mapping, cross-source reports with declared semantics |

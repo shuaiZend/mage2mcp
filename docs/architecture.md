@@ -1,7 +1,22 @@
 # Architecture
 
-**Status:** Phase 0 design baseline — approved for implementation planning, not yet implemented.
-**Decision records:** [ADR-0001](adr/0001-modular-architecture.md), [ADR-0002](adr/0002-mcp-transport.md), [ADR-0010](adr/0010-error-model-and-tool-contract.md), [ADR-0011](adr/0011-configuration-and-multi-instance.md), [ADR-0012](adr/0012-observability-and-audit.md).
+**Status:** as-built for v0.11.1
+(2026-11-20). This document describes the code that ships. Components that are
+designed but not implemented are marked **PLANNED** and are not drawn as present.
+
+**Verification boundary.** No live Magento, Cloudflare, or GA4 instance was
+available. Magento behaviour is verified against the REST contract and
+`httptest` fakes (`CONTRACT`); the end-to-end harness uses a fake Magento. There
+is no live Magento integration test.
+
+**Decision records:** [ADR-0001](adr/0001-modular-architecture.md),
+[ADR-0002](adr/0002-mcp-transport.md),
+[ADR-0010](adr/0010-error-model-and-tool-contract.md),
+[ADR-0011](adr/0011-configuration-and-multi-instance.md),
+[ADR-0012](adr/0012-observability-and-audit.md),
+[ADR-0018](adr/0018-multi-instance-routing.md),
+[ADR-0019](adr/0019-postgres-job-queue.md),
+[ADR-0022](adr/0022-magento-rest-admin-scope.md).
 
 ## 1. Purpose
 
@@ -11,362 +26,347 @@ Protocol (MCP). It is a gateway, not a framework and not a plugin: it owns no
 business system, installs nothing into Magento, and reads no vendor database
 directly.
 
-The architecture exists to satisfy five non-negotiable constraints:
+The shipped architecture satisfies five constraints:
 
-1. **Standalone deployment.** A single Go binary (plus a worker) that can run
-   anywhere Docker runs. Magento is reached over its official REST and GraphQL
-   APIs only; no Magento module, no database connection.
-2. **Read-only by default.** Every capability is read-only unless explicitly
-   declared otherwise. Write capabilities require a separate permission, a
-   separate configuration switch, and — for high-risk operations — a
-   parameter-bound human confirmation.
-3. **Module independence.** Magento, Cloudflare, and GA4 are separate modules
-   with separate clients, services, DTOs, configuration, errors, and tests.
-   No module imports another module's internals. Cross-source analysis goes
-   through the Unified Analytics module and public service interfaces only.
-4. **Capability-driven tool registration.** The gateway registers only the
-   tools for modules that are enabled and healthy. A broken Cloudflare token
-   must not prevent Magento tools from working.
-5. **Auditability.** Every tool invocation is attributable to an identity, a
-   tool, an instance, a permission decision, and a parameter hash. Writes are
-   recorded with enough context to reconstruct what was requested.
+1. **Standalone deployment.** A server and worker (plus a human-only admin CLI)
+   that run anywhere Docker runs. Magento is reached over its official REST admin
+   API only; there is no Magento GraphQL client and no database connection.
+2. **Read-only by default.** Read tools are registered by default; write and
+   destructive tools are registered only when `tools.writes: true`. Every write
+   requires two-step human approval and is gated by the operation ledger.
+3. **Module independence.** Magento, Cloudflare, and GA4 are separate packages
+   with their own clients, services, DTOs, errors, and tests. No module imports
+   another module's internals; cross-source work goes through `internal/unified`
+   over narrow provider interfaces wired in `cmd/server`.
+4. **Module-scoped registration.** Tools are registered for enabled modules.
+   Capability metadata exists on the registry but is **not** consumed for gating
+   (MCP-13); a module is enabled or disabled by configuration, not by a runtime
+   health probe.
+5. **Auditability.** Every tool call writes an intent and an outcome row with
+   subject hash, tool, instance, decision, phase, state, error code, and request
+   id. Writes are recorded with enough context to reconstruct the request.
 
 ## 2. System context
 
 ```mermaid
 flowchart LR
-    Agent["AI Agent / MCP client"]
-    IdP["Cloudflare Access<br/>(OIDC / JWKS)"]
-    GW["mage2mcp<br/>MCP gateway"]
-    Mag["Magento 2<br/>REST + GraphQL"]
-    CF["Cloudflare<br/>API + GraphQL Analytics"]
-    GA["Google Analytics 4<br/>Data API v1"]
-    PG[("PostgreSQL")]
-    CH[("ClickHouse<br/>(optional, Phase 3+)")]
-    R2[("R2 object storage<br/>(Logpush archive)")]
-
-    Agent -->|"HTTPS, Streamable HTTP"| GW
-    GW -->|"JWT verification<br/>JWKS"| IdP
-    GW -->|"REST (writes), GraphQL (read verify)"| Mag
-    GW -->|"REST + GraphQL (read-only)"| CF
-    GW -->|"gRPC/REST (read-only)"| GA
-    GW --> PG
-    GW -.->|"async ingestion"| CH
-    CF -.->|"Logpush"| R2
-    R2 -.->|"loader"| CH
+    Agent["AI agent / MCP client"] -->|"HTTPS, Streamable HTTP"| GW["mage2mcp server"]
+    IdP["Cloudflare Access<br/>or OIDC issuer"] -->|"JWT / JWKS"| GW
+    GW -->|"REST admin API<br/>/rest/{store}/V1"| Mag["Magento 2.4.x"]
+    GW -->|"GraphQL Analytics<br/>(read-only)"| CF["Cloudflare API"]
+    GW -->|"Data API v1beta<br/>(read-only)"| GA["Google Analytics 4"]
+    GW -->|"audit, confirmations, jobs, ledger"| PG[("PostgreSQL 16+")]
+    Worker["mage2mcp worker"] -->|"claims jobs, reconciles"| PG
+    Worker -->|"REST admin API"| Mag
+    Admin["mage2mcp-admin CLI"] -->|"approvals"| PG
 ```
 
-Trust boundaries are analyzed in the [threat model](security/threat-model.md).
+**Not present.** There is no R2 or ClickHouse component, no raw-log loader, and
+no `cloudflare.logs.*` tool. `internal/logs/` is an empty directory; raw-log
+analysis is **PLANNED**. The only GraphQL client in the tree is Cloudflare's
+analytics client. Magento GraphQL is not used (ADR-0022).
+
+Trust boundaries are analysed in the [threat model](security/threat-model.md).
 The agent is untrusted: it can be manipulated by prompt injection, it can send
-arbitrary parameters, and it must never be able to reach a vendor API except
-through a typed, permissioned tool.
+arbitrary parameters, and it must never reach a vendor API except through a
+typed, permissioned tool.
 
 ## 3. Containers
 
 | Container | Responsibility | State |
 |---|---|---|
-| `mage2mcp-server` | MCP endpoint, authentication, RBAC, tool registry, synchronous tool execution | Stateless except MCP session state |
-| `mage2mcp-worker` | Asynchronous jobs: imports, Logpush ingestion, long-running reports, retries | Durable job state in PostgreSQL |
-| PostgreSQL | Instances, permissions, job state, audit log, SKU mappings, import batches | Durable |
-| PostgreSQL job queue | Durable task queue with leases (ADR-0019); no Redis | Durable |
-| ClickHouse (optional) | Raw/normalized HTTP request logs from Logpush | Durable, Phase 3+ |
-| R2 (optional) | Logpush archive and replay source | Durable, Phase 3+ |
+| `mage2mcp-server` | MCP endpoint, authentication, RBAC, confirmation, operation gate, synchronous tool execution, `/healthz`, `/readyz`, `/metrics` | Stateless except the SDK's MCP session; durable state is in PostgreSQL |
+| `mage2mcp-worker` | Asynchronous Magento imports, operation reconciliation, import-batch retention | Durable state in PostgreSQL |
+| `mage2mcp-admin` | Human-only approval surface for confirmations; reads the same PostgreSQL store | No state of its own |
+| PostgreSQL 16+ | Instances, audit, confirmations, jobs, import batches, operation ledger | Durable |
 
-The server never performs long-running upstream work inline. Any operation that
-can exceed the tool timeout budget is converted into a job and returns a job
-handle. This keeps MCP responses bounded and makes retries and resumability
-possible.
+The server does not perform long-running upstream work inline. Imports can be
+executed synchronously (bounded) or queued for the worker; a queued import
+returns a job id.
 
-## 4. Component view
+## 4. Packages
 
 ```text
-cmd/server, cmd/worker
-        │
-        ▼
-internal/mcp ── server, registry, transport, tools
-        │
-        ▼
-internal/security ── auth (Cloudflare Access JWT), rbac, audit, secrets
-        │
-        ▼
-internal/core ── config, errors, models, datasource, capabilities
-        │
-        ├──────────────┬──────────────┬──────────────┐
-        ▼              ▼              ▼              ▼
-internal/magento  internal/cloudflare  internal/ga4  internal/unified
-        │              │              │              │
-        ▼              ▼              ▼              │
-   Magento API    Cloudflare API   GA4 Data API      │
-                                                     ▼
-                                          calls module service interfaces
+cmd/server ── HTTP/MCP wiring, module registration, operation-gate adapters
+cmd/worker ── job handlers: magento import, reconcile, retention
+cmd/admin  ── confirmation approval CLI
+
+internal/mcp        registry, MCP server, tool error envelope
+internal/security   auth (assertion/bearer), jwt, rbac, confirm, audit
+internal/core       config, errors, datasource contract (declared, unused)
+internal/magento    REST client, products, configurable, inventory, orders, imports
+internal/cloudflare GraphQL Analytics client and three read tools
+internal/ga4        Data API client, reports, capability probe
+internal/unified    Cloudflare-vs-GA4 traffic comparison
+internal/jobs       job contract and worker loop
+internal/storage    PostgreSQL store, migrations, audit, confirmations, jobs, ledger
+internal/observability structured logging and Prometheus metrics
 ```
 
-| Package | Owns | May import |
+| Package | Owns | Notes |
 |---|---|---|
-| `internal/core` | Configuration schema, error taxonomy, shared value types, `DataSource` contract, capability model | Standard library, config/validation libraries |
-| `internal/security` | JWT verification, JWKS cache, RBAC policy, audit writer, secret resolution | `core` |
-| `internal/mcp` | MCP server construction, tool registry, transport, request pipeline, tool definitions | `core` (including the job-enqueue interface), `security`, module public interfaces |
-| `internal/magento` | Magento REST/GraphQL client, product/EAV/configurable/inventory/import/order services, DTOs | `core` only |
-| `internal/cloudflare` | Cloudflare API client, GraphQL query templates, security events, Logpush metadata | `core` only |
-| `internal/ga4` | GA4 Data API client, report builder, compatibility validator, property capabilities | `core` only |
-| `internal/unified` | Cross-source models, joins, metric semantics, SKU mapping | `core` + module **public service interfaces** |
-| `internal/jobs` | Queue contract, worker loop, retry policy | `core` |
-| `internal/logs` | R2/ClickHouse ingestion and request-level queries for Logpush data | `core`, object storage and ClickHouse drivers |
-| `internal/admin` | Human-only approval surface for confirmations, read-only status | `core`, `security` |
-| `internal/storage` | PostgreSQL repositories, migrations runner, job queue | `core` |
-| `internal/observability` | Structured logging, metrics, health, tracing | `core` |
-| `pkg/` | Optional reusable primitives with no domain knowledge | Standard library only |
+| `internal/core/config` | YAML schema, `${VAR}` expansion, environment overrides, validation | See [configuration.md](configuration.md). |
+| `internal/core/errors` | Closed error taxonomy | See [module-boundaries.md](module-boundaries.md) §4.2. |
+| `internal/core/datasource` | `DataSource`/`Capability` contract | Declared but **not implemented by any module**; registration is module-enablement based. |
+| `internal/mcp/registry` | Tool metadata validation (name, title, description, capability, permission, timeout, annotations) | Every tool is validated at registration. |
+| `internal/mcp/server` | MCP server, middleware chain, `platform.info`, `write_safety` prompt, HTTP surface | The policy middleware is the single write choke point. |
+| `internal/mcp/toolerr` | Typed tool registration, JSON Schema validation, `{code,message,details}` error envelope, structured content + text fallback | |
+| `internal/security/auth` | Assertion-or-bearer credential extraction; assertion precedence; duplicate rejection | Does **not** enforce origin lockdown. |
+| `internal/security/jwt` | JWT verification, JWKS cache, role claim parsing | RS256/ES256 allowlist; 8 KiB cap; 60 s skew. |
+| `internal/security/rbac` | Default-deny policy, scope ladder, instance-scoped grants | The default policy is in code; the `roles`/`tool_permissions` tables are not read at runtime. |
+| `internal/security/confirm` | Two-step confirmation: canonical hash, TTL, single use, tool+instance binding | Consumed atomically with the ledger for gated writes. |
+| `internal/security/audit` | Audit event type and in-memory recorder | The PostgreSQL recorder lives in `internal/storage`. |
+| `internal/security/secrets` | Empty directory | Secret handling is procedural `${VAR}` expansion in config; no secret-manager adapter ships. |
+| `internal/storage` | Store, embedded migrations, audit/confirmation/job/batch/ledger repositories | The data plane. |
+| `internal/jobs` | Task contract, worker loop, retry/lease handling | PostgreSQL queue; no Redis. |
+| `internal/observability` | `slog` with redaction; Prometheus metrics | |
+| `internal/logs` | Empty directory | Raw-log ingestion is **PLANNED**. |
 
-The import direction is enforced by review in Phase 0 and by an import-boundary
-check in Phase 1. A module that needs data from another module defines a
-consumer-side interface in `internal/unified` and receives an implementation at
-wiring time; it never imports the other module's package.
+`pkg/`, `internal/core/models`, and `internal/mcp/transport` do not exist or are
+empty; the documentation no longer claims otherwise.
 
-## 5. Request lifecycle
+## 5. Request lifecycle (as built)
 
 ```mermaid
 sequenceDiagram
     participant A as Agent
-    participant H as HTTP transport
-    participant AU as Auth (JWT + JWKS)
-    participant S as MCP session
-    participant R as Tool registry
+    participant H as HTTP + auth
+    participant P as MCP policy middleware
     participant Z as RBAC
     participant C as Confirmation
+    participant L as Operation ledger
     participant T as Tool handler
-    participant V as Module service
-    participant U as Upstream API
-    participant L as Audit log
+    participant U as Magento REST
+    participant D as PostgreSQL
 
     A->>H: POST /mcp (tools/call)
-    H->>AU: Bearer token
-    AU->>AU: verify signature, iss, aud, exp, nbf
-    AU-->>H: Identity (human or service)
-    H->>S: route to session
-    S->>R: resolve tool by name
-    R-->>S: tool spec + required permission
-    S->>Z: authorize(identity, tool, instance or binding)
-    Z-->>S: allow / deny (all binding members must be granted)
-    S->>C: require confirmation? verify approval state, approver, hash, TTL
-    C-->>S: ok / confirmation_required
-    S->>T: execute with typed input
-    T->>V: service call (context deadline)
-    V->>U: official API request
-    U-->>V: response
-    V-->>T: normalized DTO or typed error
-    T-->>S: result
-    S->>L: append audit event
-    S-->>A: MCP result
+    H->>H: exactly one credential; assertion wins over bearer
+    H->>P: verified identity
+    P->>D: audit intent row
+    P->>Z: authorize(tool, instance, required scope)
+    P->>C: create or validate confirmation (writes)
+    P->>L: begin operation (writes; fence + idempotency key)
+    P->>T: execute with the declared timeout
+    T->>U: REST request (per-instance credential)
+    U-->>T: typed response or typed error
+    T-->>P: result / error
+    P->>L: succeed / fail / unknown (guarded by fence)
+    P->>D: audit outcome row (same transaction for gated writes)
+    P-->>A: structured content + text fallback
 ```
 
 Failure rules:
 
 - Authentication failure returns `401` and never reaches the MCP layer.
-- Authorization failure returns a tool error with code `permission_denied`; the
-  audit event is still written.
-- A confirmation failure returns `confirmation_required` with the parameters
-  hash the client must re-submit; nothing is executed.
-- Upstream errors are mapped to the gateway error taxonomy; upstream payloads
-  are never passed through verbatim.
-- Every request carries a deadline. The default tool timeout is 30 seconds;
-  long operations are jobs.
+- Authorization failure returns a tool error with `permission_denied`; the denial
+  is audited with `decision=deny`.
+- A missing confirmation returns `confirmation_required` with the parameter hash;
+  nothing is executed.
+- A write whose outcome is ambiguous returns `operation_unknown` and must be
+  polled/reconciled, never retried.
+- Upstream errors map to the closed taxonomy; upstream bodies are not echoed
+  (bounded validation text may appear as `details.upstream_message`).
+- Every tool call has the registry's declared timeout (30 s read, 60 s write,
+  120 s bulk); long work is a job.
 
-## 6. Tool registration and capabilities
+## 6. Tool registration and the write gate
 
-At startup each enabled module reports its capabilities. The registry maps
-capabilities to tool specs and registers only tools whose capability is present
-and whose permission model is configured.
+`cmd/server.registerModules` builds one resolver per enabled module and registers
+that module's tools. Reads are registered by default; writes only when
+`tools.writes: true`; async import tools only when `database.url` is set; the
+unified tool only when a valid `bindings` block exists. `platform.info` is
+registered by `internal/mcp/server` as a first-class registry entry (the registry
+validates it and `/readyz` counts it); a read-only start therefore reports
+`tools:1`.
 
-```go
-type Capability struct {
-    ID          string // "magento.product.write"
-    Version     string // capability contract version
-    ReadOnly    bool
-    Description string
-}
-```
+Rules that are enforced:
 
-Rules:
-
-- Tool names are namespaced: `magento.product.*`, `magento.configurable.*`,
-  `cloudflare.analytics.*`, `ga4.ecommerce.*`, `unified.traffic.*`.
-- A module that fails its health check at startup is disabled with a structured
-  warning; other modules start normally. `/readyz` reports degraded, not failed.
-- `tools/list` reflects the live registry. If a module is disabled at runtime,
-  its tools are removed and a `notifications/tools/list_changed` is emitted.
-- A tool is never registered without a permission, a timeout, and an input
-  schema with `additionalProperties: false`.
+- Tool names are `module.domain.action`; the registry rejects a name, title,
+  description, permission, timeout, or annotation that violates the contract.
+- A tool is never registered without a permission, a timeout, and an input schema
+  with `additionalProperties: false`.
 - There is no `execute_api`, `execute_sql`, or raw GraphQL passthrough tool.
-- Long-running work is enqueued through the `core/jobs.Enqueuer` interface. A tool
-  handler depends on that interface, never on `internal/jobs`, so the async design
-  does not violate the dependency table. The concrete enqueuer is injected in
-  `cmd/server`; job handlers are registered by the worker.
-- Unified tools are authorized against a **binding**: every member instance must be
-  granted. A binding is declared in configuration and persisted read-only in
-  `instance_bindings`.
+- Every write is gated: the middleware opens an `operations` row for the 47
+  write tools that are not self-ledgered, plus the three async import write tools
+  when the database is configured, while five money tools
+  (`magento.invoice.create`, `invoice.capture`, `creditmemo.create`,
+  `order.create`, `order.cancel`) drive the ledger themselves. A test asserts
+  every write tool is gated or declared self-ledgered.
+- `platform.info` reports the version, protocol versions, registry tool names,
+  configured instances, and whether writes are enabled.
+
+**Not implemented:** capability-driven registration, runtime module disable,
+`notifications/tools/list_changed`, and a per-instance `/readyz` degraded state.
+`/readyz` returns 200 with the registry tool count whenever the process can serve
+MCP.
 
 ## 7. Configuration and instances
 
-Configuration is YAML with environment-variable overrides. Secrets are
-references, never literals in the file.
+Configuration is YAML with `${VAR}` expansion and environment overrides; unknown
+keys are rejected. The full reference is [configuration.md](configuration.md);
+the shipped examples are `configs/config.example.yaml` (development) and
+`configs/config.production.template.yaml` (production). Two operational
+requirements matter to the architecture:
 
-```yaml
-server:
-  listen: "0.0.0.0:8080"
-  public_url: "https://mcp.example.com"
-bindings:
-  - id: "store-us-analytics"
-    magento: "store-us"
-    cloudflare: "zone-us"
-    ga4: "giztop"
-auth:
-  issuer: "https://<team>.cloudflareaccess.com"
-  audience: "<application-aud-claim>"
-  jwks_url: "https://<team>.cloudflareaccess.com/cdn-cgi/access/certs"
-datasources:
-  magento:
-    enabled: true
-    instances:
-      - id: "store-us"
-        base_url: "https://shop.example.com"
-        store_code: "default"
-        auth:
-          mode: "integration_token"
-          token: "${MAGENTO_US_TOKEN}"
-  cloudflare:
-    enabled: true
-    instances:
-      - id: "zone-us"
-        account_id: "${CLOUDFLARE_ACCOUNT_ID}"
-        zone_id: "${CLOUDFLARE_ZONE_ID}"
-        credential_profile: "analytics"
-  ga4:
-    enabled: true
-    instances:
-      - id: "giztop"
-        property_id: "354542598"
-        credentials: "${GA4_SERVICE_ACCOUNT_JSON}"
-```
+- **A database is required for confirmations and imports.** Without
+  `database.url`, confirmations and audit are in memory, the async import tools
+  are not registered, and the five self-ledgered money tools fail closed because
+  the ledger is not configured.
+- **A write-enabled deployment needs `server.max_body_bytes` ≥ 12 MiB**
+  (`MinMaxBodyBytesForImport`); the default is 16 MiB. A lower cap fails
+  validation at startup instead of rejecting a maximum-size import at the
+  transport with `413`.
 
-Rules:
-
-- Every instance has a stable `id`; tools accept `instance` as a required
-  parameter when more than one instance is configured.
-- Configuration is validated at startup; an invalid instance is disabled with a
-  precise error, and the process still starts if at least one module is usable.
-- Unknown keys are rejected, not ignored.
-- Secrets are resolved from the environment or a secret manager adapter; a
-  missing secret disables only the dependent instance.
+Every instance has a stable `id`; tools require `instance` and the resolver
+selects that instance's credential. Instance ids are globally unique across
+modules. A module with several instances registers one tool per tool kind, not
+one per instance. Unified bindings require exactly one Cloudflare and one GA4
+instance; multi-instance bindings are **PLANNED** and rejected by validation.
 
 ## 8. Storage responsibilities
 
-| Data | Store | Retention |
+| Data | Store | Retention / notes |
 |---|---|---|
-| Instance projection of YAML config (non-secret, read-only from the server) | PostgreSQL | Until deleted |
-| Credential references | PostgreSQL (reference only) / secret manager | Until rotated |
-| Users, roles, tool permissions | PostgreSQL | Until deleted |
-| Audit events | PostgreSQL, append-only | 365 days default, configurable |
-| Jobs and job attempts | PostgreSQL queue (ADR-0019) | 30 days after completion |
-| Idempotency ledger | PostgreSQL | 30 days |
-| Import batches and item results | PostgreSQL | 90 days |
-| SKU mappings | PostgreSQL | Until deleted |
-| Job queue | PostgreSQL (`FOR UPDATE SKIP LOCKED`, leases) | Until completion + retention |
-| Raw HTTP request logs | ClickHouse / R2 | Per-zone policy, never PostgreSQL |
+| Runtime configuration | YAML + environment | Mounted read-only; not written back |
+| Instance rows referenced by jobs/ledger | PostgreSQL `datasource_instances` | Upserted `(id, module)` when a job or operation is created |
+| Roles, role assignments, tool permissions | PostgreSQL tables exist | **Not read at runtime**; RBAC uses the compiled default policy |
+| Audit events | PostgreSQL `audit_events` | Append-only by convention; no retention job or hash chain (PLANNED) |
+| Confirmations | PostgreSQL `confirmation_tokens` | TTL ≤ 15 min; consumed rows retained |
+| Jobs | PostgreSQL `jobs` | Lease + fencing token; terminal rows retained |
+| Idempotency keys | PostgreSQL `idempotency_keys` | Table exists but is **unused** by the code; the operation ledger is the replay guard |
+| Import batches | PostgreSQL `import_batches`, `import_batch_failures` | Pruned by the worker after 30 days |
+| Operation ledger | PostgreSQL `operations`, `operation_transitions` | Append-only transitions; the authority on business outcome |
+| Raw HTTP request logs | none | R2/ClickHouse is **PLANNED**; PostgreSQL never stores raw logs |
 
-The database design is in [database-design.md](database-design.md). Raw
-Cloudflare logs are explicitly excluded from PostgreSQL: at 1.5–3 kB per
-request, a modest 1M requests/day produces 45–90 GB/month.
+The schema is documented in [database-design.md](database-design.md).
 
-## 9. Concurrency model
+## 9. Operation ledger and reconciler
 
-- One `http.Client` per upstream instance with bounded connection pools and
-  explicit timeouts; never the default client.
-- Per-instance concurrency semaphores and token-bucket rate limiters, sized from
-  configuration. Cloudflare GraphQL defaults to a 300-query/5-minute budget;
-  GA4 uses the observed 10-concurrent-request quota.
-- All upstream calls take `context.Context` and honor cancellation.
-- Worker concurrency is bounded per queue; imports are serialized per instance
-  and SKU range to avoid write races.
-- No package-level mutable state. Dependencies are constructed in `main` and
-  passed explicitly.
-- Graceful shutdown: stop accepting new MCP requests, drain in-flight tools for
-  up to the configured grace period, then close clients and the database pool.
+The ledger is the durable state machine for a business mutation. It exists
+because a timeout, transport failure, or crash cannot distinguish "not applied"
+from "applied". States: `pending`, `executing`, `succeeded`, `failed`, `unknown`,
+`reconciling`. Every transition after `pending` is a conditional update guarded
+by the current state and the fencing token issued when the row was claimed; a
+stale writer gets `applied=false`.
 
-## 9.1 Transport and protocol security
+An ambiguous outcome becomes `unknown`, never `failed`. The caller receives
+`operation_unknown` and must poll. The worker enqueues a reconcile task every
+minute, claims due `unknown` rows, reads the upstream (`ObserveOperation`), and
+resolves them as succeeded/failed/unknown; an inconclusive read backs off, and
+when the reconcile count exceeds eight the operation is escalated for manual
+review.
 
-- Session IDs are generated by the SDK from a cryptographic source, bound to the
-  verified identity, and rejected when presented with a different identity.
-- Sessions terminate on `DELETE` and expire after the configured idle timeout.
-  Resumability uses the SDK `EventStore` when enabled.
-- Origin validation and DNS-rebinding protection stay enabled. The gateway never
-  disables them without an ADR; production binds a private interface behind a
-  Cloudflare Tunnel.
-- The caller's token is never forwarded to an upstream API. Vendor credentials are
-  separate, per instance, and never derived from the caller's identity.
-- The token `aud` must match the configured Access application; a mismatch is 401.
-- Protected resource metadata (RFC 9728) is served when OAuth mode is enabled;
-  Cloudflare Access deployments rely on the Access edge instead.
+The five money tools write their own ledger rows; the other write tools are
+gated by the middleware. For gated writes the outcome audit row is committed in
+the same transaction as the ledger transition. The five self-ledgered tools have
+a known audit-outcome gap (REL-16-R): a crash after the tool commits but before
+the middleware writes the audit row leaves the operation correct and the audit
+row missing.
 
-## 10. Observability
+## 10. Concurrency and transport
 
-- Structured logs with `slog`; one event per tool call with `tool`, `instance`,
-  `identity_id`, `permission`, `outcome`, `duration_ms`, `param_hash`.
-  Parameters are never logged verbatim.
-- Prometheus metrics: `mage2mcp_tool_calls_total{module,tool,outcome}`,
+- **Magento** uses a tuned `http.Transport`: 100 idle connections, 16 idle per
+  host, 32 maximum per host, 90 s idle timeout, 10 s TLS handshake timeout,
+  `ExpectContinueTimeout` 1 s. Redirects are refused. This is the only tuned
+  transport; Cloudflare and GA4 use the standard client with per-request
+  timeouts.
+- **No per-instance semaphore, token bucket, or quota limiter exists.** The
+  gateway does not rate-limit tool calls or account for Cloudflare/GA4 quotas;
+  that is **PLANNED** (SEC-11, PERF-05). Limit concurrency at the agent or edge.
+- All upstream calls take `context.Context` and honour cancellation.
+- The worker's concurrency is bounded by the job queue; a task holds a lease and
+  a fencing token.
+- Graceful shutdown stops accepting requests, drains for `server.shutdown_grace`,
+  then closes the database pool.
+
+## 11. Transport and protocol
+
+- Streamable HTTP at `POST /mcp`, provided by the official MCP Go SDK. The SDK
+  negotiates its full supported list, currently `2026-07-28` through
+  `2024-11-05` (five versions); `platform.info` reports that list verbatim.
+- Ingress accepts exactly one credential: `Cf-Access-Jwt-Assertion` is
+  authoritative when present; `Authorization: Bearer` is used only when the
+  assertion is absent; a duplicate header of either kind is rejected.
+- The gateway does **not** verify that the request came from Cloudflare. Tunnel
+  or authenticated origin pull is a deployment control.
+- The caller's credential is never forwarded upstream; each module uses its
+  per-instance vendor credential.
+- `/healthz`, `/readyz`, and `/metrics` are served on the same listener.
+  `/metrics` is not authenticated by the gateway; restrict it at the edge.
+- The MCP session is not bound to the caller identity (SEC-15); there is no
+  `EventStore`, no resumability, no progress notification, and no `resource_link`
+  path. Those are **PLANNED**.
+
+## 12. Observability
+
+- Structured `slog` logs (JSON or text) with key-based redaction for
+  token/secret/password/authorization/cookie/api_key/credential and bearer-shaped
+  values.
+- Prometheus metrics on `/metrics`:
+  `mage2mcp_tool_calls_total{module,tool,outcome}`,
   `mage2mcp_tool_duration_seconds`, `mage2mcp_upstream_requests_total{module,status}`,
-  `mage2mcp_upstream_duration_seconds`, `mage2mcp_quota_remaining{module,instance}`,
-  `mage2mcp_jobs_total{queue,state}`, `mage2mcp_auth_failures_total{reason}`.
-- Health endpoints: `/healthz` (process alive), `/readyz` (at least one module
-  ready, database reachable), `/livez` (no deadlock, optional deep check).
-- Audit events are separate from logs and are never sampled.
+  `mage2mcp_upstream_duration_seconds`, `mage2mcp_auth_failures_total{reason}`,
+  `mage2mcp_jobs_total{queue,state}`, and `mage2mcp_build_info`. There is no
+  quota metric.
+- `/healthz` reports process liveness. `/readyz` reports that the process can
+  serve MCP and the registry tool count. There is no `/livez`.
+- Audit events are separate from logs and are not sampled.
 
-## 11. Deployment topology
+## 13. Deployment topology
 
 ```text
-Internet ── Cloudflare (Access + Tunnel) ── mage2mcp-server (private network)
-                                                   │
-                                    ┌──────────────┼──────────────┐
-                                    ▼              ▼              ▼
-                                PostgreSQL                   worker
+Internet ── Cloudflare (Access + optional Tunnel) ── mage2mcp-server
+                                                          │
+                                       ┌──────────────────┼──────────────┐
+                                       ▼                  ▼              ▼
+                                  PostgreSQL          mage2mcp-worker  mage2mcp-admin
+                                                                       (human host)
 ```
 
-- The MCP endpoint is published through a Cloudflare Tunnel; no inbound port is
-  opened on the host.
-- The admin/metrics surface is bound to a private interface or protected by a
-  separate Access application. It is never exposed anonymously.
-- The server and worker share the database but have separate
-  credentials and separate container images.
-- Configuration is mounted read-only; secrets come from the environment or a
-  secret manager, never from the image.
+- The image is distroless, non-root, and bakes `configs/config.docker.yaml`.
+  That baked config enables no data source; mount a real configuration over
+  `/etc/mage2mcp/config.yaml` for a real deployment.
+- The server, worker, and admin share PostgreSQL. The worker and admin are
+  separate binaries (same image).
+- Origin lockdown and metrics isolation are deployment controls; the gateway does
+  not enforce them.
+- Secrets come from the environment or a secret manager; configuration is
+  mounted read-only.
 
-## 12. Extension: adding a data source
+## 14. Extension: adding a data source
 
-A new data source (Search Console, BigQuery, Shopify, WooCommerce, another
-analytics platform) is added without touching existing modules:
+A new data source is added without touching existing modules:
 
-1. Create `internal/<source>` with `client/`, `service/`, DTOs, errors, config,
-   tests, and a module README.
-2. Implement `core/datasource.DataSource` and declare capabilities.
-3. Define typed service interfaces consumed by `internal/unified` where
-   cross-source analysis is needed.
-4. Register tools under the module's namespace with permissions, timeouts, and
-   schemas.
-5. Add configuration, health checks, metrics, and documentation.
-6. Add contract tests with a fake implementation so other modules can be tested
-   without the new source.
+1. Create `internal/<source>` with a client, a service, DTOs, error mapping, and
+   tests.
+2. Add a resolver if the module supports several instances, and register tools
+   with the registry contract (name, permission, timeout, schema, annotations).
+3. Add a configuration module/instance schema and validation.
+4. Wire the module in `cmd/server.registerModules`.
+5. Add a module README and contract tests with an `httptest` fake.
 
-No change to Magento, Cloudflare, or GA4 code is required.
+The `internal/core/datasource` contract is declared but unused; a new module does
+not have to implement it. Cross-source work defines a consumer-side interface in
+`internal/unified` and receives an implementation at wiring time.
 
-## 13. Open questions
+## 15. Planned components (not present)
 
-| Question | Owner | Resolution point |
-|---|---|---|
-| ClickHouse deployment model (managed vs self-hosted) | Architect | Phase 3 planning |
-| Whether to expose Prometheus metrics through Access or a private listener | Security | Phase 1 |
-| Multi-tenant (multiple customers per deployment) vs single-tenant | Architect | Post-1.0; schema reserves `tenant_id` |
+| Component | Status |
+|---|---|
+| Raw Cloudflare log ingestion (R2/ClickHouse) and `cloudflare.logs.*` tools | PLANNED |
+| Per-instance rate limiting, concurrency semaphores, quota accounting | PLANNED |
+| Multi-instance unified bindings | PLANNED (single CF + single GA4 only) |
+| Audit hash chain, signed checkpoints, retention partitions | PLANNED |
+| Session identity binding | PLANNED (SEC-15) |
+| Progress notifications, cancellation propagation, `resource_link`, `tools/list_changed`, `/livez` | PLANNED |
+| Secret-manager adapter and literal-secret rejection | PLANNED |
+| Magento GraphQL verification | Not planned; REST admin only (ADR-0022) |
 
-## 14. Verification status
+## 16. Verification
 
-This document is a design baseline. It contains no implementation claims. The
-external facts it relies on are recorded in
-[research-baseline.md](development/research-baseline.md) with verification tags.
+The package and behaviour claims above were checked against the tree. Tests that
+prove the main flows are cited in
+[security-review.md](security/security-review.md) and the threat model. The
+schema is checked against the migrations by the command in
+[database-design.md](database-design.md) §2. There is no live Magento test; all
+Magento coverage is `CONTRACT`.

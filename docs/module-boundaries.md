@@ -1,11 +1,15 @@
 # Module boundaries and public contracts
 
-**Status:** Phase 0 design baseline. Interfaces below are frozen for Phase 1–5.
-Changing any of them requires an ADR and Architect review.
+**Status:** design reference. The ownership table and the error taxonomy in §4.2
+are as-built; the other interface snippets describe the intended shape where the
+implementation differs (for example `internal/core/datasource` is declared but no
+module implements it). Changing a public contract requires an ADR and Architect
+review.
 
 This document defines what each module owns, what it may import, and the Go
-contracts that cross module boundaries. It is the reference used by the
-import-boundary check and by contract tests.
+contracts that cross module boundaries. The error enum in §4.2 is the shipped
+closed set in `internal/core/errors/errors.go`; the other snippets describe the
+intended shape where the implementation differs.
 
 ## 1. Principles
 
@@ -29,14 +33,14 @@ import-boundary check and by contract tests.
 | `internal/security/` | AuthN, RBAC, audit, secrets | Architect + Security |
 | `internal/mcp/` | Server, registry, transport, tool definitions | Architect |
 | `internal/magento/` | Magento client, product/EAV/configurable/inventory/import/order services | Magento owner |
-| `internal/cloudflare/` | Cloudflare client, GraphQL templates, security events, Logpush metadata | Cloudflare owner |
+| `internal/cloudflare/` | Cloudflare client, GraphQL templates, security events | Cloudflare owner |
 | `internal/ga4/` | GA4 client, report builder, compatibility validator | GA4 owner |
-| `internal/unified/` | Cross-source models, joins, metric semantics, SKU mapping | Architect + Unified owner |
+| `internal/unified/` | Cross-source comparison (`traffic.compare`); other scenarios are PLANNED | Architect + Unified owner |
 | `internal/jobs/` | Job definitions, queues, retries | Architect |
-| `internal/storage/` | Repositories, migrations runner, Redis adapters | Architect |
-| `internal/observability/` | Logging, metrics, health, tracing | Architect |
+| `internal/storage/` | Repositories and the embedded migration runner | Architect |
+| `internal/observability/` | Logging and metrics (health endpoints live in `internal/mcp/server`) | Architect |
 | `cmd/` | Wiring and process lifecycle only | Architect |
-| `tests/` | Cross-cutting integration, security, e2e fixtures | QA |
+| `test/`, `internal/*/*_test.go` | Cross-cutting e2e harness and module tests | QA |
 | `docs/` | Design and operations documentation | Docs owner |
 
 `cmd/` contains wiring and nothing else. A `main` package with business logic
@@ -128,6 +132,11 @@ const (
     // closed set and covered by contract tests; modules may not invent new codes.
     CodeIllegalTransition        Code = "illegal_transition"
     CodeIdempotencyKeyReuse      Code = "idempotency_key_reuse"
+    // CodeOperationUnknown means the mutation may or may not have been applied
+    // upstream. It is never a licence to retry: poll the operation until the
+    // reconciler resolves it. Returned by the money/order tools and by any gated
+    // write whose outcome is ambiguous.
+    CodeOperationUnknown        Code = "operation_unknown"
     CodeArtifactExpired          Code = "artifact_expired"
     CodeConfirmationMismatch     Code = "confirmation_param_mismatch"
     CodeConfirmationUsed         Code = "confirmation_used"
@@ -143,6 +152,10 @@ const (
     CodeCredentialScopeInsufficient Code = "credential_scope_insufficient"
     CodeProbeSKUConflict         Code = "probe_sku_conflict"
 )
+
+// This enum is the shipped closed set; `errors_test.go` and the toolerr tests
+// pin it. Adding a code is a taxonomy change and must update this document and
+// the conformance tests.
 
 type Error struct {
     Code      Code
@@ -486,14 +499,14 @@ network connection.
 
 ## 10. Enforcement
 
-| Mechanism | Phase |
+| Mechanism | Status |
 |---|---|
-| CODEOWNERS review routing | Phase 0 (active) |
-| Import-boundary check in CI | Phase 1 |
-| `go vet` + `staticcheck` + `golangci-lint` | Phase 1 |
-| Contract tests with fakes | Phase 1–2 |
-| Public API diff check (breaking change detection) | Phase 2 |
-| ADR required for interface changes | Phase 0 (process) |
+| CODEOWNERS review routing | Active |
+| Import-boundary check in CI | Not implemented (review-only) |
+| `go vet` + `golangci-lint` | Active in `scripts/local-ci.sh` and manual CI |
+| Contract tests with fakes | Implemented |
+| Public API diff check (breaking change detection) | PLANNED |
+| ADR required for interface changes | Active process |
 
 ## 11. Anti-patterns
 

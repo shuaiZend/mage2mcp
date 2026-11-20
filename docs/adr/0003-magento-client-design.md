@@ -1,6 +1,6 @@
-# ADR-0003: Magento client design — REST for writes, GraphQL for verification
+# ADR-0003: Magento client design — REST admin only (GraphQL verification superseded)
 
-- **Status:** Accepted
+- **Status:** Accepted; the GraphQL-verification half is superseded by ADR-0022 (no Magento GraphQL client ships)
 - **Date:** 2026-11-18
 - **Deciders:** maintainer, Architect, Magento owner
 - **Supersedes:** none
@@ -38,9 +38,9 @@ Adopt option 5.
 - **REST** (`/rest/{store}/V1/...`) is the only write path and the primary admin
   read path: products, configurable parent/child/options, attributes and sets,
   categories, media, MSI inventory, orders, bulk import and bulk status.
-- **GraphQL** is used read-only to verify storefront-visible correctness: that a
-  configurable product resolves to the expected variants with the expected
-  options, prices, and stock status.
+- **GraphQL** was proposed for read-only storefront verification. It is **not**
+  implemented: the gateway has no Magento GraphQL client (ADR-0022). Verification
+  is an admin REST read-back (`configurable.children`, `product.get`).
 - **Authentication:** integration credentials with OAuth 1.0a signing are the
   production default (HMAC-signed requests, no global configuration toggle).
   Integration access tokens used as bearer tokens work only when the store sets

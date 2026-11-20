@@ -5,11 +5,12 @@
 | Endpoint | Use |
 |---|---|
 | `GET /healthz` | liveness probe; process is up |
-| `GET /readyz` | readiness probe; at least one tool is registered |
+| `GET /readyz` | readiness probe; the process can serve MCP and the registry tool count |
 | `GET /metrics` | Prometheus scrape |
 
-Keep `/metrics` on a private listener or behind Access. It exposes no secrets
-and no tool arguments, but it does reveal traffic patterns.
+`/metrics` is served on the same listener as `/mcp` and is **not authenticated
+by the gateway**. Restrict it with the edge/Access policy or a private network.
+It exposes no secrets and no tool arguments, but it does reveal traffic patterns.
 
 ## Key metrics
 
@@ -24,11 +25,11 @@ and no tool arguments, but it does reveal traffic patterns.
 
 ## Logs
 
-Structured JSON on stderr. One event per tool call with `tool`, `instance`,
-`identity_id`, `permission`, `outcome`, `duration_ms`, and `param_hash`.
+Structured JSON on stderr with key-based redaction. Logs are operational, not
+the audit record: the per-call fields (subject hash, tool, instance, scope,
+decision, phase, state, error code, request id) live in `audit_events`.
 Parameters, tokens, and response bodies are never logged. Ship logs to the
-operator's log store; do not rely on container stdout retention for audit —
-audit lives in PostgreSQL.
+operator's log store; do not rely on container stdout retention for audit.
 
 ## Audit queries
 
@@ -50,9 +51,15 @@ WHERE state = 'pending' AND created_at < now() - interval '5 minutes';
 
 ## What to watch operationally
 
-- Quota headroom for Cloudflare GraphQL (300 queries / 5 min) and GA4 tokens
-  (200,000 / day per property).
+- Cloudflare GraphQL (documented 300 queries / 5 min) and GA4 token quota
+  headroom in the vendor console. The gateway does **not** account for quotas or
+  expose a quota metric.
 - Job queue depth and retry counts; a growing `import` queue means upstream
   throttling or an oversized batch.
-- PostgreSQL connection saturation and audit table growth.
+- `operations` rows in `unknown`/`reconciling`, and `operation_transitions` for
+  escalations ("reconciliation attempts exhausted"). A growing unknown set is
+  the signal to inspect Magento and the reconciler.
+- PostgreSQL connection saturation and audit table growth (no retention job or
+  partitions; plan an export/retention procedure).
 - Certificate and JWKS reachability for Cloudflare Access.
+- `/metrics` is unauthenticated; alert on unexpected access if it is exposed.

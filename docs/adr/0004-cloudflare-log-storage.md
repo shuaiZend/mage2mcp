@@ -1,6 +1,6 @@
 # ADR-0004: Cloudflare raw log storage and analytics boundary
 
-- **Status:** Accepted
+- **Status:** Accepted; implementation **PLANNED** — no R2, ClickHouse, loader, or `cloudflare.logs.*` tool ships
 - **Date:** 2026-11-18
 - **Deciders:** maintainer, Architect, Cloudflare owner
 - **Supersedes:** none

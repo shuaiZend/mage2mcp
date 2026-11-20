@@ -63,8 +63,16 @@ omitting them leaves the assignments untouched.
   attribute, that value must be one of the declared `value_index` values, and no
   two children may describe the same combination. Children accept the same
   SEO/content fields as the parent (their own slug and metadata).
-- Creation order is children -> parent -> links. Failures report the stage and
-  completed SKUs; nothing is rolled back.
+- Creation is a staged workflow: **precheck -> children -> parent -> links
+  (verified by read-back) -> stock**. The result always carries `operation_id`,
+  `outcome` (`completed` or `partial`), `stages`, `completed_stages`,
+  `failed_stage`, and `orphan_skus`.
+- Precheck aborts on a pre-existing SKU with `conflict` and zero writes. A
+  partial run leaves completed writes in place and reports unlinked children as
+  `orphan_skus`; nothing is deleted or compensated.
+- Resume by passing the returned `operation_id`: existing children and the parent
+  are reused, missing links are repaired, and a resumed run writes no duplicate
+  SKU. A fresh run is not idempotent.
 
 ## Inventory
 
@@ -72,7 +80,7 @@ omitting them leaves the assignments untouched.
 |---|---|---|
 | `magento.inventory.assign` | `items[]`: `sku`, `source_code`, `quantity` (>=0), optional `status` (0/1, default 1) | 1-100 items; quantity replaces, it does not add. |
 | `magento.inventory.unassign` | `items[]`: `sku`, `source_code` | 1-100 pairs; duplicate pairs rejected. |
-| `magento.inventory.transfer` | `sku`, `from_source`, `to_source`, `quantity` (>0) | Reads both rows, refuses an insufficient source, then upserts both in one batch; not transactional. |
+| `magento.inventory.transfer` | `sku`, `from_source`, `to_source`, `quantity` (integer > 0) | Reads both rows, re-reads immediately before writing, then upserts both. Returns `transfer_id`, before/after quantities, and `outcome` (`applied`, `conflict`, `verification_mismatch`, `partial`, `not_applied`, `needs_verification`). Only `applied` is success; `needs_verification` means the post-state is unknown and an operator must decide. Fractional quantities are refused (input is an integer; a fractional read-back is `needs_verification`). Not transactional. |
 
 ## Media (`magento.product.media.upload`)
 
@@ -101,11 +109,11 @@ same PII-safe projection. `magento.customer.addresses.delete` removes an address
 
 | Tool | Key fields |
 |---|---|
-| `magento.invoice.create` | `order_id`, `items[]` (`order_item_id`, `qty` > 0), `capture` (default false) |
-| `magento.invoice.capture` | `invoice_id`; charges the payment method |
+| `magento.invoice.create` | `order_id`, `items[]` (`order_item_id`, `qty` > 0), `capture` (default false), optional `idempotency_key`. Uses the workflow route `POST /V1/order/{orderId}/invoice`, which honours `capture`; the repository route would silently ignore it. Returns `captured` and `operation_id`. |
+| `magento.invoice.capture` | `invoice_id`, optional `idempotency_key`; charges the payment method. An ambiguous outcome is `operation_unknown`, never a retry. |
 | `magento.shipment.create` | `order_id`, `items[]`, optional `tracks[]` (`track_number`, `carrier_code`), `comment`, `notify` |
 | `magento.creditmemo.create` | `order_id`, `items[]`, optional non-negative `adjustment_positive` / `adjustment_negative` |
-| `magento.order.create` | `customer_id`, 1-50 `items` (`sku`, `qty` > 0), billing and shipping addresses (firstname, lastname, street 1-4 lines, city, postcode, two-letter uppercase country, telephone), `shipping_carrier_code`, `shipping_method_code`, `payment_method`; totals are computed by Magento |
+| `magento.order.create` | `customer_id`, 1-50 `items` (`sku`, `qty` > 0), billing and shipping addresses (firstname, lastname, street 1-4 lines, city, postcode, two-letter uppercase country, telephone), `shipping_carrier_code`, `shipping_method_code`, `payment_method`, optional `idempotency_key`; totals are computed by Magento. An ambiguous place-order is reconciled by reading the customer's recent orders; an inconclusive read is `operation_unknown`. |
 | `magento.order.comment` | `order_id`, `comment` (1-1024), optional `status`, `notify` |
 | `magento.order.hold` / `unhold` | `order_id` |
 
@@ -127,11 +135,15 @@ as duplicate attributes). SEO columns
 (`description`, `short_description`, `url_key`, `meta_title`, `meta_keywords`,
 `meta_description`) are validated with the same rules as the product tools.
 `magento.import.validate` reports non-blocking SEO/content warnings (capped at
-200) so a batch can be improved before it is queued. `magento.import.resume`
-re-queues only the failed rows of a previous job (from its bounded report) and
-is idempotent per source job. `magento.import.execute`
-runs bounded batches synchronously;
-`magento.import.start` queues them for the worker and needs `database.url`.
+200) so a batch can be improved before it is queued. Only CSV and JSON are
+accepted (no XLSX or gzip); the decoded payload is capped at 8 MiB and 5,000
+rows with 64 columns, and the base64 form must fit the request body cap (default
+16 MiB; a write-enabled deployment must configure at least 12 MiB).
+`magento.import.resume` re-queues only the failed rows of a previous job, read
+from the persisted import batch when one exists (unbounded by the 100-row
+report), and is idempotent per source job. `magento.import.execute` runs bounded
+batches synchronously; `magento.import.start` queues them for the worker and
+needs `database.url`.
 
 ## Limits and pagination
 
@@ -142,11 +154,12 @@ runs bounded batches synchronously;
 | Bulk links (`product.links.bulk`) | 50 targets per call, one add/remove each |
 | Bulk attribute options (`attributes.options.bulk_create`) | 50 labels per call, one create each |
 | Variations (`configurable.create_variations`) | 50 children per call; existing SKUs skipped |
-| Order search (`order.search`) | `limit` 1-100, cursor for the next page |
-| Sales/order summary | 1000 orders scanned per window; truncation is reported |
+| Order search (`order.search`) | `limit` 1-200, cursor for the next page |
+| `order.summary` | 1000 orders scanned per window; truncation is reported |
+| `sales.analysis` | 20,000 orders per call (10,000 default); truncation is reported |
 | Tier prices | 50 tiers per SKU per call |
-| Media upload | 8 MiB decoded per file |
-| Import | 8 MiB and 5000 rows per batch; async jobs retry twice |
+| Media upload | 5 MiB decoded per file |
+| Import | 8 MiB decoded and 5,000 rows per batch, 64 columns; the base64 form must fit `server.max_body_bytes` (default 16 MiB, write-enabled floor 12 MiB); async jobs retry twice |
 
 All limits are enforced before any upstream call; a request above a limit fails
 with `invalid_argument` rather than being silently truncated.

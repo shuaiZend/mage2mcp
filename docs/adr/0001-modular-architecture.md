@@ -63,7 +63,7 @@ without runtime plugin loading.
 - A contributor can work on GA4 without understanding Magento.
 - A failing Cloudflare token disables Cloudflare tools only.
 - Cross-source logic is forced into one reviewable place.
-- Deployment stays simple: server, worker, PostgreSQL, Redis.
+- Deployment stays simple: server, worker, admin CLI, PostgreSQL (no Redis).
 
 ### Negative
 

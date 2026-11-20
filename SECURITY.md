@@ -6,22 +6,23 @@ first-class design constraint, not a feature added after release. This document 
 which versions receive fixes, how to report a vulnerability privately, what to expect
 from the maintainers, and what is in scope.
 
-The project is in Phase 0 (design). No release exists yet, so no version is currently
-supported in production. The policy below takes effect with the first v0.x release and is
-published now so that expectations are clear before that release.
+**Current release:** v0.11.1 (pre-1.0), tagged 2026-11-20. It is the latest
+pre-release and the only version that receives security fixes. The gateway is
+usable, but pre-1.0 interfaces may change through an ADR and a changelog entry,
+and it has not been validated against a live Magento instance (see
+[Verification status](#verification-status)).
 
 ## Supported versions
 
-While the project is pre-1.0, security fixes are provided on the latest minor release
-only. There are no long-term support branches and no backports to older minors. The
-table below is the policy that applies from the first release onward; no version is
-supported today.
+While the project is pre-1.0, security fixes are provided on the latest minor
+release only. There are no long-term support branches and no backports to older
+minors.
 
 | Version | Security fixes | Notes |
 |---|---|---|
-| Latest v0.x minor (for example 0.2.x) | Yes | Fixes land in a patch release on the latest minor |
-| Older v0.x minors (for example 0.1.x after 0.2.0) | No | Upgrade to the latest minor |
-| Versions before the first release | Not applicable | No artifacts have been published |
+| v0.11.x | Yes | Latest pre-release; fixes land in a patch on this minor |
+| v0.10.0 and older | No | Upgrade to v0.11.x |
+| Versions before v0.1.0 | Not applicable | No artifacts were published |
 
 Pre-1.0 policy:
 
@@ -30,6 +31,16 @@ Pre-1.0 policy:
   carrying the fix yourself.
 - Once 1.0 is released, this table will be replaced with a supported-version policy that
   names the maintained release lines and their support windows.
+
+## Verification status
+
+No live Magento, Cloudflare, or GA4 instance was available for the security
+audit. Magento behaviour is verified against the REST contract and `httptest`
+fake servers (`CONTRACT`); there is no automated live-store integration test.
+Treat the first production use as a verification period: run `test/e2e` against
+a Magento 2.4.9 sandbox and review the [known limitations](docs/audit/known-limitations.md)
+before enabling writes. Cloudflare and GA4 live API behaviour is likewise
+unverified.
 
 ## Reporting a vulnerability
 
@@ -185,9 +196,10 @@ does not authorize testing of systems the project does not own.
 - **SBOM and checksums.** Every release ships with an SPDX 2.3 JSON Software Bill of
   Materials and SHA-256 checksums for its artifacts. The format and publication process
   are defined in the [license policy](docs/development/license-policy.md).
-- **Signing.** Artifacts and container images are signed with cosign (keyless) starting
-  with the v0.1.0 release. Until signatures are published, verify downloads against the
-  published checksums.
+- **Signing.** Artifacts and container images are signed with cosign (keyless)
+  for every tagged release. Verify the `.bundle` and `checksums.txt` before
+  deploying; if a signature or checksum is missing from a release, treat the
+  artifact as unverified and report it.
 - **Dependency response.** Dependabot or an equivalent update process will open pull
   requests for vulnerable dependencies. A dependency advisory that affects the gateway is
   handled through the same triage process as a first-party vulnerability.

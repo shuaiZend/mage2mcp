@@ -1,6 +1,6 @@
 # ADR-0016: Unified analytics semantics
 
-- **Status:** Accepted
+- **Status:** Accepted (only `unified.traffic.compare` ships; the other scenarios in this ADR are PLANNED)
 - **Date:** 2026-11-19
 - **Deciders:** maintainer, Architect, Unified owner
 - **Supersedes:** none

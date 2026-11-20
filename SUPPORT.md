@@ -4,8 +4,12 @@ mage2mcp is a community-maintained open source project. This document explains w
 ask questions, what the maintainers can and cannot help with, and what to include when
 you report a problem.
 
-The project is in Phase 0 (design). There is no runnable server yet, so most current
-questions are about the design, the API mappings, and the security model.
+**Current release:** v0.11.1 (pre-1.0), tagged 2026-11-20. The gateway runs as
+a server and worker pair with PostgreSQL; the quickstart, configuration
+reference, deployment guide, and known limitations are the place to start. The
+project has not been validated against a live Magento instance (see
+[SECURITY.md](SECURITY.md#verification-status)); treat the first production use
+as a verification period.
 
 ## Where to ask
 
@@ -94,8 +98,9 @@ A little preparation gets a much better answer.
 ### What to include in a bug report
 
 - mage2mcp version or commit SHA, and the Go version if you built from source.
-- Deployment shape: container or local binary, PostgreSQL and Redis versions, and whether
-  a reverse proxy sits in front of the gateway.
+- Deployment shape: container or local binary, PostgreSQL version (Redis is not
+  used), and whether a reverse proxy or Cloudflare Tunnel sits in front of the
+  gateway.
 - The upstream involved: Magento version and edition, Cloudflare plan and dataset, or GA4
   property type. Do not include account IDs, zone IDs, property IDs, or tokens.
 - The exact tool name and a redacted input. Replace tokens, hostnames, SKUs, order
@@ -108,28 +113,44 @@ Never paste credentials, JWTs, service account JSON, customer data, or full upst
 response bodies into an issue. If a maintainer needs a sensitive value, they will ask for
 a redacted form or a private channel.
 
-## Troubleshooting (Phase 1 and later)
+## Troubleshooting
 
-There is nothing to troubleshoot yet. When the first runnable build lands, the operator
-guide will document the following, and this section will link to it:
+These are the as-built behaviours to check first. The full reference is
+[docs/configuration.md](docs/configuration.md); deployment details are in
+[docs/operations/deployment.md](docs/operations/deployment.md).
 
-- **Configuration validation.** The gateway will validate YAML and environment
-  configuration at startup, reject unknown keys, and disable an invalid instance with a
-  field-level error that names the offending key without echoing the secret value. A
-  validation-only mode is planned so configuration can be checked before deployment.
-- **Health endpoints.** `/healthz` reports process liveness, `/readyz` reports whether at
-  least one module is ready and the database is reachable, and `/livez` provides an
-  optional deeper check. A module that fails its startup health check is disabled while
-  the other modules keep running.
-- **Logs.** Structured JSON logs through `slog`, with one event per tool call carrying
-  the tool, instance, identity, permission, outcome, duration, and parameter hash.
-  Parameters are never logged verbatim, and the log level is configurable.
-- **Metrics.** A Prometheus endpoint is planned for tool calls and latency, upstream
-  requests and quota, job state, and authentication failures.
+- **Configuration validation.** The gateway validates YAML and environment
+  configuration at startup, rejects unknown keys, and reports every problem it
+  finds. There is no validation-only mode; `-healthcheck` probes a running
+  server and does not load `-config`.
+- **Health endpoints.** `/healthz` reports process liveness. `/readyz` reports
+  that the process can serve MCP and the registry tool count; `platform.info` is
+  served outside the registry, so a fresh development start reports `"tools":0`.
+  There is no `/livez`.
+- **Metrics.** `/metrics` is a Prometheus endpoint on the same listener. It is
+  not authenticated by the gateway; restrict the listener or put it behind your
+  edge/Access policy.
+- **Authentication.** A non-loopback listener refuses to start with
+  authentication disabled unless `-dev-insecure` or
+  `MAGE2MCP_DEV_INSECURE=true` is set. Never use that combination in production.
+- **Writes.** `tools.writes: true` registers the write tools, but approvals need
+  `database.url` (the `mage2mcp-admin` CLI reads the shared store). Without
+  PostgreSQL, writes are registered but cannot be approved, and the operation
+  ledger is disabled.
+- **Async imports.** The `magento.import.start/status/cancel/batches/batch/resume`
+  tools are registered only when `database.url` is set.
+- **Unified bindings.** A `bindings` block requires Magento, Cloudflare, and GA4
+  to be enabled, with exactly one Cloudflare instance and one GA4 instance.
+  Other shapes are rejected at startup.
+- **Magento verification.** No live Magento instance was available for the
+  audit. If a Magento call behaves differently from the contract, that is a
+  reportable defect; include the request shape and the upstream message.
+- **Logs.** Structured JSON through `slog`, with secret-shaped attributes
+  redacted. Parameters and response bodies are not logged.
 
-Until those exist, [the architecture document](docs/architecture.md) and the rest of
-[`docs/`](docs/) are the reference for intended behavior. If a design document is
-ambiguous, open a Discussion; that feedback improves the design before code exists.
+If a document and the code disagree, the code wins and the documentation is the
+defect; report it. The [known limitations](docs/audit/known-limitations.md) list
+the accepted gaps.
 
 ## Response expectations
 

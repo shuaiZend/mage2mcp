@@ -6,12 +6,12 @@
 |---|---|---|---|
 | Audit events | PostgreSQL | continuous / daily | evidence; retention policy applies |
 | Confirmations | PostgreSQL | daily | short-lived; losing them only cancels pending approvals |
-| Jobs and idempotency keys | PostgreSQL | daily | losing them may re-run non-idempotent work |
-| Instances and permissions | PostgreSQL | daily | projection of YAML; YAML is the source of truth |
+| Jobs and the operation ledger | PostgreSQL | daily | losing the ledger may re-run a non-idempotent mutation |
+| Instance rows and role tables | PostgreSQL | daily | instance rows are a projection of YAML; the role tables are not read at runtime |
 | Configuration and secrets | operator repository / secret manager | on change | never in the database backup |
 
-Raw Cloudflare request logs (when Logpush is enabled) live in R2/ClickHouse and
-follow that system's own backup policy; they are never in PostgreSQL.
+Raw Cloudflare request logs are not implemented; there is no R2/ClickHouse
+component to back up. PostgreSQL never stores raw logs.
 
 ## PostgreSQL backup
 
@@ -36,13 +36,15 @@ MAGE2MCP_DATABASE_URL=postgres://.../mage2mcp_restore \
 3. Run the server once against the restored database: migrations are
    idempotent and recorded in `schema_migrations`.
 4. Verify audit continuity: `SELECT count(*), min(occurred_at), max(occurred_at) FROM audit_events;`
-5. Start the worker, then the server, and check `/readyz`.
-6. Re-approve any confirmation that was pending before the restore; do not
-   resurrect consumed ones.
+5. Start the server once so it applies any missing migrations, then start the
+   worker, and check `/readyz`.
+6. Re-request any confirmation that was pending before the restore; do not
+   resurrect consumed or expired ones.
 
 ## Retention
 
 Import batch history is pruned by the worker after 30 days (failure rows
-cascade). Audit retention defaults to 365 days. Deleting old audit partitions is an
-operator action performed after exporting to the external sink and recording the
-archive digest; see the audit design in the architecture document.
+cascade). Audit events, jobs, confirmations, and the operation ledger have **no
+retention job** and **no partitions**; the table is a single table. If you need
+retention or tamper evidence, export to an immutable sink and add an operator
+procedure. A hash chain and retention partitions are PLANNED.

@@ -1,25 +1,26 @@
 # Contributing to mage2mcp
 
 Thank you for considering a contribution. mage2mcp is a standalone MCP gateway for
-Magento 2, Cloudflare, and Google Analytics 4, and it is currently in Phase 0 (design).
-This document explains how the project is developed, what is expected from a
-contribution, and which rules apply before and after 1.0.
+Magento 2, Cloudflare, and Google Analytics 4. The current release is v0.11.1
+(pre-1.0, tagged 2026-11-20); the development, testing, and review rules below
+are the contract for code contributions.
 
 By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Project status: what we accept now
 
-Phase 0 is for design, not code. During this phase we welcome:
+The gateway is shipped and maintained as a pre-1.0 product. Contributions are
+welcome in these forms:
 
-- Review comments on design documents in [`docs/`](docs/).
-- Threat-model feedback and abuse-case analysis.
-- Corrections to verified facts, endpoint mappings, and compatibility claims.
+- Bug fixes with a regression test, including fixes for the known limitations in
+  [`docs/audit/known-limitations.md`](docs/audit/known-limitations.md).
+- New or corrected tools that follow the registry contract and carry tests.
 - Documentation fixes, including the Chinese README.
+- Threat-model feedback and abuse-case analysis.
 
-Feature pull requests are not accepted until the Phase 0 design is approved. The
-development, testing, and review rules below are the contract for code contributions
-from Phase 1 onward; they are documented now so that the expectations are public before
-the first line of Go is merged.
+Before 1.0, public tool names, schemas, configuration keys, and error codes may
+still change, but only through an ADR and a changelog entry. A contribution that
+changes one of those interfaces needs the ADR in the same pull request.
 
 ## Licensing and sign-off
 
@@ -51,14 +52,14 @@ itself signed off.
 | Tool | Version | Purpose |
 |---|---|---|
 | Go | 1.26 or newer | Build and test the gateway |
-| Docker with Compose | Current release (tested with 29.8 / Compose v5.5) | PostgreSQL, Redis, and local runs |
-| PostgreSQL | 16 or newer | Configuration metadata, audit log, job state |
-| Redis | 7 or newer | Asynq queues |
+| Docker with Compose | Current release (tested with 29.8 / Compose v5.5) | PostgreSQL and local runs |
+| PostgreSQL | 16 or newer | Audit log, confirmations, operation ledger, job state |
 | Node.js | 22 or newer | Documentation linting only (CI uses 22) |
 | git | Current release (tested with 2.39) | Version control |
 
-R2 and ClickHouse are optional. They are only needed for request-level Cloudflare log
-analysis in Phase 3 and are not required for local development.
+Redis is not used: the job queue is PostgreSQL-only. R2 and ClickHouse are not
+part of this release; raw Cloudflare log analysis is a planned capability, not a
+local-development requirement.
 
 The official MCP Go SDK v1.8.0 declares `go 1.25.0`, and the planned direct
 dependencies require Go 1.26, so **Go 1.26 is the hard minimum** (see
@@ -96,12 +97,12 @@ to `go.env` committed files, or to CI configuration; they are machine-local pref
 
 ### Local services
 
-Phase 1 will add a Compose file for PostgreSQL, Redis, and the gateway, together with
-Makefile targets for the common tasks. Until that lands, run the dependencies you need
-yourself and point the service at them with environment variables. The configuration
-keys and defaults are defined in
-[`docs/architecture.md`](docs/architecture.md) and will be documented in an operator
-guide before the first release.
+`docker compose up --build` starts PostgreSQL and the gateway for local
+development. The configuration keys, defaults, and environment overrides are in
+[`docs/configuration.md`](docs/configuration.md); deployment details are in
+[`docs/operations/deployment.md`](docs/operations/deployment.md). The development
+example disables authentication and is loopback-only; never expose it to a
+network.
 
 Never commit `.env` files, connection strings with passwords, API tokens, service
 account JSON, or TLS private keys. The `.gitignore` already excludes the common cases,
@@ -110,9 +111,10 @@ but the rule is yours to follow.
 ### Documentation tooling
 
 Node.js is needed only for documentation linting and link checking. There is no
-JavaScript runtime dependency in the gateway. The documentation checks are live in CI
-(`docs` job): `npm ci`, `npm run lint:md`, and `npm run lint:links`. Run the same
-commands locally before opening a pull request.
+JavaScript runtime dependency in the gateway. The documentation checks are part
+of `scripts/local-ci.sh`: `npm ci`, `npm run lint:md`, `npm run lint:links`, and
+`npm run test:contracts`. GitHub CI is manual and release-time only, so the local
+run is the contract.
 
 ## Branches and commits
 
@@ -187,7 +189,7 @@ roles; the review rules still apply and become meaningful as the team grows.
 | Storage and migrations | `internal/storage/` | Architect | Maintainer |
 | Observability | `internal/observability/` | Architect | Maintainer |
 | Process wiring | `cmd/` | Architect | Maintainer |
-| Cross-cutting tests | `tests/` | QA | QA |
+| Cross-cutting tests | `test/`, `internal/*/..._test.go` | QA | QA |
 | Documentation | `docs/`, `README.md`, `README.zh-CN.md` | Docs owner | Docs owner |
 
 The following are **core interfaces** and require an ADR plus Architect review before
@@ -239,9 +241,11 @@ coverage.
 
 ### Quality gates
 
-Every pull request must pass the gates below. The docs and DCO jobs run in CI today; the
-Go jobs activate as soon as `go.mod` exists. Changelog and documentation review are checked
-by reviewers.
+Every pull request must pass the gates below. GitHub CI is a manual pre-release
+workflow; day-to-day verification is `scripts/local-ci.sh`, which runs the same
+Go, documentation, and workflow checks. The DCO sign-off is checked by reviewers
+(and by the merge policy), not by a CI job. Changelog and documentation review
+are checked by reviewers.
 
 | Gate | Check | Blocking |
 |---|---|---|
@@ -252,7 +256,7 @@ by reviewers.
 | Security tests | Auth, RBAC, confirmation, redaction suites | Yes |
 | Secret scan | gitleaks over the full history | Yes |
 | Dependency review | No High severity advisories and no denied licenses | Yes |
-| Vulnerability scan | `govulncheck ./...` when the Go module exists | Yes |
+| Vulnerability scan | `govulncheck ./...` | Yes |
 | Static analysis | gosec with no High severity findings | Yes |
 | Documentation | Behavior changes update the relevant docs | Yes |
 | Documentation lint | Markdown lint and internal link check | Yes |

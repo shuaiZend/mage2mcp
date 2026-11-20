@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-20
+
+Production-readiness remediation: a full audit of the security, Magento,
+reliability, MCP, performance and documentation surfaces, with every confirmed
+P0 fixed and independently reviewed. The audit record lives in
+[`docs/audit/`](docs/audit/README.md).
+
+The theme of this release is **contracts that were declared but never wired**.
+Four were found: the RBAC scope ladder was never applied to a tool call, the
+retryability rule was only called from tests, confirmations were bound to
+arguments but not to the tool or the instance, and the idempotency table was dead
+schema. All four are now enforced and covered by tests that fail when the wiring
+is reverted.
+
+### Added
+
+- **Operation ledger** (`internal/storage/operation_ledger.go`, migration
+  `000006`) with `pending → executing → {succeeded | failed | unknown}` plus
+  `reconciling`, a fencing token per attempt, an append-only transition log, and
+  recorded-result replay. A middleware gate opens one operation per write tool;
+  five money tools are explicitly self-ledgered because their safety depends on
+  pre-flight reads and reconciliation a generic wrapper cannot perform.
+- **Reconciler** (`platform:reconcile`) that resolves `unknown` operations by
+  reading upstream state, with bounded retries and terminal escalation.
+- **Per-instance outbound limits** (`limits:` in configuration): a token bucket
+  and concurrency cap per Magento instance. An exhausted budget returns a
+  retryable `rate_limited` without reaching the store.
+- **Job fencing** (migration `000005`): a lease token per claim, guarded terminal
+  transitions, lease renewal, bounded ordered recovery, and cancellation that
+  reaches the running handler.
+- **Registry-generated** `docs/implemented-tools.md`, with a test that fails when
+  the checked-in file drifts from the registry.
+- **Independent QA suite** (`test/qa`, `scripts/qa-independent.sh`) covering the
+  twelve scenarios the audit called blind spots; it fails on any skipped test.
+- `operation_unknown` error code and `pending` audit-decision value (migration
+  `000007`).
+
+### Security
+
+- The RBAC scope ladder is enforced at the call boundary: a `viewer` is denied
+  write and destructive tools; `operator` is denied destructive.
+- A confirmation is bound to its tool and its instance; an approval for
+  `order.hold` can no longer be consumed by `order.unhold`.
+- Import jobs are tenant- and subject-scoped for status, cancel, resume and batch
+  reads, so a job id is no longer a cross-tenant capability.
+- `Cf-Access-Jwt-Assertion` is accepted and verified through the same verifier as
+  a bearer token, with explicit precedence and duplicate rejection.
+- Denied calls are audited as `deny`; intent rows no longer assert `allow`; the
+  outcome row shares the ledger transaction for middleware-gated tools.
+- Real GA4 account and property identifiers removed from documentation and the
+  shipped configuration examples.
+
+### Fixed
+
+- **Money safety**: capture refuses an already-paid invoice with no upstream call;
+  a timeout is `unknown`, never retried; credit memos validate invoice linkage and
+  refundable quantity before writing; order creation keeps the cart on an
+  ambiguous placement and reconciles on `quote_id` rather than a statistical
+  guess. Repeat calls replay the recorded outcome.
+- **Job queue**: a stale worker can no longer overwrite a newer attempt; the lease
+  is renewed; recovery is bounded and cannot deadlock.
+- **MSI transfer**: concurrent modification is detected, the write is verified by
+  reading back, a partial application names the row it wrote, and
+  `needs_verification` reports `applied_rows=unknown` instead of `none`.
+- **Configurable products**: creation is a staged workflow with a SKU precheck,
+  link verification, resume via `operation_id`, and explicit orphan reporting.
+- **Catalog**: media upload accepts Magento's integer entry id; the custom-option
+  fallback no longer fabricates a successful option.
+- **Sales**: invoice creation uses the workflow route that honours `capture`;
+  `store_id` is refused rather than silently ignored.
+- **History**: a retried import resumes its open batch instead of opening a second
+  one, the by-job lookup is deterministic, and terminal jobs are pruned.
+- **Analysis**: silent response truncation is an explicit typed error; capped
+  scans report how many rows they excluded.
+
+### Changed
+
+- `server.max_body_bytes` default is 16 MiB (was 1 MiB) so a documented
+  8 MiB import actually fits; a write-enabled deployment below 12 MiB now fails at
+  startup instead of at the transport.
+
+### Breaking changes
+
+Behaviour that was previously wrong is now enforced. See
+[`docs/releases/v0.11.1.md`](docs/releases/v0.11.1.md) for the migration checklist.
+
+- Authorization enforces each tool's declared scope. A deployment that relied on
+  a read-only role invoking writes will now be denied — correctly.
+- `server.public_url` / `MAGE2MCP_PUBLIC_URL` removed.
+- Bindings require all three modules enabled and exactly one Cloudflare and one
+  GA4 instance.
+- The four `magento.import.*` job tools require `instance`.
+- `magento.order.create` rejects a non-zero `store_id`.
+- `magento.import.cancel` returns a typed error for an already-terminal job.
+- The storage test suite requires `MAGE2MCP_TEST_DATABASE_URL` and is now
+  repeatable; each database-backed package uses its own schema.
+
 ## [0.11.0] - 2026-11-20
 
 Write-safety guidance and product-copy defect fixes.
@@ -14,9 +111,30 @@ Write-safety guidance and product-copy defect fixes.
 ### Added
 
 - `write_safety` MCP prompt and write-tool descriptions warn that category,
-  attribute/option, and url_key changes can alter product URLs and require
+  attribute/option, and `url_key` changes can alter product URLs and require
   explicit confirmation; `docs/write-safety.md` documents the checklist.
 
+### Fixed
+
+- Product-copy defects D1–D3, D5, D6, D8–D11: custom-option creation falls back to
+  the product update endpoint (this demo rejects both paths, so the error now
+  carries both statuses and messages); `weight` is a top-level field (no longer
+  silently dropped); configurable parents get their stock status after linking and
+  report `parent_in_stock`; product reads include SEO/content/weight/custom
+  attributes; configurable children expose variant attributes; child/variation
+  names are optional; `configurable.children` accepts a `sku` alias; optional SEO
+  checks no longer lower the score.
+
+### Breaking changes
+
+None; new response fields are additive. See
+[`docs/releases/v0.11.0.md`](docs/releases/v0.11.0.md).
+
+## [0.10.0] - 2026-11-20
+
+Admin-credential auto-token, faster CI, and a dependency advisory fix.
+
+### Added
 
 - Magento `admin:<username>:<password>` credential form: the gateway mints an
   admin bearer token from
@@ -28,26 +146,15 @@ Write-safety guidance and product-copy defect fixes.
   powerful than an integration token, so prefer a dedicated API-only admin with
   a least-privilege ACL role.
 
-### Fixed
-
-- Product-copy defects D1–D3, D5, D6, D8–D11: custom-option creation falls back to
-  the product update endpoint (this demo rejects both paths, so the error now
-  carries both statuses and messages); `weight` is a top-level field (no longer silently
-  dropped); configurable parents get their stock status after linking and report
-  `parent_in_stock`; product reads include SEO/content/weight/custom attributes;
-  configurable children expose variant attributes; child/variation names are
-  optional; `configurable.children` accepts a `sku` alias; optional SEO checks no
-  longer lower the score.
-
 ### Changed
 
 - CI: docs-only changes take a fast path through the classifier; Docker layers are
   shared between the docker and release-dry-run jobs; golangci-lint runs once;
   job-level concurrency and timeouts added; a `ci-gate` job aggregates the result.
 - GitHub Actions bumped to the current majors (checkout v7, setup-go v7,
-  setup-node v7, upload-artifact v7, download-artifact v8, docker actions v4/v6/v7,
-  cosign-installer v4, attest v4, gh-release v3, sbom-action v0.24, scorecard
-  v2.5, dependency-review v5) with SHA pins retained.
+  setup-node v7, upload-artifact v7, download-artifact v8, docker actions
+  v4/v6/v7, cosign-installer v4, attest v4, gh-release v3, sbom-action v0.24,
+  scorecard v2.5, dependency-review v5) with SHA pins retained.
 
 ### Fixed
 

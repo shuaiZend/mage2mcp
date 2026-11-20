@@ -1,9 +1,11 @@
 # Unified analytics
 
-**Status:** Phase 0 design baseline. Defines the semantics every `unified.*` tool must implement; not yet implemented.
+**Status:** as-built for `unified.traffic.compare` (CONTRACT); every other
+`unified.*` scenario in this document is **PLANNED**. The semantics below are the
+contract the implemented tool follows and the target for the planned ones.
 **Module:** `internal/unified`. **Related:** [architecture.md](architecture.md) §4,
-[module-boundaries.md](module-boundaries.md) §5.4, [mcp-tools.md](mcp-tools.md) §7.8,
-[database-design.md](database-design.md) §5.6, [ADR-0005](adr/0005-ga4-integration.md).
+[module-boundaries.md](module-boundaries.md) §5.4, [mcp-tools.md](mcp-tools.md) §10,
+[ADR-0016](adr/0016-unified-analytics-semantics.md).
 **Tags:** `[V-live]` observed live, `[V-docs]` vendor documentation, `[U]` unverified with the probe stated.
 
 ## 1. Purpose, scope, and non-goals
@@ -88,7 +90,7 @@ of the result, never of storage. Each source keeps its own calendar:
 | Source | Day boundary | Configurable | Consequence |
 |---|---|---|---|
 | Cloudflare | UTC | no | A local day is an arbitrary UTC interval, not a UTC calendar day. |
-| GA4 | property zone (`America/Los_Angeles` for `properties/354542598` `[V-live]`) | no | `dateRanges` accept `YYYY-MM-DD` only, so GA4 is queryable only over whole property-local days. |
+| GA4 | property zone (`America/Los_Angeles` for the configured property `[V-live]`) | no | `dateRanges` accept `YYYY-MM-DD` only, so GA4 is queryable only over whole property-local days. |
 | Magento | store zone (instance configuration) | yes | Date filters use `Y-m-d H:i:s` in the store zone; the gateway converts UTC inputs and says so. |
 
 **T1 — GA4 sets the alignment unit.** A comparison including GA4 must use a whole number of GA4

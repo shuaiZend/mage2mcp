@@ -1,133 +1,118 @@
 # MCP conformance and best practices
 
-**Status:** Phase 0/1 boundary. This document maps the MCP specification's
-requirements and security best practices to mage2mcp's design, records the gaps,
-and defines the tests that prove conformance. It is the checklist a reviewer uses
-to decide whether the gateway is a well-behaved MCP server.
+**Status:** as-built for v0.11.1
+(2026-11-20). This document maps the MCP specification's requirements and
+security best practices to the shipped gateway and names the test that proves
+each row. Rows that are not implemented are marked **PLANNED**.
 
-**References:** MCP specification 2025-11-25 (tools, transports, security best
-practices), the official Go SDK v1.8.0 (which negotiates 2025-11-25 through
-2026-07-28), and [ADR-0017](adr/0017-mcp-conformance.md).
+**References:** MCP specification `2025-11-25` (tools, transports, security best
+practices), the official Go SDK v1.8.0 (which negotiates every version in
+`mcp.SupportedProtocolVersions()`: `2026-07-28`, `2025-11-25`, `2025-06-18`,
+`2025-03-26`, `2024-11-05`), and [ADR-0017](adr/0017-mcp-conformance.md).
 
-## 1. Conformance matrix
+**Verification boundary.** No live Magento, Cloudflare, or GA4 instance was
+available. Tool behaviour is tested against `httptest` fakes (`CONTRACT`); the
+database-backed controls are tested against PostgreSQL. No row is
+`INTEGRATION_TESTED`.
 
-Legend: **Designed** = specified in this repository, not implemented; **Planned**
-= implementation scheduled; **Verified** = test evidence exists.
+## 1. Status labels
 
-### 1.1 Tools
+| Label | Meaning |
+|---|---|
+| **TESTED (CONTRACT)** | A test exercises the behaviour against a fake upstream or an in-process client. |
+| **TESTED (PostgreSQL)** | A test exercises the behaviour against a real PostgreSQL instance. |
+| **IMPLEMENTED** | Code exists; no direct test or only partial coverage is stated. |
+| **PLANNED** | Designed, not implemented. |
+| **DEPLOYMENT CONTROL** | The gateway does not enforce it; the operator must. |
 
-| # | Requirement | Design position | Status | Test |
+## 2. Tools
+
+| # | Requirement | As-built position | Status | Evidence |
 |---|---|---|---|---|
-| T1 | Tool names are 1–128 characters from `[A-Za-z0-9_.-]`, unique | Names are `module.domain.action`, lowercase, dot-separated; stricter than the spec and a subset of it | Designed | `scripts/check-contracts.mjs` rejects a name outside the grammar or a duplicate |
-| T2 | Every tool has a `title` and a description that states what it does and does not do | Required fields in the tool contract; descriptions are static and reviewed like code | Designed | Contract test asserts both fields exist for every catalog row |
-| T3 | `inputSchema` is a valid JSON Schema object with `additionalProperties: false` | Required; SDK validates inputs before the handler runs | Designed | Schema lint in Phase 1; reference schemas in the catalog |
-| T4 | `outputSchema` is present for structured results | Required for every tool that returns data; free-form text is the exception, not the default | Designed | Phase 1 registry test rejects a structured tool without an output schema |
-| T5 | Structured results use `structuredContent` and also return serialized JSON in a `TextContent` block for backward compatibility | Adopted: structured content plus a text fallback containing the same JSON | Implemented | Conformance test parses both and compares |
-| T6 | Tool errors carry a machine-readable envelope (`code`, `message`, `details`, `retryable`) in `structuredContent` | Adopted: every tool registers through `internal/mcp/toolerr`; schema failures return `invalid_argument` | Implemented | `internal/mcp/toolerr` tests cover handler errors, schema errors, and success |
-| T6 | Annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) are accurate | Required per tool; a write marked read-only is a defect | Designed | Matrix test compares annotation to the declared scope |
-| T7 | Invalid arguments are protocol errors; execution failures are tool errors (`isError: true`) | SDK handles schema rejection as a protocol error; handlers return typed tool errors | Designed | Integration test: bad schema → protocol error; upstream failure → `isError` |
-| T8 | List-shaped results paginate; no unbounded arrays | Opaque cursors, per-tool caps, `meta.pagination` | Designed | Test asserts a cursor is returned at the cap and that a page never exceeds it |
-| T9 | Long operations support progress and cancellation | `progressToken` is honored; `notifications/cancelled` cancels the context; jobs expose `platform.job.cancel` | Designed | Test cancels mid-flight and asserts no upstream call after cancellation |
-| T10 | Large payloads use `resource_link` instead of inflating the tool result | Adopted for reports and import reports above the inline cap; `result_ref` stores the object | Designed | Test returns a link for a 10k-row report and never the full body |
-| T11 | Tool results are bounded in size | Inline result cap 8 KiB; larger results go to object storage behind a resource link | Designed | Test asserts the cap and the link fallback |
-| T12 | No universal execution tool | No `execute_api`, `execute_sql`, or raw GraphQL tool | Designed | Contract test fails if such a name appears |
+| T1 | Tool names are 1–128 characters from `[A-Za-z0-9_.-]`, unique | `module.domain.action`, lowercase, dot-separated; stricter than the spec | TESTED (CONTRACT) | `internal/mcp/registry/registry_test.go` (`TestRegisterRejectsInvalidTools`, `TestRegisterRejectsDuplicate`) |
+| T2 | Every tool has a `title` and a static description | Registry requires both; descriptions are compiled constants | TESTED (CONTRACT) | `registry_test.go`; `internal/magento/tools_test.go` (`TestRegisterMetadata`) |
+| T3 | `inputSchema` is a JSON Schema object with `additionalProperties: false` | Every tool declares one; `toolerr` compiles and validates it | TESTED (CONTRACT) | `internal/mcp/toolerr/toolerr_test.go` (`TestInvalidArgumentsEnvelope`), `registry_test.go` |
+| T4 | `outputSchema` is present for structured results | `toolerr.Add` infers it from the output type when not set | TESTED (CONTRACT) | `internal/mcp/server/server_test.go` (`TestMCPClientListsAndCallsPlatformInfo` checks the schema) |
+| T5 | Structured results use `structuredContent` plus a JSON `TextContent` fallback | `toolerr.Add` sets both; the fallback is the same JSON | TESTED (CONTRACT) | `toolerr_test.go` (`TestStructuredSuccessContent`) |
+| T6 | Tool errors carry `{code, message, details, retryable}` in `structuredContent` | `toolerr.errorResult` builds the envelope; schema failures return `invalid_argument` | TESTED (CONTRACT) | `toolerr_test.go` (`TestStructuredErrorEnvelope`, `TestErrorEnvelopeIsUniform`) |
+| T7 | Annotations are accurate for the declared scope | Registry rejects a read tool without `readOnlyHint` and a destructive tool without `destructiveHint` + confirmation | TESTED (CONTRACT) | `registry_test.go`; `internal/magento/write_tools_test.go` |
+| T8 | Invalid arguments fail before the handler; execution failures are tool errors | The SDK schema check and `toolerr`'s validator reject before the handler; handler errors return `isError: true` | TESTED (CONTRACT) | `toolerr_test.go`; `internal/magento/client_test.go` (`TestGetRejectsInvalidSKUWithoutRequest`) |
+| T9 | List-shaped results paginate and are bounded | Magento list tools use `cursor` (offset) + `limit`; each tool has a cap; no unbounded array | TESTED (CONTRACT) | `internal/magento/tools_test.go`; per-tool schema tests |
+| T10 | Long operations support progress and cancellation | **Not implemented.** No `progressToken`, no `notifications/cancelled`, no `platform.job.cancel`; imports are polled with `magento.import.status` | PLANNED | — |
+| T11 | Large payloads use `resource_link` | **Not implemented.** Results are returned inline within each tool's row cap | PLANNED | — |
+| T12 | Tool results are bounded in size | Each tool declares row/field caps; the HTTP body cap is 16 MiB by default | TESTED (CONTRACT) | `internal/magento/import_test.go` (`TestImportLimitsAgreeAcrossPackages`) |
+| T13 | No universal execution tool | No `execute_api`, `execute_sql`, or raw GraphQL tool | TESTED (CONTRACT) | `scripts/check-contracts.mjs`; `registry_test.go` |
 
-### 1.2 Transport and sessions
+## 3. Transport and sessions
 
-| # | Requirement | Design position | Status | Test |
+| # | Requirement | As-built position | Status | Evidence |
 |---|---|---|---|---|
-| S1 | Streamable HTTP with `Mcp-Session-Id` | `mcp.NewStreamableHTTPHandler`; stateful by default | Designed | Protocol test initializes, calls, terminates |
-| S2 | Session IDs are cryptographically random and bound to the authenticated identity | SDK generates the ID; the gateway binds it to `TokenInfo.UserID` and rejects a foreign session | Designed | Test presents a session ID with a different identity → 404 |
-| S3 | Sessions terminate on `DELETE` and expire on an idle timeout | Redis-backed session store with a 30-minute idle TTL; `DELETE` removes it | Designed | Test terminates and asserts the session is gone |
-| S4 | Resumability via `Last-Event-ID` when an event store is configured | Optional `EventStore`; required for long-running streamed operations | Designed | Test reconnects with `Last-Event-ID` and receives missed events |
-| S5 | Origin header validation and DNS-rebinding protection | SDK's cross-origin protection and localhost protection stay enabled; disabling requires an ADR | Designed | Test sends a hostile `Origin` and a rebound `Host` → rejected |
-| S6 | Request body and header limits | 1 MiB body cap, 8 KiB token cap, header count limit | Designed | Fuzz test with oversized bodies |
+| S1 | Streamable HTTP with `Mcp-Session-Id` | The official SDK's `NewStreamableHTTPHandler`; stateful by default, 30-minute session timeout | TESTED (CONTRACT) | `internal/mcp/server/server_test.go` (`TestMCPClientListsAndCallsPlatformInfo`) |
+| S2 | Session IDs are cryptographically random and bound to the authenticated identity | The SDK generates the ID; the gateway **does not** bind it to the identity (SEC-15, accepted) | PLANNED | — |
+| S3 | Sessions terminate on `DELETE` and expire on idle | SDK session timeout; no Redis, no server-side session store | IMPLEMENTED (SDK) | `server.go` options; no direct test |
+| S4 | Resumability via `Last-Event-ID` with an event store | **Not implemented**; no `EventStore` | PLANNED | — |
+| S5 | Origin validation and DNS-rebinding protection | The SDK's defaults are left in place; origin lockdown is a deployment control, not gateway-enforced | DEPLOYMENT CONTROL | — |
+| S6 | Request body and header limits | `server.max_body_bytes` (default 16 MiB, write-enabled floor 12 MiB); 8 KiB JWT cap; SDK header limits | TESTED (CONTRACT) | `internal/magento/import_test.go` (`TestHTTPBodyCapRejectsOversizeRequest`), `internal/security/jwt/jwt_test.go` (`TestVerifyRejectsOversizedToken`) |
 
-### 1.3 Authorization and security best practices
+There is no Redis anywhere in the project (ADR-0019). The job queue and all
+durable state are PostgreSQL.
 
-| # | Requirement | Design position | Status | Test |
+## 4. Authorization and security best practices
+
+| # | Requirement | As-built position | Status | Evidence |
 |---|---|---|---|---|
-| A1 | **No token passthrough**: a client token is never forwarded to an upstream API | Vendor credentials are separate per instance; the caller's JWT never leaves the gateway | Designed | Test asserts no upstream request carries the caller token |
-| A2 | **Audience binding**: a token is valid only for this gateway and instance | `aud` must equal the configured Access application audience; a mismatch is 401 | Designed | Forged `aud` test |
-| A3 | **Scope minimization** | Per-tool scopes, default deny, per-instance grants, read-only default | Designed | Role × tool × instance matrix |
-| A4 | **Confused deputy**: no proxy path that lets a client use the gateway's authority for a resource it cannot access | Every upstream call is authorized against the caller's grants and instance; no shared upstream identity across instances | Designed | Cross-instance access test returns 404 |
-| A5 | **Session hijacking**: session ID alone is not authority | Session bound to identity; a session ID without the matching identity is rejected | Designed | Session fixation test |
-| A6 | **Local server compromise**: localhost binding and DNS rebinding are handled | Gateway binds a configured interface; localhost protection stays on; production deployment is behind Cloudflare Tunnel | Designed | Rebinding test |
-| A7 | Protected resource metadata (RFC 9728) and `WWW-Authenticate` for OAuth discovery | Served when OAuth mode is enabled; optional for Access-only deployments | Planned | Metadata endpoint test |
-| A8 | OAuth 2.1 resource server behavior (PKCE, no implicit flow) when OAuth mode is used | Out of scope for v0.x; Cloudflare Access is the IdP. The OIDC fallback is documented but not implemented | Planned | OAuth conformance suite in Phase 6 |
+| A1 | **No token passthrough** | The caller credential is never forwarded; each module uses its per-instance vendor credential | IMPLEMENTED (no direct test) | `internal/magento/client_test.go` (`TestGetProductRequestAndResponse` asserts the vendor signer header) |
+| A2 | **Audience binding** | `aud` must equal the configured Access application audience | TESTED (CONTRACT) | `internal/security/jwt/jwt_test.go` (`TestVerifyClaimRejections`) |
+| A3 | **Scope minimization** | Per-tool scope from the registry; default-deny RBAC; instance-scoped grants; read-only default | TESTED (CONTRACT) | `internal/security/rbac/rbac_test.go`; `server_test.go` (`TestAuthorizationReceivesRequiredScope`) |
+| A4 | **Confused deputy** | Every call is authorized against the caller's grants and the resolved instance; no shared upstream identity | TESTED (CONTRACT) | `server_test.go` (`TestCrossInstanceAuthorizationIsEnforced`) |
+| A5 | **Session hijacking** | Not bound to identity (SEC-15, accepted); transport auth still gates each request | PLANNED | — |
+| A6 | **Local server compromise** | The gateway binds a configured interface; localhost protection and origin lockdown are deployment controls | DEPLOYMENT CONTROL | — |
+| A7 | RFC 9728 protected-resource metadata | **Not implemented**; Cloudflare Access deployments rely on the edge | PLANNED | — |
+| A8 | OAuth 2.1 resource-server mode | Out of scope for v0.x; Cloudflare Access or a direct OIDC issuer is the IdP | PLANNED | — |
+| A9 | Ingress accepts `Cf-Access-Jwt-Assertion` or Bearer; assertion precedence; duplicates rejected | Exactly one credential; assertion wins when present; duplicate header of either kind is rejected | TESTED (CONTRACT) | `internal/security/auth/auth_test.go` (`TestMiddlewareAcceptsAssertionHeader`, `TestMiddlewareAssertionTakesPrecedence`, `TestMiddlewareRejectsBadAssertionHeaders`) |
+| A10 | Roles come from the verified IdP claim; unknown role grants nothing | The `roles` claim is parsed verbatim; the policy grants only known roles | TESTED (CONTRACT) | `jwt_test.go` (`TestVerifyRolesComeFromTheClaim`), `rbac_test.go` (`TestUnknownRoleCannotWidenAccess`) |
 
-### 1.4 Protocol hygiene
+## 5. Protocol hygiene
 
-| # | Requirement | Design position | Status | Test |
+| # | Requirement | As-built position | Status | Evidence |
 |---|---|---|---|---|
-| P1 | Protocol version negotiation | SDK negotiates 2025-11-25 through 2026-07-28; the server does not hardcode a version | Designed | Test initializes with each supported version |
-| P2 | `notifications/tools/list_changed` when the registry changes | Emitted when a module is disabled or enabled at runtime | Designed | Test disables a module and observes the notification |
-| P3 | Logging does not leak secrets and does not use MCP logging as a control channel | `slog` to stderr; MCP logging is deprecated in 2026-07-28 and is not used | Designed | Redaction tests |
-| P4 | Health and readiness are HTTP endpoints, not MCP tools | `/healthz`, `/readyz`, `/livez` | Designed | Deployment test |
-| P5 | Errors are stable and documented | Closed `errs.Code` set, documented in the tool catalog | Designed | Contract test asserts the closed set |
+| P1 | Protocol version negotiation | The SDK negotiates all versions in `mcp.SupportedProtocolVersions()`: `2026-07-28`, `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`; the server does not hardcode a version | IMPLEMENTED (SDK) | `platform.info` reports the full SDK list, asserted against `mcp.SupportedProtocolVersions()` (`server_test.go`) |
+| P2 | `notifications/tools/list_changed` when the registry changes | **Not implemented**; the registry is static for the process lifetime | PLANNED | — |
+| P3 | Logging does not leak secrets and does not use MCP logging as a control channel | `slog` to stderr with key-based redaction; no MCP logging channel | TESTED (CONTRACT) | `internal/observability/logger_test.go` |
+| P4 | Health and readiness are HTTP endpoints, not MCP tools | `/healthz`, `/readyz`, `/metrics`; there is no `/livez` | IMPLEMENTED | `internal/mcp/server/server.go`; `server_test.go` (`TestHealthAndReady`) |
+| P5 | Errors are stable and documented | Closed `errs.Code` set; documented in [module-boundaries.md](module-boundaries.md) §4.2 | TESTED (CONTRACT) | `internal/core/errors/errors_test.go`; `toolerr_test.go` |
+| P6 | The MCP session is not an authorization boundary | Every `tools/call` is authorized independently; a session id does not carry authority | TESTED (CONTRACT) | `server_test.go` (`TestAuthorizationDeniesToolCall`) |
 
-## 2. Gaps found in this review
+## 6. Gaps and planned work
 
-The design already covered naming, schemas, annotations, pagination, errors, and
-the main security controls. This review found five gaps, all now closed in the
-design:
-
-1. **Output schemas were required by the contract but only two examples existed.**
-   The catalog now states the policy per tool class and Phase 1 requires a schema
-   for every structured tool before registration.
-2. **Structured content had no text fallback.** The spec says a tool returning
-   structured content *should* also return serialized JSON in `TextContent`.
-   Adopted; the conformance test compares both.
-3. **Progress and cancellation were unspecified.** `progressToken` handling and
-   `notifications/cancelled` are now part of the tool contract, with the job
-   cancellation path for long work.
-4. **Large results had no resource-link path.** Reports above the inline cap now
-   return a `resource_link` backed by `result_ref` instead of truncating.
-5. **Token passthrough and audience binding were implied but not stated.** Both
-   are now explicit controls with tests, and the security review lists them.
-
-## 3. Tool description quality
-
-The MCP specification treats descriptions as model-facing interface text. Rules:
-
-- First sentence: what the tool does, the data source, and whether it reads or writes.
-- State the most important limitation (sampling, freshness, missing ecommerce, plan gating).
-- State the unit, time zone, and currency of any number returned.
-- Never include upstream data in a description; descriptions are static.
-- Do not instruct the model to chain tools or to bypass confirmation.
-- Keep descriptions under 1,024 characters; put detail in the output schema and docs.
-
-## 4. Conformance tests to implement
-
-| Test | Phase | Level |
+| Gap | Status | Consequence |
 |---|---|---|
-| Tool name grammar, uniqueness, title, description, scope, annotations | 1 | Contract |
-| Input schema rejects unknown fields and oversized values | 1 | Unit |
-| Output schema present and structured content validates | 1 | Unit |
-| Text fallback equals structured content | 1 | Unit |
-| Protocol error vs tool error distinction | 1 | Integration |
-| Pagination cap and cursor behavior | 1 | Integration |
-| Progress notification emitted for a long tool | 1 | Integration |
-| Cancellation stops upstream calls | 1 | Integration |
-| Resource link for oversized result | 2 | Integration |
-| Session identity binding and termination | 1 | Integration |
-| Hostile Origin and rebinding rejected | 1 | Security |
-| No token passthrough | 1 | Security |
-| Audience mismatch rejected | 1 | Security |
-| Protocol version negotiation | 1 | Protocol |
-| `tools/list_changed` on module toggle | 1 | Protocol |
+| Session identity binding | PLANNED (SEC-15) | A stolen session id is usable for its lifetime; transport auth still gates each request |
+| Progress notifications and cancellation | PLANNED (ADR-0017) | Long work is a polled job, not a cancellable stream |
+| `resource_link` and an inline result cap | PLANNED (ADR-0017) | Large results are returned inline within per-tool caps |
+| `notifications/tools/list_changed` | PLANNED | The registry does not change at runtime |
+| RFC 9728 / OAuth resource-server mode | PLANNED | Access-only deployments rely on the edge |
+| Origin lockdown | DEPLOYMENT CONTROL | The gateway does not verify Cloudflare source ranges |
+| `/livez` | Not planned | `/healthz` and `/readyz` are the health surface |
 
-## 5. Open questions
+## 7. Test map
 
-| Question | Owner | Resolution point |
+| Area | Test file | Test names |
 |---|---|---|
-| Whether to advertise MCP `resources` for large report bodies or keep `resource_link` only | MCP owner | Phase 2 |
-| Whether to expose prompts for common analyses | MCP owner | Post-1.0 |
-| Whether the OAuth resource-server mode is needed for non-Cloudflare deployments | Security | Phase 6 |
+| Registry contract | `internal/mcp/registry/registry_test.go` | `TestRegisterAcceptsValidTool`, `TestRegisterRejectsInvalidTools`, `TestRegisterRejectsDuplicate` |
+| Tool errors/content | `internal/mcp/toolerr/toolerr_test.go` | `TestStructuredErrorEnvelope`, `TestStructuredSuccessContent`, `TestInvalidArgumentsEnvelope`, `TestErrorEnvelopeIsUniform` |
+| Server/authz/health | `internal/mcp/server/server_test.go` | `TestMCPClientListsAndCallsPlatformInfo`, `TestHealthAndReady`, `TestAuthorizationDeniesToolCall`, `TestAuthorizationReceivesRequiredScope`, `TestCrossInstanceAuthorizationIsEnforced`, `TestAuthorizationFailsClosedForUnregisteredTool` |
+| JWT and ingress | `internal/security/jwt/jwt_test.go`, `internal/security/auth/auth_test.go` | `TestVerifyValidRS256`, `TestVerifyClaimRejections`, `TestVerifyAlgorithmRejections`, `TestMiddlewareAcceptsAssertionHeader`, `TestMiddlewareAssertionTakesPrecedence`, `TestMiddlewareRejectsBadAssertionHeaders` |
+| RBAC | `internal/security/rbac/rbac_test.go` | `TestDefaultDeny`, `TestScopeHierarchy`, `TestInstanceScoping`, `TestUnknownRoleCannotWidenAccess` |
+| Confirmation | `internal/security/confirm/confirm_test.go` | `TestConsumeRejectsChangedArguments`, `TestConsumeSingleUseUnderConcurrency`, `TestApproveRejectsSelfApproval` |
+| Operation gate | `internal/storage/operation_gate_test.go` | `TestBeginCallConsumesConfirmationAtomically`, `TestFinishCallWritesAuditInTheSameTransaction` |
+| Import limits | `internal/magento/import_test.go` | `TestImportLimitsAgreeAcrossPackages`, `TestHTTPBodyCapRejectsOversizeRequest` |
+| End-to-end | `test/e2e/run.sh` | fake-Magento smoke test (not a live Magento test) |
 
-## 6. Verification status
+## 8. Related
 
-The gateway is implemented and released as a pre-1.0 product. Rows marked
-`Implemented` have passing tests in the repository; remaining `Planned` or
-`Designed` rows are roadmap items tracked in the documentation. A release is not
-considered conformant until every `Designed` row has a passing test.
+- [implemented-tools.md](implemented-tools.md) — the generated inventory.
+- [mcp-tools.md](mcp-tools.md) — the tool contract.
+- [security-review.md](security/security-review.md) — the as-built control matrix.
+- [ADR-0017](adr/0017-mcp-conformance.md) — the conformance decision and its
+  planned rows.

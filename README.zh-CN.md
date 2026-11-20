@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/shuaiZend/mage2mcp?include_prereleases&sort=semver)](https://github.com/shuaiZend/mage2mcp/releases)
-[![Latest release v0.9.0](https://img.shields.io/badge/latest-v0.9.0-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0)
+[![Latest release v0.11.1](https://img.shields.io/badge/latest-v0.11.1-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](go.mod)
 
@@ -10,26 +10,33 @@
 一个端点、一套认证、一条审计链，提供类型化、有文档、可安全使用的 AI 工具。
 写操作默认关闭并需要两步人工审批；读操作默认只读且 PII 安全。
 
-> **状态：v0.11.0（1.0 之前）。** 112 个工具（Magento 101 个）。已在真实 Magento
-> 生产店铺完成只读验收（23 项检查）与 30 天经营下钻（924 单），全程无写入。
-> 发布包含签名产物、SBOM 与多架构镜像；1.0 之前接口仍可能通过 ADR 变更。
+> **状态：v0.11.1（1.0 之前）。** 完整配置下最多 112 个工具（Magento 101 个）；
+> 默认只读配置注册 54 个。已在真实 Magento 生产店铺完成 23 项只读验收与 30 天
+> 经营下钻（924 单），全程无写入；写入验证在一次性演示环境完成。仓库中没有真实
+> Magento 集成测试。发布包含签名产物、SBOM 与多架构镜像；1.0 之前接口仍可能通过
+> ADR 变更。验证状态见[下文](#验证状态)。
 
 ## 为什么用 mage2mcp
 
 - **类型化契约**：每个工具都有稳定名称、JSON Schema、权限、超时与注解；契约测试
   固定 Magento 工具名，文档与实现不一致会让 CI 失败。
-- **安全写入**：写操作需要由**不同身份**审批的一次性确认；参数在创建审批**之前**
-  按 schema 校验，审批与参数哈希绑定，避免“批准后被篡改”。
+- **安全写入**：写操作需要由**不同身份**审批的一次性确认，确认绑定到参数哈希、工具
+  与实例；每次写入由带 fencing 与幂等键的持久化操作账本保护，结果不明确时标记为
+  `unknown` 并由 reconciler 对账，绝不自动重试。
 - **PII 不出 Magento**：客户/地址读取只返回国家/地区/默认标记；订单读取不含邮箱、
   地址与支付信息。
-- **为运维而生**：PostgreSQL 队列（无需 Redis）、advisory lock 迁移、异步导入
-  （幂等、进度、失败行恢复、30 天保留）。
+- **为运维而生**：PostgreSQL 队列（无需 Redis）、advisory lock 迁移、操作账本与
+  reconciler、异步导入（幂等、进度、失败行恢复、30 天保留）。
 - **多实例**：多个 Magento 店铺、Cloudflare zone、GA4 属性共用一个网关，按实例
-  授权与审计。
+  授权与审计。统一分析绑定目前要求恰好一个 Cloudflare zone 与一个 GA4 property。
 
-## 工具面（112 个）
+## 工具面（最多 112 个）
 
-| 模块 | 数量 | 示例 |
+工具数量取决于配置：默认只读配置注册 54 个（Magento 43 个）；`tools.writes: true`
+增加 52 个 Magento 写工具，`database.url` 增加 6 个异步导入工具，`bindings`
+增加统一分析工具。下表为完整配置下的数量。
+
+| 模块 | 完整配置下的数量 | 示例 |
 |---|---:|---|
 | Magento 2 | 101 | 商品、可配置变体、分类、MSI 库存、订单、发票/发货/贷记单、客户、媒体、导入、经营分析 |
 | Cloudflare | 3 | 流量、安全事件、安全汇总 |
@@ -44,19 +51,31 @@ Magento 重点能力：商品与 SEO、可配置商品全链路、MSI 库存、�
 
 | 项目 | 状态 |
 |---|---|
-| 源代码 | 生产级 Go 网关：MCP、认证、RBAC、审计、指标、PostgreSQL 队列、Docker |
-| 测试与 CI | 单元、集成（PostgreSQL）、竞态、静态、安全、供应链与端到端任务 |
-| 发布 | [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0)：签名产物、校验和、SBOM、多架构 GHCR 镜像 |
-| 生产验证 | 真实 Magento 店铺只读验收 + 30 天经营报告 |
-| 文档 | 架构、22 份 ADR、工具目录、字段参考、兼容性、运维、发布说明 |
+| 源代码 | Go 网关：MCP、认证、RBAC、审计、指标、PostgreSQL 队列与操作账本、Docker |
+| 测试与 CI | 单元、竞态、契约、PostgreSQL 与 fake-Magento 端到端测试；GitHub CI 为发布前手动工作流，日常以 `scripts/local-ci.sh` 为准 |
+| 发布 | [v0.11.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1)：签名产物、校验和、SBOM、多架构 GHCR 镜像 |
+| 验证 | 真实 Magento 店铺只读验收（23 项检查、924 单经营报告）；一次性演示环境写入验证；**没有真实 Magento 集成测试** |
+| 文档 | 架构、22 份 ADR、工具目录、字段参考、配置、兼容性、运维、发布说明 |
 | 许可证与社区 | [Apache-2.0](LICENSE)、[NOTICE](NOTICE)、[CONTRIBUTING.md](CONTRIBUTING.md)、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)、[SECURITY.md](SECURITY.md)、[SUPPORT.md](SUPPORT.md) |
+
+## 验证状态
+
+| 声明 | 状态 | 证据 |
+|---|---|---|
+| 真实 Magento 生产店铺只读验收 | TESTED（人工、只读；无自动化测试） | [生产验收](docs/operations/production-acceptance.md) |
+| 30 天经营下钻（924 单） | TESTED（人工、只读） | [经营分析报告](docs/reports/business-analysis-2026-11-20.html) |
+| 写入验证 | TESTED（人工、一次性演示环境；v0.8.1 构建） | [Magento 写入验证](docs/development/magento-write-verification.md) |
+| 自动化 Magento 集成测试 | PLANNED | 不存在（MAG-23）；所有 Magento 覆盖均为 CONTRACT |
+| Cloudflare / GA4 真实 API 行为 | PLANNED（未验证） | 没有可用的真实实例 |
+| 单元、契约、PostgreSQL 与 fake-Magento 端到端测试 | TESTED | `scripts/local-ci.sh`、`test/e2e/` |
 
 ## 发布
 
-最新版本是 [**v0.9.0**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0)
-（2026-11-20），写入验证版本：修复了在真实 Magento 演示环境验证中发现的
-W1–W6、W9、W11、W12，暴露上游 400/422 错误信息，并把
-`magento.category.tree` 的输出键从 `roots` 改名为 `categories`。
+最新版本是 [**v0.11.1**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1)
+（2026-11-20），写入安全与商品复制修复版本：新增 `write_safety` prompt，修复
+D1–D3、D5、D6、D8–D11 商品复制缺陷，并加入
+`admin:<username>:<password>` 凭据形式。详见
+[v0.11.0 发布说明](docs/releases/v0.11.0.md)。
 
 每个正式版本都包含：
 
@@ -78,7 +97,9 @@ sha256sum --check checksums.txt
 
 | 版本 | 说明 | 要点 |
 |---|---|---|
-| [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0) | [发布说明](docs/releases/v0.9.0.md) | 写入验证修复 W1–W6、W9、W11、W12；上游错误信息 |
+| [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0) | [发布说明](docs/releases/v0.11.0.md) | 写入安全 prompt；商品复制修复 D1–D3、D5、D6、D8–D11；admin 凭据形式 |
+| [v0.10.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0) | [发布说明](docs/releases/v0.10.0.md) | Admin 凭据自动令牌；CI 提速；Actions 升级；katex 安全公告 |
+| [v0.9.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.9.0) | [发布说明](docs/releases/v0.9.0.md) | 写入验证修复 W1–W6、W9、W11、W12；上游错误信息 |
 | [v0.8.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.1) | [发布说明](docs/releases/v0.8.1.md) | 结构化工具错误（G12） |
 | [v0.8.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.0) | [发布说明](docs/releases/v0.8.0.md) | 经营分析修复；`store.configs` 与 `categories.flat` |
 
@@ -93,6 +114,7 @@ sha256sum --check checksums.txt
 | [docs/mcp-tools.md](docs/mcp-tools.md) | 设计目录与实现状态 |
 | [docs/implemented-tools.md](docs/implemented-tools.md) | 当前注册的 112 个工具 |
 | [docs/magento-fields.md](docs/magento-fields.md) | 字段要求与 SEO 指南 |
+| [docs/configuration.md](docs/configuration.md) | 所有配置键、默认值与环境变量覆盖 |
 | [docs/compatibility.md](docs/compatibility.md) | 兼容性与稳定性承诺 |
 | [docs/operations/production-acceptance.md](docs/operations/production-acceptance.md) | 生产只读验收与修复记录 |
 | [docs/development/mcp-gaps.md](docs/development/mcp-gaps.md) | 已知缺口与状态 |
@@ -103,8 +125,8 @@ sha256sum --check checksums.txt
 # 1. 构建
 go build -o bin/mage2mcp ./cmd/server
 
-# 2. 配置：复制示例配置；仅限本机回环开发时，将 `auth.enabled` 设为 false。
-#    网关拒绝在非回环监听地址上以关闭认证的方式启动。
+# 2. 配置：开发示例仅监听回环地址、关闭认证、不启用任何数据源，
+#    复制后即可直接启动。
 cp configs/config.example.yaml config.yaml
 
 # 3. 运行
@@ -115,8 +137,13 @@ curl -s localhost:8080/healthz
 curl -s localhost:8080/readyz
 ```
 
-MCP 端点为 `POST /mcp`（Streamable HTTP）。生产环境应部署在 Cloudflare Tunnel 之后，
-并通过 `MAGE2MCP_AUTH_*` 环境变量保持认证开启。
+`/readyz` 报告的是注册表中的工具数量。`platform.info` 本身就是注册表中的一个工具，
+因此全新的开发实例会显示 `"tools":1`（即这一个工具）；在 `config.yaml` 中启用数据源
+（见 [docs/configuration.md](docs/configuration.md)）才会注册对应工具。示例关闭了认证，
+并拒绝在非回环监听地址上启动。生产环境请复制
+[`configs/config.production.template.yaml`](configs/config.production.template.yaml)，
+填写 `MAGE2MCP_AUTH_*` 与 `MAGE2MCP_DATABASE_URL`，并部署在 Cloudflare Tunnel 之后。
+MCP 端点为 `POST /mcp`（Streamable HTTP）。
 
 ### Docker
 
@@ -138,7 +165,10 @@ docker run --rm -p 127.0.0.1:8080:8080 \
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-切勿把开发栈暴露到网络：它以关闭认证和固定占位密码运行。
+镜像内置的容器配置未启用任何数据源，因此在把真实配置挂载到
+`/etc/mage2mcp/config.yaml` 之前，两种栈都只暴露 `platform.info`
+（见 [docs/configuration.md](docs/configuration.md)）。切勿把开发栈暴露到网络：
+它以关闭认证和固定占位密码运行。
 
 ### 高风险操作
 
@@ -168,7 +198,7 @@ AI 智能体需要可靠、可审计地访问电商与分析系统。目前这�
 mage2mcp 选择了第三种定位：由运维方自行部署、配置和审计的**独立网关**。
 
 - 网关作为独立服务运行在运维方自己的基础设施内。Magento 不会被修改，也不需要安装任何插件。
-- 只调用官方上游 API —— Magento REST 与 GraphQL、Cloudflare API、GA4 Data API。绝不连接
+- 只调用官方上游 API —— Magento REST（无 GraphQL 客户端，ADR-0022）、Cloudflare API、GA4 Data API。绝不连接
   Magento 数据库。
 - 每个上游都是一个独立的**实例**，拥有自己的凭据和授权，因此一个网关可以服务多个商店、zone
   和 property，而无需共享令牌。
@@ -198,7 +228,7 @@ flowchart TB
   magento --> unified
   cloudflare --> unified
   ga4 --> unified
-  magento --> mageapi["Magento REST / GraphQL"]
+  magento --> mageapi["Magento REST"]
   cloudflare --> cfapi["Cloudflare API"]
   ga4 --> gaapi["GA4 Data API"]
   gateway -.-> pg[("PostgreSQL<br/>配置、审计、任务")]
@@ -206,7 +236,8 @@ flowchart TB
 ```
 
 网关将使用官方 [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) 和 Streamable HTTP
-传输方式。SDK v1.8.0 支持 MCP 协议版本 `2026-07-28`，并可向下协商到 `2025-11-25`。
+传输方式。SDK v1.8.0 可协商其完整支持列表，目前为 `2026-07-28` 至 `2024-11-05`（五个版本）；
+`platform.info` 会原样报告该列表。
 
 在预期设计中，一次工具调用经过以下路径：
 
@@ -244,32 +275,36 @@ flowchart TB
 
 ## 安全策略
 
-设计规定以下性质（尚未实现）：
+以下为已交付的安全状态，并标注状态（完整控制矩阵见
+[`docs/security/security-review.md`](docs/security/security-review.md)）。标签为
+IMPLEMENTED、TESTED、PLANNED、DEPRECATED；括号内为限定语（CONTRACT、PostgreSQL、
+PARTIAL、deployment control、operator-configured）：
 
-- **默认只读。** 除非运维方显式启用写入配置，否则写工具处于禁用状态；默认配置不暴露任何写
-  能力。
-- **写入需确认。** 高风险操作要求提供绑定到规范化参数哈希的确认令牌。任何参数变化都会使确认
-  失效，因此运维方批准的内容就是实际执行的内容。
-- **审计。** 每次工具调用都会记录操作者、工具、实例、参数哈希、结果和耗时。密钥与敏感值在
-  存储前会被脱敏。
-- **不在 Magento 中安装插件。** 网关无法修改 Magento 代码，Magento 升级也不依赖它。
-- **不直接访问数据库。** 所有读写都经过官方 API，从而保留业务逻辑、校验和权限。
-- **最小权限令牌。** Magento 集成令牌仅授予所需资源，Cloudflare API 令牌默认仅授予分析与 zone 只读
-  访问，GA4 服务账号仅授予 Viewer 权限。可选启用的 Logpush 检查配置带有 `Logs Write`
-  权限，仅因为 Cloudflare 要求读取调用也具备该权限；代码中不存在写操作路径。
-- **密钥不进入配置文件。** 凭据通过环境变量或密钥管理服务提供，绝不写入日志或作为工具输出
-  返回。
-- **没有逃生通道。** 不存在通用 API 透传工具，也不存在 SQL 执行工具。
+| 性质 | 状态 | 说明 |
+|---|---|---|
+| 默认只读 | IMPLEMENTED，TESTED | 仅在 `tools.writes: true` 时注册写工具；默认不暴露写能力。 |
+| 写入需确认 | IMPLEMENTED，TESTED | 确认绑定到工具、实例与规范化参数哈希；由不同身份审批；一次性；默认 300 秒、上限 900 秒。 |
+| 操作账本与重放控制 | IMPLEMENTED，TESTED（PostgreSQL） | 每次写入都有 fencing、幂等键；结果不明确时进入 `UNKNOWN`，由 reconciler 对账，已记录结果可直接重放。 |
+| 审计 | IMPLEMENTED（partial） | 记录 intent/outcome，拒绝记为拒绝，密钥脱敏。尚无哈希链；5 个自带账本的金额工具存在审计结果缺口（REL-16-R）。 |
+| 不安装 Magento 插件、不直接访问数据库 | IMPLEMENTED | 全部通过官方 API。 |
+| 最小权限令牌 | IMPLEMENTED（operator-configured） | 使用 ACL 受限的 Magento 集成或专用 admin、只读 Cloudflare 令牌、GA4 Viewer 服务账号。 |
+| 密钥不进入配置文件 | IMPLEMENTED（partial） | 凭据按约定使用 `${VAR}` 引用；加载器不会拒绝字面量密钥，切勿提交。 |
+| 没有逃生通道 | IMPLEMENTED | 没有通用 API 透传或 SQL 执行工具。 |
+| 网关限流 | PLANNED | 在 agent 或边缘限制并发；见[已知限制](docs/audit/known-limitations.md)。 |
+| 会话身份绑定 | PLANNED | 被盗的会话 id 在其生命周期内可用（SEC-15）。 |
+| 防篡改审计链 | PLANNED | 如需不可否认性，请限制数据库权限并导出到不可变存储。 |
+| 源站锁定 / metrics 隔离 | DEPLOYMENT CONTROL | 网关不强制仅 Cloudflare 可访问源站，且 `/metrics` 与 MCP 共用监听端口。 |
 
 完整的威胁模型、信任边界与缓解措施见
-[`docs/security/threat-model.md`](docs/security/threat-model.md)。安全评审流程见
-[`docs/security/security-review.md`](docs/security/security-review.md)。
+[`docs/security/threat-model.md`](docs/security/threat-model.md)；控制矩阵与残余风险见
+[`docs/security/security-review.md`](docs/security/security-review.md) 与
+[`docs/audit/known-limitations.md`](docs/audit/known-limitations.md)。
 
 ## 设计原则
 
 1. **模块边界。** 每个数据源都是独立模块，实现共享的数据源契约并声明自身能力。模块之间不
    导入彼此的内部实现，核心也不感知厂商细节。
-2. **只用官方 API。** Magento REST 与 GraphQL、Cloudflare API、GA4 Data API。不抓取页面，
+2. **只用官方 API。** Magento REST（无 GraphQL 客户端）、Cloudflare API、GA4 Data API。不抓取页面，
    不访问数据库，不安装插件，不使用未公开端点。
 3. **类型化工具，没有逃生通道。** 每个工具都有固定名称、JSON Schema 输入输出、风险等级和
    所需权限。通用的 `execute_api` 或 `execute_sql` 工具会破坏授权、校验和确认机制，因此
@@ -288,22 +323,22 @@ flowchart TB
 
 以下是 v0.x 的目标组合，不是已测试的配置。各约束对应的厂商文档在相应的集成文档中引用。
 
-| 组件 | 目标支持 | 说明 |
-|---|---|---|
-| Magento Open Source 与 Adobe Commerce | 2.4.x；主要目标为 2.4.9 | 使用 Integration OAuth 1.0a 凭证调用 REST（仅在显式启用时使用 Bearer Token）。GraphQL 仅用于只读店面验证 |
-| Adobe Commerce as a Cloud Service | v0.x 不支持 | 使用 Adobe IMS OAuth，不支持传统令牌生成方式 |
-| Cloudflare 套餐 | Free、Pro、Business、Enterprise | 数据集与字段可用性因套餐而异 |
-| Cloudflare GraphQL Analytics | 计划中 | 默认限制为每 5 分钟 300 次查询；zone 级查询最多可包含 10 个 zone，账户级查询恰好 1 个账户 |
-| Cloudflare Security Events | 计划中 | 基于 `firewallEventsAdaptive`；保留期最长 31 天；结果可能经过采样 |
-| Cloudflare Logpush | 可选启用的只读任务清单与日志分析 | 按用量计费，每月包含 25 GB；没有回填；任务失败时日志会丢失 |
-| Cloudflare 原始日志 | 可选：R2 + ClickHouse | 仅用于请求级 Logpush 分析；PostgreSQL 从不存储原始日志 |
-| Cloudflare bot 信号 | 仅在已授权时可用 | Bot Score、bot 标签和 verified-bot 字段需要 Bot Management |
-| GA4 | Data API v1 | 仅聚合数据；原始事件需要 BigQuery 导出 |
-| GA4 配额 | 按 property 读取并遵守配额 | 参考 property 报告为每天 200,000 tokens、每小时 40,000 tokens、10 个并发请求 |
-| MCP 协议 | 计划中：`2026-07-28`，可向下协商到 `2025-11-25` | 由 MCP Go SDK v1.8.0 提供 |
-| Go | 1.26 或更高 | SDK v1.8.0 要求 `go 1.25.0`；当前直接依赖要求 1.26；当前工具链为 1.27.x |
-| PostgreSQL | 16 或更高 | 配置元数据、审计日志、任务状态 |
-| 容器运行时 | Docker 与 Compose | 本地栈与部署 |
+| 组件 | 目标支持 | 状态 | 说明 |
+|---|---|---|---|
+| Magento Open Source 与 Adobe Commerce | 2.4.x；主要目标为 2.4.9 | IMPLEMENTED，TESTED（CONTRACT） | 使用 bearer、OAuth 1.0a 或 admin 自动令牌调用 REST。没有 Magento GraphQL 客户端，未实现店面验证（ADR-0022）。没有可用的真实 2.4.9 实例，兼容性未验证。 |
+| Adobe Commerce as a Cloud Service | v0.x 不支持 | UNSUPPORTED | 使用 Adobe IMS OAuth，不支持传统令牌生成方式。 |
+| Cloudflare 套餐 | Free、Pro、Business、Enterprise | IMPLEMENTED | 数据集与字段可用性因套餐而异。 |
+| Cloudflare GraphQL Analytics | 已实现 | IMPLEMENTED，TESTED（CONTRACT） | 文档限制为每 5 分钟 300 次查询；网关不强制该配额（PLANNED）。 |
+| Cloudflare Security Events | 已实现 | IMPLEMENTED，TESTED（CONTRACT） | 基于 `firewallEventsAdaptive`；保留期最长 31 天；结果可能经过采样。 |
+| Cloudflare Logpush | 任务清单与日志分析 | PLANNED | 未交付日志工具；`internal/logs/` 为空。 |
+| Cloudflare 原始日志 | R2 + ClickHouse | PLANNED | 未实现；PostgreSQL 从不存储原始日志。 |
+| Cloudflare bot 信号 | 仅在已授权时可用 | IMPLEMENTED | Bot Score、bot 标签和 verified-bot 字段需要 Bot Management。 |
+| GA4 | Data API v1 | IMPLEMENTED，TESTED（CONTRACT） | 仅聚合数据；原始事件需要 BigQuery 导出。 |
+| GA4 配额 | 按 property 记录 | PLANNED（未强制） | 参考 property 报告为每天 200,000 tokens、每小时 40,000 tokens、10 个并发请求；网关未做配额核算。 |
+| MCP 协议 | `2026-07-28` 至 `2024-11-05`（五个 SDK 支持版本） | IMPLEMENTED，TESTED（CONTRACT） | 由 MCP Go SDK v1.8.0 提供；`platform.info` 报告该列表。 |
+| Go | 1.26 或更高 | IMPLEMENTED | SDK v1.8.0 要求 `go 1.25.0`；当前直接依赖要求 1.26；当前工具链为 1.27.x。 |
+| PostgreSQL | 16 或更高 | IMPLEMENTED，TESTED（PostgreSQL） | 配置元数据、审计日志、确认、操作账本、任务状态。 |
+| 容器运行时 | Docker 与 Compose | IMPLEMENTED | 本地栈与部署。 |
 
 ## 完整文档索引
 
@@ -337,7 +372,7 @@ flowchart TB
 |---|---|---|
 | 0 | 设计 | 架构、边界、工具目录、威胁模型、ADR 与治理机制通过评审；文档 CI 通过 |
 | 1 | 基础设施 | 基于 Streamable HTTP 的服务骨架、Cloudflare Access JWT 认证、RBAC、工具注册表、配置校验、审计、PostgreSQL、Docker、CI 关卡 |
-| 2 | Magento 2 | 商品、EAV、MSI、媒体、分类、订单、批量导入的读写工具，以及 GraphQL 验证 |
+| 2 | Magento 2 | 商品、EAV、MSI、媒体、分类、订单、批量导入的读写工具，以及 REST 管理端验证 |
 | 3 | Cloudflare | GraphQL Analytics、Security Events、Logpush 清单与分析，全部只读 |
 | 4 | GA4 | 元数据发现、核心报告、电商报告、实时报告、配额处理，以及有文档记录的 BigQuery 边界 |
 | 5 | 统一分析 | 指标目录、实体映射、带声明语义的跨源报告 |

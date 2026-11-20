@@ -1,6 +1,6 @@
 # ADR-0012: Observability and audit
 
-- **Status:** Accepted
+- **Status:** Accepted (partial: audit rows and metrics ship; hash chain, retention partitions, `/livez`, per-module readiness, and quota metrics are PLANNED)
 - **Date:** 2026-11-18
 - **Deciders:** maintainer, Architect, Security
 - **Supersedes:** none
@@ -29,17 +29,19 @@ the audit trail separate?
 
 Adopt option 3, with tracing deferred.
 
-- **Logs:** `slog` JSON, one event per tool call with tool, instance, identity
-  ID, permission, outcome, duration, and parameter hash. Parameters, tokens, and
-  response bodies are never logged.
-- **Metrics:** Prometheus counters, histograms, and gauges for tool calls,
-  upstream latency and status, quota remaining, job state, and auth failures.
-- **Audit:** append-only PostgreSQL table written for every tool call, including
-  denied calls and confirmation events. Records identity, identity class, tool,
-  instance, permission decision, canonical parameter hash, correlation ID,
-  outcome, and timestamp. No payload contents.
-- **Health:** `/healthz`, `/readyz`, `/livez` with per-module status.
-- **Retention:** logs per operator policy; audit 365 days by default, configurable.
+- **Logs:** `slog` JSON with key-based redaction. Logs are operational, not the
+  per-call audit record; parameters, tokens, and response bodies are never logged.
+- **Metrics:** Prometheus counters/histograms for tool calls, upstream latency and
+  status, job state, and auth failures. There is no quota metric.
+- **Audit:** PostgreSQL rows written for every tool call, including denials and
+  confirmation events, with subject hash, identity class, tool, instance, scope,
+  decision, phase, state, error code, and request id. The canonical argument hash
+  lives in `confirmation_tokens` and `operations`, not in `audit_events`. No
+  payload contents.
+- **Health:** `/healthz`, `/readyz`, `/metrics`. There is no `/livez` and no
+  per-module status; `/readyz` reports the registry tool count.
+- **Retention:** no retention job and no partitions ship. A hash chain and
+  retention are **PLANNED**; the operator must export if retention is required.
 
 ## Rationale
 
@@ -58,15 +60,18 @@ sensitive payloads.
 
 ### Negative
 
-- Audit write failure fails write and destructive operations (fail closed) and
-  degrades read operations with a warning. This is a deliberate availability
-  trade-off in favor of evidence integrity.
+- For gated writes the outcome audit row is committed in the same transaction as
+  the ledger transition, so an audit failure rolls the transition back. The five
+  self-ledgered money tools write their audit row after the tool commits
+  (REL-16-R), and read paths ignore an audit write error. Closing both gaps is
+  **PLANNED**.
 - Extra storage for audit.
 
 ### Security impact
 
 Audit immutability requires database-level restrictions (no UPDATE/DELETE grants
-for the application role). Log redaction must be tested, not assumed.
+for the application role); there is no hash chain. Log redaction is tested
+(`internal/observability/logger_test.go`).
 
 ### Maintenance cost
 

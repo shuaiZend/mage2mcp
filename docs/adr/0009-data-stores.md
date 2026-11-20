@@ -1,6 +1,6 @@
 # ADR-0009: Data stores — PostgreSQL for state, Redis for queues and limits
 
-- **Status:** Superseded by ADR-0019 for the queue; PostgreSQL remains the only stateful store
+- **Status:** Superseded by ADR-0019 for the queue; PostgreSQL remains the only stateful store. As-built note: the shipped migrations use an embedded forward-only runner (`internal/storage`), not golang-migrate; the tables are those in database-design.md.
 - **Original status:** Accepted
 - **Date:** 2026-11-18
 - **Deciders:** maintainer, Architect

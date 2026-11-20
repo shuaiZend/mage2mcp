@@ -37,17 +37,35 @@ The prompt text is also summarized here.
 ## Inventory and configurables
 
 - MSI source items assigned to children do not make a configurable parent salable.
-  `configurable.create` now attempts to set the parent stock status and reports
-  `parent_in_stock`; always verify the storefront option selector afterwards.
+  `configurable.create` is a staged workflow (precheck -> children -> parent ->
+  links with read-back verification -> stock). It reports `parent_in_stock` and
+  `orphan_skus`; a partial run leaves completed writes in place. Resume with the
+  returned `operation_id` to reuse existing children/parent and repair links.
+  Always verify the storefront option selector afterwards.
+- `magento.inventory.transfer` is not transactional. It returns a `transfer_id`
+  and an `outcome`; only `applied` is success. `partial`, `verification_mismatch`,
+  and `needs_verification` require an operator to inspect the two source rows
+  before retrying. Fractional quantities are refused.
 - The configurable parent price is derived from its children; a requested parent
   price may read back as 0.
 
+## Idempotency and the UNKNOWN outcome
+
+Every write is gated by the operation ledger. The money/order tools
+(`order.create`, `invoice.create`, `invoice.capture`, `creditmemo.create`,
+`order.cancel`) accept an optional `idempotency_key`; a replay returns the
+recorded result. An ambiguous outcome returns `operation_unknown`: the mutation
+may have been applied, so **poll, never retry**. A retry while the operation is
+`unknown` is refused. See the [threat model](security/threat-model.md) §8.12.
+
 ## Approval
 
-Every write returns `confirmation_required` with an opaque id and an expiry. The
-approval must come from a different identity, is bound to the canonical argument
-hash, and cannot be reused. Do not approve destructive or URL-affecting changes
-without the operator's explicit go-ahead.
+A write called without a `confirmation_id` returns `confirmation_required` with
+an opaque id and an expiry. The approval must come from a different identity, is
+bound to the tool, the instance, and the canonical argument hash, and cannot be
+reused. Do not approve destructive or URL-affecting changes without the
+operator's explicit go-ahead. A write whose outcome is ambiguous returns
+`operation_unknown`; do not retry it.
 
 ## Related
 

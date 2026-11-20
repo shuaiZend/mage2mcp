@@ -1,9 +1,11 @@
 # Magento 2 integration
 
 **Module:** `internal/magento` — **Primary target:** Magento 2.4.9 (Open Source and Adobe Commerce,
-self-hosted or PaaS). **Status:** Phase 0 design, no code. No live Magento instance was reachable while this
-document was written, so nothing here is tagged as verified against a running system; claims are `[V-docs]` (official
-documentation or released source) or `[U]`.
+self-hosted or PaaS). **Status:** as-built for v0.11.1; the
+gateway is a REST admin client only (ADR-0022). No live Magento instance was
+reachable, so every behavioural claim is `CONTRACT` (REST contract plus
+`httptest` fakes); vendor facts are `[V-docs]` or `[U]`. Nothing here is
+`INTEGRATION_TESTED`.
 **Baseline:** [research-baseline.md](../development/research-baseline.md) (F6–F12, correction 2).
 
 ## 1. Scope and non-goals
@@ -17,7 +19,7 @@ documentation or released source) or `[U]`.
 | Configurable | Parent, children, options, links, variant attributes, website and store scoping, media, categories, prices, MSI inventory, bulk import, validation, relationship sync, partial-failure recovery | `[V-docs]` |
 | Inventory | MSI sources, stocks, source-items, bulk assign/unassign/transfer, salable quantity | `[V-docs]` |
 | Sales | Read-only orders, invoices, shipments, credit memos, aggregate analytics | `[V-docs]` |
-| Verification | GraphQL `products` read confirming the storefront would render the variants | `[V-docs]` |
+| Verification | REST admin read-back (`configurable.children`, `product.get`); storefront GraphQL is not used (ADR-0022) | `CONTRACT` |
 
 **Non-goals.** Adobe Commerce as a Cloud Service (SaaS / IMS OAuth) is out of scope for v0.x: IMS
 OAuth instead of admin or integration tokens, the `/async` segment moves after `V1`, and `POST /V1/import/csv` is unsupported `[V-docs]` ([auth](https://developer.adobe.com/commerce/webapi/rest/authentication/),
@@ -26,9 +28,12 @@ stock/price alerts only `[V-docs]` (baseline F8). Also excluded: Magento plugins
 access, checkout, carts, customers, payment, promotions, CMS, B2B, and per-variant price deltas (no REST
 endpoint in 2.4.9 `[V-docs]`; see U4).
 
-**Success definition.** HTTP 200 is not correctness. A configurable product is correct only when the
-storefront query returns the parent with `configurable_options` matching the intended options, `variants` whose `attributes[].value_index` match them, the
-expected `price_range`, and the expected `stock_status` `[V-docs]` ([configurable type](https://developer.adobe.com/commerce/webapi/graphql/schema/products/interfaces/types/configurable/)). Section 5 makes that the final lifecycle state.
+**Success definition.** HTTP 200 is not correctness. A configurable product is
+correct when the admin read-back returns the parent, the expected children, the
+declared option values, and the expected stock status; `magento.configurable.create`
+verifies the child links by reading them back and reports `orphan_skus` for any
+child it could not link. Storefront rendering is the operator's verification, not
+the gateway's (ADR-0022).
 
 ## 2. Authentication and connection model
 
@@ -55,17 +60,19 @@ the store requires 2FA, the plain token endpoint fails and `bearer:` or `oauth1:
 
 ### 2.2 Least privilege
 
-**The tool surface is not the security boundary; the credential is.** A tool allowlist decides what the gateway
-*calls*; it does not bound what the integration credential *can do* if the gateway, a dependency, or a leaked
-secret is used outside the registry. The ACL is therefore part of the deployment contract and is verified at
-startup.
+**The tool surface is not the security boundary; the credential is.** A tool
+allowlist decides what the gateway *calls*; it does not bound what the integration
+credential *can do* if the gateway, a dependency, or a leaked secret is used
+outside the registry. The ACL is part of the deployment contract. The gateway
+does **not** probe the credential's ACL at startup; the operator configures and
+reviews the integration's Available APIs.
 
 Integration ACL is a tree chosen in **System > Extensions > Integrations > Available APIs** `[V-docs]` ([authentication](https://developer.adobe.com/commerce/webapi/get-started/authentication/)). Resource IDs below come from the 2.4.9 `acl.xml` files and from the `<resources>` element of the `webapi.xml` route that consumes them; `Magento\Framework\Acl` extends `Laminas\Permissions\Acl\Acl`, which inherits an allow from a parent resource to its children, so granting a parent grants every descendant `[V-docs]` ([Catalog acl.xml](https://github.com/magento/magento2/blob/2.4.9/app/code/Magento/Catalog/etc/acl.xml), [Backend acl.xml](https://github.com/magento/magento2/blob/2.4.9/app/code/Magento/Backend/etc/acl.xml), [Sales acl.xml](https://github.com/magento/magento2/blob/2.4.9/app/code/Magento/Sales/etc/acl.xml), [InventoryApi acl.xml](https://github.com/magento/inventory/blob/1.2.2/InventoryApi/etc/acl.xml)).
 
 **Read-only manifest.** It contains only resources that no core 2.4.9 REST write route consumes. Catalog, source-item and
 sales-document reads are absent because their resources also gate writes (see the write manifest), so those read
-tools are unavailable in this mode; store codes are resolved from storefront GraphQL (`availableStores`,
-`storeConfig`), which needs no admin ACL `[V-docs]`.
+tools are unavailable in this mode. Store codes are explicit configuration, not
+discovered from a storefront GraphQL query.
 
 | Capability | Resource ID | Routes that consume it | Status |
 |---|---|---|---|
@@ -73,7 +80,7 @@ tools are unavailable in this mode; store codes are resolved from storefront Gra
 | Transactions (read) | `Magento_Sales::transactions_fetch` | `GET /V1/transactions[/{id}]` | `[V-docs]` read-only |
 | Stocks (read) | `Magento_InventoryApi::stock` | `GET /V1/inventory/stocks[/{stockId}]` | `[V-docs]` read-only |
 | Salable quantity, resolver (read) | `Magento_InventorySalesApi::stock` | `GET /V1/inventory/get-product-salable-quantity/...`, `/is-product-salable/...`, `/stock-resolver/...` | `[V-docs]` read-only |
-| Store codes and storefront verification | none (storefront GraphQL) | `availableStores`, `storeConfig`, `products` | `[V-docs]` |
+| Store codes | none | configured `store_code` per instance; no storefront GraphQL | `CONTRACT` |
 
 **Write-enabled manifest.** Least privilege for the full tool set: every row is required by an enabled tool,
 and resources for disabled tool groups are removed rather than left granted.
@@ -141,10 +148,12 @@ inferred from a tool call, and `all` is allowed only for product and CMS operati
 
 ### 2.4 Base URL and TLS
 
-The base URL is operator-supplied, validated at config load and before each request: `https` only (plain `http` solely
-for `localhost`/`127.0.0.1` in dev); no userinfo, query, or fragment; no path beyond a known subpath; resolve and reject
-loopback, link-local, and RFC 1918 addresses outside a dev allowlist; do not follow redirects; no proxy from
-environment. TLS verification is always on, minimum TLS 1.2, optional custom CA bundle, and `InsecureSkipVerify` is not exposed.
+The base URL is operator-supplied and validated when the client is built:
+`https` only (plain `http` solely for `localhost`/`127.0.0.1` in development); no
+userinfo, query, or fragment. Redirects are refused. TLS verification is Go's
+default; `InsecureSkipVerify` is not exposed and there is no custom CA bundle.
+There is **no IP allowlist or DNS-pinning guard** (PLANNED); the operator is
+trusted to configure a real Magento host.
 
 ## 3. Endpoint map
 
@@ -258,20 +267,23 @@ is the supported path. `magento.product.media.get` reads one entry back.
 | Stock-source links | GET, POST | `/V1/inventory/stock-source-links`, `/stock-source-links-delete` | R/W | No | High | `[V-docs]` | POST-as-delete |
 | Source items | GET | `/V1/inventory/source-items` | R | Yes | Low | `[V-docs]` | searchCriteria on `sku`, `source_code` |
 | Upsert / delete source items | POST | `/V1/inventory/source-items`, `/source-items-delete` | W | Yes | High | `[V-docs]` | Quantity **replaces**, it does not add |
-| Bulk assign / unassign / transfer | POST | `/V1/inventory/bulk-product-source-assign`, `/bulk-product-source-unassign`, `/bulk-product-source-transfer`, `/bulk-partial-source-transfer` | W | No | High | `[V-docs]` | `{skus[], sourceCodes[]}`; response is a count, not per-SKU |
+| Assign / unassign source items | POST | `/V1/inventory/source-items`, `/source-items-delete` | W | Yes | High | `[V-docs]` | The gateway uses these per-SKU endpoints; it does not call the bulk transfer routes |
+| Transfer between sources | — | two source-item upserts (read, re-read, write, read back) | W | No | High | `CONTRACT` | Returns `transfer_id` + outcome enum; see §8 |
 | Salable quantity / resolver / legacy | GET | `/V1/inventory/get-product-salable-quantity/{sku}/{stockId}`, `/is-product-salable/{sku}/{stockId}`, `/stock-resolver/{type}/{code}`, `/V1/stockStatuses/{sku}` | R | Yes | Low | `[V-docs]` | Post-index truth; `stockStatuses` is the legacy CatalogInventory surface |
 
 Routes per [Inventory Management](https://developer.adobe.com/commerce/webapi/rest/inventory/) and [magento/inventory](https://github.com/magento/inventory/tree/1.2.2) `webapi.xml` files.
 
-### 3.6 Store configuration and sales (read-only)
+### 3.6 Store configuration and sales
 
 | Capability | Method | Path | Read/Write | Idempotent | Risk | Verification tag | Notes |
 |---|---|---|---|---|---|---|---|
 | Store views / groups / websites / config | GET | `/V1/store/storeViews`, `/storeGroups`, `/websites`, `/storeConfigs` | R | Yes | Low | `[V-docs]` | Resolve codes and ids; never hardcode |
-| Orders | GET | `/V1/orders`, `/V1/orders/{id}`, `/V1/orders/items` | R | Yes | Low | `[V-docs]` | Heavy payload, see 10 |
-| Invoices / shipments / credit memos | GET | `/V1/invoices`, `/V1/shipments`, `/V1/creditmemos` (+ `/{id}`) | R | Yes | Low | `[V-docs]` | Read-only aggregates |
+| Orders | GET, POST | `/V1/orders`, `/V1/orders/{id}`, `/V1/orders/items`; creation via the cart flow | R/W | No (create) | Critical | `[V-docs]` | Heavy payload; writes are confirmation- and ledger-gated, see 10 |
+| Order state | POST | `/V1/orders/{id}/comments`, `/hold`, `/unhold`, `/cancel`, `/emails` | W | No | High | `[V-docs]` | Confirmation-gated |
+| Invoices | GET, POST | `/V1/invoices`, `/V1/invoices/{id}`; create via `POST /V1/order/{orderId}/invoice`; `/V1/invoices/{id}/capture`, `/email` | R/W | No (create) | Critical | `[V-docs]` | The workflow route honours `capture`; the repository route does not, so the gateway does not use it |
+| Shipments / credit memos | GET, POST | `/V1/shipments`, `/V1/creditmemos` (+ `/{id}`, `/email`); create via the order document routes | R/W | No (create) | Critical | `[V-docs]` | Confirmation- and ledger-gated |
 
-### 3.7 Async, bulk status, import, schema
+### 3.7 Async, bulk status, import, schema (design reference; not used)
 
 | Capability | Method | Path | Read/Write | Idempotent | Risk | Verification tag | Notes |
 |---|---|---|---|---|---|---|---|
@@ -282,8 +294,11 @@ Routes per [Inventory Management](https://developer.adobe.com/commerce/webapi/re
 | Import | POST | `/V1/import/csv`, `/V1/import/json` | W | No | Critical | `[V-docs]` | **Adobe Commerce only**; base64 CSV |
 | Schema / async schema | GET | `/rest/{store}/schema?services=all`, `/rest/{store}/async/schema` | R | Yes | Low | `[V-docs]` | Source of truth for capabilities |
 
-Async routes are declared per module in `webapi_async.xml`, consolidated by `Magento\WebapiAsync\Model\ServiceConfig` `[V-docs]` ([ServiceConfig.php](https://github.com/magento/magento2/blob/2.4.9/app/code/Magento/WebapiAsync/Model/ServiceConfig.php)). Core 2.4.9 declares the first two
-routes only, so async is opt-in per operation with a synchronous fallback.
+This table is vendor reference only. **The gateway does not use Magento async,
+bulk-status, or import endpoints.** Imports run through the gateway's own
+PostgreSQL job queue and write through the normal REST tools; the async path was
+not implemented. The `/V1/import/*` endpoints are Adobe Commerce-only and are not
+called.
 
 ## 4. The Magento EAV model for integrators
 
@@ -316,81 +331,44 @@ Magento exception.
 
 ## 5. Configurable product lifecycle
 
-```mermaid
-stateDiagram-v2
-    [*] --> Draft
-    Draft --> ParentCreated: POST /V1/products (configurable)
-    ParentCreated --> ChildrenCreated: POST /V1/products (simple) x N
-    ChildrenCreated --> OptionsAssigned: POST /{sku}/options
-    OptionsAssigned --> LinksCreated: POST /{sku}/child x N
-    LinksCreated --> Enriched: media, categories, websites, prices
-    Enriched --> Inventoried: POST /V1/inventory/source-items
-    Inventoried --> Verified: GraphQL products query
-    Verified --> [*]
-    ChildrenCreated --> Compensating: rejected
-    Compensating --> Draft: delete created objects
+The gateway does not run a persisted multi-state machine with per-transition
+idempotency keys or compensation. It runs a **staged workflow** and reports what
+it did:
+
+```text
+precheck -> children -> parent -> links (read-back verified) -> stock
 ```
 
-The gateway persists each state (SKUs, attribute codes, resolved `value_index` values, created ids, last completed
-transition), so a run resumes after a crash instead of restarting.
-
-| Transition | Preconditions | API calls | Validation | Idempotency key | Compensation | Resumable |
-|---|---|---|---|---|---|---|
-| Draft → ParentCreated | Set resolved, SKU unused, website ids known | `POST /V1/products` (`type_id=configurable`, set, name, price, visibility 4, status 1, `website_ids`) | SKU probe returns 404; set exists | `product:{sku}` | Delete parent if this run created it | Yes: existence check first |
-| ParentCreated → ChildrenCreated | Parent id known, matrix computed | `POST /V1/products` per child (`type_id=simple`, visibility 1) | Child carries every configurable value; SKU unique; websites superset of parent | `product:{childSku}` | Delete children created this run | Yes: skip matching existing children |
-| ChildrenCreated → OptionsAssigned | Attribute select-like and global, in set; options exist | `POST /V1/configurable-products/{sku}/options` | `attribute_id` matches; every `value_index` belongs to that attribute | `option:{parentSku}:{attributeCode}` | `DELETE /{sku}/options/{id}` | Yes: read `options/all` first |
-| OptionsAssigned → LinksCreated | Option ids known, children exist | `POST /V1/configurable-products/{sku}/child` | Child values form a complete combination; not already linked | `link:{parentSku}:{childSku}` | `DELETE /{sku}/children/{childSku}` | Yes: diff `children` |
-| LinksCreated → Enriched | Parent id known | `POST /{sku}/media`, `POST /V1/categories/{id}/products`, website and price calls | MIME and roles, category exists, website assigned to store | `media:{sku}:{sha256}`, `category:{id}:{sku}` | Delete created media, unassign category | Yes |
-| Enriched → Inventoried | Source and stock resolved | `POST /V1/inventory/source-items` per SKU | Quantity numeric, non-negative; source exists; SKU assigned | `stock:{sku}:{sourceCode}` | Re-post previous quantity | Yes |
-| Inventoried → Verified | Indexers caught up | GraphQL `products` query | Variants present, values match, stock and price as expected | `verify:{parentSku}:{hash}` | Re-index request only | Yes (read-only) |
-
-### 5.1 Multi-attribute example (color × storage)
-
-Two colors × two storage sizes = four children. Parent and option payloads, using ids resolved from the
-instance; children then carry the same `value_index` values as raw attribute values:
-
-```json
-{"product": {"sku": "PHONE-01", "name": "Phone 01", "type_id": "configurable",
-  "attribute_set_id": 4, "price": 699, "status": 1, "visibility": 4,
-  "extension_attributes": {"website_ids": [1]}}}
-
-{"option": {"attribute_id": "93", "label": "Color", "position": 0,
-  "values": [{"value_index": 12}, {"value_index": 13}]}}
-```
-
-```json
-{"product": {"sku": "PHONE-01-BLK-128", "name": "Phone 01 Black 128", "type_id": "simple",
-  "attribute_set_id": 4, "price": 699, "status": 1, "visibility": 1, "weight": 0.4,
-  "custom_attributes": [{"attribute_code": "color", "value": "12"},
-                        {"attribute_code": "storage", "value": "31"}],
-  "extension_attributes": {"website_ids": [1]}}}
-```
-
-`attribute_id` is a string, `value_index` an integer, child attribute values are strings `[V-docs]` (`configurable-product-data-option-interface`, `configurable-product-data-option-value-interface`).
-
-### 5.2 Validated before any write
-
-| Check | Why | Failure mode if skipped |
+| Stage | Behaviour | On failure |
 |---|---|---|
-| Attribute select-like, global, in the parent set | Magento rejects anything else | 400 with an opaque message mid-run |
-| Every `value_index` belongs to the attribute | Wrong ids create dangling options | Option shown with no variant |
-| Parent and child share websites | Variants invisible otherwise | Parent renders, variants missing |
-| SKU unique catalog-wide | Magento enforces global uniqueness | Create fails after partial work |
-| Parent visibility 4, children 1, both enabled | Children must not list standalone | Duplicate listings or a silently missing variant |
-| Price defined on the parent | Displayed price comes from the parent | Price shows 0 or stale |
-| Complete combination coverage | Missing combinations cannot be selected | Unbuyable option on the storefront |
+| `precheck` | Resolve the attribute set and variant attributes, reject a pre-existing SKU on a fresh run, validate the child matrix before any write | `conflict`/`validation_failed`; zero writes |
+| `children` | Create only the missing children; on resume, reuse existing children | Stage-tagged error; children created so far remain |
+| `parent` | Create the configurable parent (or reuse it on resume) | Stage-tagged error; children remain |
+| `links` | Link each child, then read the children back to verify the association | `orphan_skus` names children that exist but are not linked |
+| `stock` | Set the parent stock status from the children and report `parent_in_stock` | Reported; the links remain |
 
-### 5.3 Update semantics and partial failure
+The result always carries:
 
-`PUT /V1/products/{sku}` is a **merge**: the repository loads the existing product, applies only the supplied keys, preserves `status`
-when absent, and reuses existing extension attributes when none are supplied `[V-docs]` ([ProductRepository.php](https://github.com/magento/magento2/blob/2.4.9/app/code/Magento/Catalog/Model/ProductRepository.php)). The trap is that
-supplying **any** extension attribute replaces the whole block, so `website_ids`, `category_links`, `stock_item`, and `configurable_product_links` must be sent together;
-the update tool always sends the full block it read first. On a non-default store view of a multi-store product,
-unchanged non-global attributes are written as `null` to drop the override, so store-scoped writes are separate
-tools with an explicit "clear override" flag.
+- `operation_id` — pass it back to resume the same create;
+- `outcome` — `completed` or `partial`;
+- `stages` / `completed_stages` / `failed_stage`;
+- `orphan_skus` — children that exist but are not linked (reconcile them).
 
-Partial failure has three modes: `rollback` (delete only what this run created), `resume` (keep and continue), `report` (stop and
-describe). Rollback never touches pre-existing objects.
+**Resume.** A resumed run with `operation_id` reuses existing children and the
+parent, adds missing links, and repairs an orphan left by a failed link stage. It
+writes no duplicate SKU. A fresh run (no `operation_id`) is **not** idempotent and
+refuses a pre-existing SKU in precheck.
+
+**No compensation.** Nothing is deleted. A partial run leaves the completed
+writes in place and reports the orphans; an operator or a resumed run finishes
+the job.
+
+**Vendor payload shape** (still true): `attribute_id` is a string,
+`value_index` an integer, and child attribute values are strings `[V-docs]`
+(`configurable-product-data-option-interface`,
+`configurable-product-data-option-value-interface`). Parent visibility 4 and
+child visibility 1 are the conventional shape, but the tool accepts the schema's
+enums.
 
 ## 6. Validation rules table
 
@@ -404,13 +382,12 @@ describe). Rollback never touches pre-existing objects.
 | Parent visibility 4, child 1 | Prevents duplicate listings | Payload normalization | `validation_failed: configurable parent visibility must be 4` |
 | `type_id` matches payload shape | Type-specific payloads are otherwise ignored | Tool input schema | `invalid_argument: type_id 'bundle' requires bundle_options` |
 | Quantity non-negative; source exists | A bad value or code rejects the batch | Tool schema, `GET /V1/inventory/sources` | `not_found: source 'wh2' does not exist` |
-| Store code valid | A typo writes to the wrong scope | `GET /V1/store/storeViews` | `invalid_argument: unknown store code 'en_us' (valid: default, en, de)` |
-| Media MIME allowed and matching bytes | Magento validates both | Gateway pre-check | `validation_failed: image/webp not allowed (jpg, jpeg, gif, png)` |
-| Import format on the allowlist and expansion within cap | A zip, XLSX, or gzip payload can expand past memory and skip the CSV validator | Format policy (section 9), caps applied after decompression | `unsupported_format: gzip_disabled`; `validation_failed: decompressed_size_exceeded (64 MiB)` |
-| No macros or external links in a workbook | Macros sit outside the CSV/JSON validator | XLSX converter rejects macro parts, ignores external links | `validation_failed: macros_present` |
+| Store code valid | A typo writes to the wrong scope | Operator configuration; the gateway does not validate it at startup | Upstream 400/404 naming the store code |
+| Media MIME allowed and size bounded | Magento validates both | Gateway pre-check: `image/jpeg`, `image/png`, `image/webp`, `image/gif`, ≤ 5 MiB decoded | `validation_failed: mime_type must be one of image/jpeg, image/png, image/webp, image/gif` |
+| Import format is CSV or JSON and within the decoded cap | XLSX/gzip/archive payloads would bypass the CSV/JSON validator | Format allowlist and 8 MiB decoded / 5,000 row caps (section 9) | `unsupported_format`; `validation_failed` naming the limit |
 | Category exists | Assignment fails late otherwise | `GET /V1/categories/{id}` | `not_found: category 42 does not exist` |
 | Destructive call confirmed | Deletes are irreversible | Tool layer | `confirmation_required` with an opaque `confirmation_id`; approval by a different human identity |
-| Storefront verification passes | HTTP 200 is not correctness | Final lifecycle state | `validation_failed: variant PHONE-01-BLK-256 absent from storefront query` |
+| Admin read-back verifies the links | HTTP 200 is not correctness | Final `links` stage reads `configurable.children` back | `validation_failed: child PHONE-01-BLK-256 exists but is not linked` (reported as `orphan_skus`) |
 
 ## 7. Media handling
 
@@ -446,8 +423,9 @@ default.
 
 ## 8. MSI inventory model
 
-MSI separates write from read (CQRS): `SourceItem` is the write entity, `StockItem` is read-only aggregated data produced by
-reindexing, and `GET` should use aggregated data while `POST`/`PUT` use source items `[V-docs]` ([Inventory Management](https://developer.adobe.com/commerce/webapi/rest/inventory/)).
+MSI separates write from read (CQRS): `SourceItem` is the write entity, aggregated
+stock is produced by reindexing, and `GET` should use aggregated data while
+`POST`/`PUT` use source items `[V-docs]` ([Inventory Management](https://developer.adobe.com/commerce/webapi/rest/inventory/)).
 
 | Concept | Meaning | Endpoint |
 |---|---|---|
@@ -457,98 +435,94 @@ reindexing, and `GET` should use aggregated data while `POST`/`PUT` use source i
 | Source item | Quantity of one SKU at one source | `/V1/inventory/source-items` |
 | Salable quantity | Aggregate sellable quantity minus reservations | `/V1/inventory/get-product-salable-quantity/{sku}/{stockId}` |
 
-**Salable quantity is not the sum of source quantities.** Reservations from carts and checkout reduce
-it and clear at shipment `[V-docs]`. A SKU with 10 units and 3 reservations reports 7. Every tool must state which
-number it returns: source quantity (physical), salable quantity (sellable now), or storefront `stock_status` (binary).
+**Salable quantity is not the sum of source quantities.** Reservations from carts
+and checkout reduce it and clear at shipment `[V-docs]`. A SKU with 10 units and
+3 reservations reports 7. Every tool states which number it returns: source
+quantity (physical), salable quantity (sellable now), or storefront
+`stock_status` (binary).
 
-**Assignment and bulk operations.** A SKU must be assigned to a source before a source item exists.
-Bulk assignment takes `{skus[], sourceCodes[]}`; transfers move quantity between sources, partial transfers take a quantity per SKU.
-These are non-idempotent batch calls whose response is a count, not a per-SKU outcome, so the gateway re-reads
-source items for the affected SKUs and reports the delta.
+**Assignment and transfer.** `magento.inventory.assign` and `.unassign` write
+source items per SKU (1–100 rows). `magento.inventory.transfer` is a **per-SKU**
+operation, not a bulk endpoint: it reads both source rows, re-reads them
+immediately before writing, upserts both in one batch, then reads them back. The
+result is a `TransferResult`:
 
-**Eventual consistency.** Source-item writes are synchronous, but salable quantity and storefront
-availability depend on indexers and, with a message queue, on consumers `[U]` for the delay (probe U7).
-Verification is a bounded poll of (1) source items, (2) salable quantity, and (3) GraphQL `stock_status`, up to 30 seconds,
-then `upstream_timeout` with the observed values rather than a success claim. If (1) and (2) disagree beyond reservations, the
-indexer has not run and the tool says so.
+| Field | Meaning |
+|---|---|
+| `transfer_id` | stable id for this attempt (also in the error details) |
+| `outcome` | `applied`, `conflict`, `verification_mismatch`, `partial`, `not_applied`, `needs_verification` |
+| `from_before` / `to_before` | quantities observed before the write |
+| `from_after` / `to_after` | quantities observed after the write (omitted when not observed) |
+| `intended_from` / `intended_to` | the post-state the transfer wrote |
+| `from_applied` / `to_applied` | whether each row reached its intended value |
+| `applied_rows` | `both`, `from`, `to`, `none`, or `unknown` |
 
-## 9. Bulk import design
+Only `applied` is success; every other outcome is returned with a typed error
+carrying the same facts. `needs_verification` means the post-state is unknown and
+the gateway does not compensate on its own. The input `quantity` is an integer;
+fractional MSI quantities are refused (a fractional read-back is
+`needs_verification`). The operation is not transactional.
 
-Pipeline: `normalize → validate → preview → confirm → execute → status → report`.
+**Eventual consistency.** Source-item writes are synchronous, but salable
+quantity and storefront availability depend on indexers and, with a message
+queue, on consumers `[U]` for the delay. The gateway does not poll Magento for
+30 seconds and does not use GraphQL `stock_status`; a read-back of the source
+items is the verification it performs. Indexer lag is an operator-visible
+condition, not something the gateway can prove.
+
+## 9. Bulk import
+
+Pipeline: `normalize -> validate -> preview -> confirm -> execute -> status ->
+report`.
 
 | Stage | Behaviour | Failure handling |
 |---|---|---|
-| Normalize | CSV, JSON, or XLSX (bounded converter, below) to the canonical row model; headers mapped to attribute codes via the schema cache, never positionally | Unmapped header → `validation_failed` naming it; `unsupported_format` before parsing |
+| Normalize | CSV or JSON to the canonical row model; headers map to attribute codes, never positionally | Unmapped header → `validation_failed` naming it; any other format → `unsupported_format` |
 | Validate | Section 6 plus cross-row checks: duplicate SKUs, parent/child references, option values, website and category ids | Report all errors, not the first |
-| Preview | Diff of creates, updates, deletes, unchanged, and per-row warnings | Blocks execution until confirmed |
-| Confirm | Confirmation token bound to the preview hash | Stale token → `conflict` |
-| Execute | Chunked writes through the same tools as single operations, or `/V1/import/*` when eligible | Per-chunk checkpoint |
-| Status | `/V1/bulk/{bulkUuid}/status`, `/detailed-status`, `/operation-status/{status}` | Unknown status → `upstream_unavailable` |
-| Report | Row-level result: sku, action, status, error code, upstream message | Produced even on abort |
+| Preview | Diff of creates, updates, unchanged, and per-row warnings | `magento.import.validate`; never writes |
+| Confirm | The write tools use the standard two-step confirmation | Missing approval → `confirmation_required` |
+| Execute | Bounded synchronous batch (`import.execute`) or a queued job (`import.start`) | Per-row report; earlier writes are not rolled back |
+| Status | `magento.import.status` reads the PostgreSQL job; `.batches`/`.batch` read persisted batch history | Unknown job → `not_found` |
+| Report | Row-level result: sku, action, status, error; failed rows persisted for resume | Produced even on abort |
 
-**Format policy.** One allowlist covers every upload path, including the base64 `csvData` of `/V1/import/csv`.
-Limits are enforced **after** decompression, never before: the declared size, `Content-Length`, and the base64
-length are not trusted, and each stage decodes through a streaming reader with a hard byte counter that aborts at
-the cap instead of buffering. `[V-docs]` for the Magento contract, `[U]` for the converter bounds (probe U11).
+**Format policy (as built).** Only CSV and JSON are accepted. There is no XLSX
+converter, no gzip, and no archive support; those formats return
+`unsupported_format`. Limits are enforced on the decoded bytes:
 
-| Input | Accepted | Bound (post-decompression) | Rejection |
+| Input | Accepted | Bound | Rejection |
 |---|---|---|---|
-| CSV, UTF-8 (`text/csv`) | yes | 8 MiB, 64 columns, 32 KiB per field, 5,000 rows | `validation_failed: payload_too_large`, `too_many_columns`, `too_many_rows` |
-| JSON (`application/json`) | yes | 8 MiB, same row and field caps, validated against the REST payload schema | `validation_failed: ...`, `invalid_argument: ...` |
-| XLSX (`.xlsx`, OOXML) | only through the bounded converter | 64 MiB decompressed across all zip entries, ≤10,000 entries, shared strings ≤1,000,000 entries and ≤32 MiB, macros rejected, external links ignored | `validation_failed: decompressed_size_exceeded (64 MiB)`, `zip_entry_limit`, `shared_strings_limit`, `macros_present` |
-| `.xlsm`, `.xls`, any macro-enabled or OLE2 container | no | — | `unsupported_format: macros_present` or `unsupported_format` |
-| gzip-compressed CSV | no by default; only when the operator sets `import.allow_gzip` | the same 8 MiB cap applied after inflate | `unsupported_format: gzip_disabled` (default) |
-| zip, tar, or any other archive | no | — | `unsupported_format` |
+| CSV (UTF-8) | yes | 8 MiB decoded, 64 columns, 5,000 rows | `validation_failed` naming the limit |
+| JSON | yes | 8 MiB decoded, 5,000 rows | `validation_failed` / `invalid_argument` |
+| XLSX, XLS, OLE2, gzip, zip, any archive | no | — | `unsupported_format` |
 
-The XLSX converter reads only `xl/workbook.xml`, `xl/sharedStrings.xml`, and `xl/worksheets/*.xml`; it never
-resolves `externalLinks` relationships, rejects any part with a macro content type or a `vbaProject.bin`, and parses
-XML with DTDs and external entities disabled, so entity-expansion bombs fail before the row reader runs. It emits
-the same canonical row model as CSV, so every section 6 rule and every cross-row check applies unchanged. Outbound
-`csvData` is sent uncompressed; the gateway never forwards a caller-supplied gzip stream.
+The base64 form of an 8 MiB payload is 11,184,812 bytes. The request body cap
+must admit that plus the JSON envelope: the default is 16 MiB, the minimum for a
+write-enabled deployment is 12 MiB, and a lower cap fails configuration
+validation at startup. `magento.import.start` also needs `database.url`.
 
-The threat model's §5.8 wording ("bounded, not removed") now matches this policy; the earlier
-entirely") overstates the position: XLSX stays behind the converter, so the correct claim is **bounded, not
-claim that the surface was removed** is superseded (F-06). The cases are blocking in the T-23/§5.8 matrix:
-`test/security/upload_test.go::TestXLSXZipBomb` (a 1 MiB workbook whose sheet XML expands past 64 MiB is rejected
-at the cap with `decompressed_size_exceeded`), `TestXLSXMacroWorkbook` (an `.xlsm` carrying `vbaProject.bin` is
-rejected with `macros_present`), and `TestGzipCSVBomb` (gzip disabled → `unsupported_format: gzip_disabled`;
-enabled → the 8 MiB post-inflate cap holds).
+**Async execution.** The gateway's async path is its own PostgreSQL job queue,
+not Magento `/async` or `/V1/import/*`. The worker claims the job with a lease
+and fencing token, executes the rows through the normal REST tools, persists the
+batch and every failed row, and records progress. `magento.import.resume` reads
+the persisted failures (not the 100-row report cap) and queues a new job with
+only those rows; repeated resumes of the same source job return the same new job.
+Partial success is normal: the report distinguishes created, updated, skipped,
+and failed rows.
 
-**Import endpoints.** `POST /V1/import/csv` and `/V1/import/json` exist in the 2.4.9 admin schema, but
-the Import API page carries the Adobe Commerce "exclusive feature" banner and Open Source's `ImportExport` module ships no
-`webapi.xml` `[V-docs]` ([Import API](https://developer.adobe.com/commerce/webapi/rest/modules/import/), [ImportExport](https://github.com/magento/magento2/tree/2.4.9/app/code/Magento/ImportExport)). The gateway detects them from the schema and falls back to chunked REST writes when absent.
-
-Contract `[V-docs]`: payload `{source:{entity, behavior, validationStrategy, allowedErrorCount, csvData}}`; `csvData` is base64 of UTF-8 CSV, optionally gzip-compressed first. `entity` ∈ `advanced_pricing`, `catalog_product`, `customer`,
-`customer_address`, `customer_composite`, `customer_finance`, `stock_sources`; `behavior` ∈ `append`/`replace`/`delete` for product and pricing entities and `add_update`/`delete`/`custom` for customer
-entities (the page's own sample uses `add_update` for `advanced_pricing`, contradicting its table, so the gateway validates against
-the table); `validationStrategy` ∈ `validation-stop-on-errors` (halt at the first error and return the row number) or `validation-skip-errors` (import valid rows unless
-errors exceed `allowedErrorCount`, in which case nothing is imported). Success returns `["Entities Processed: N"]`, failure `["Row N: <message>"]`; both are
-unstructured strings, parsed defensively and treated as `upstream_unavailable` if unparsable.
-
-**Async execution.** For large runs the gateway prefers `/async/bulk/V1/products/bySku`, which returns
-a `bulk_uuid` and per-operation status `[V-docs]`:
-
-- Async and bulk need a message queue (RabbitMQ by default) and a running `async.operations.all`
-  consumer; without them requests are accepted and never processed `[V-docs]`
-  ([bulk endpoints](https://developer.adobe.com/commerce/webapi/rest/use-rest/bulk-endpoints/)), so the
-  gateway polls and fails with `upstream_unavailable` if nothing transitions. The `bulk_uuid` is
-  persisted with the run, so a restart re-attaches instead of resubmitting.
-- Operation status: 1 complete, 2 failed but retryable, 3 failed and requires a change, 4 open,
-  5 rejected `[V-docs]`
-  ([status endpoints](https://developer.adobe.com/commerce/webapi/rest/use-rest/operation-status-endpoints/)).
-  Only status 2 is retried automatically, and only the failed subset is resubmitted with a new
-  `bulk_uuid`; resubmitting the batch would re-run completed operations.
-- Two rows for one SKU in a run is a hard validation error; an existing SKU is an update and the
-  preview says so. Partial success is normal: the report distinguishes `created`, `updated`,
-  `skipped`, `failed`, and `unknown` (accepted, no terminal status within the budget).
-
-Human confirmation is mandatory for `delete`, `replace`, every write by default, and runs above the configured row threshold. It uses the confirmation protocol, not a boolean flag. Every run writes an
-audit record (actor, tool, instance, store code, preview hash, row counts, `bulk_uuid`, final status); payload bodies
-are not stored.
+**Confirmation and audit.** Imports are writes: they require the two-step
+confirmation, the operation ledger gate, and an audit record. Payload bodies are
+not stored in audit; the batch stores the payload needed for resume.
 
 ## 10. Orders and sales analytics
 
-Sales data is read-only in v0.x and only through aggregates.
+Sales data is read and written. Reads are projected and aggregate; writes
+(orders, invoices, shipments, credit memos, comments, holds, cancellation) are
+confirmation-gated and ledger-gated. The money tools accept an optional
+`idempotency_key` and return `operation_unknown` when the outcome is ambiguous;
+they never retry automatically. `magento.invoice.create` uses
+`POST /V1/order/{orderId}/invoice` (the workflow route) because the repository
+route `POST /V1/invoices` has no capture field and would silently ignore
+`capture=true`. See §12 and the [threat model](../security/threat-model.md) §8.12.
 
 **Acceptable queries.** `GET /V1/orders` filtered on `created_at`, `status`, `store_id`,
 `customer_group_id`, or `increment_id`, with an explicit `pageSize` and sort `[V-docs]` ([search](https://developer.adobe.com/commerce/webapi/rest/use-rest/performing-searches/)). Aggregation happens in the gateway over the smallest
@@ -560,8 +534,9 @@ hold. Responses are projected, and raw order payloads never reach the model. Ite
 same discipline.
 
 **Pagination and limits.** `pageSize` is always sent: core collections have no default page size, so
-an unbounded search can materialize the whole collection `[V-docs]` ([Collection.php](https://github.com/magento/magento2/blob/2.4.9/lib/internal/Magento/Framework/Data/Collection.php)). Caps: 200 (sales) and 500 (catalog) per
-page, 10,000 rows per tool call, with a truncation flag rather than silent infinite pagination. An out-of-range
+an unbounded search can materialize the whole collection `[V-docs]` ([Collection.php](https://github.com/magento/magento2/blob/2.4.9/lib/internal/Magento/Framework/Data/Collection.php)). Caps: 200 per page for `order.search`, 50 for `products.get`, 20,000 orders per
+`sales.analysis` call (10,000 default), and 1,000 orders per `order.summary`
+window; truncation is reported rather than silently paginating forever. An out-of-range
 `currentPage` returns an empty set, which must be distinguished from "no orders". `filter_groups` are ANDed, filters within a group
 are ORed, and OR across groups is unsupported `[V-docs]`; only top-level attributes are searchable. Date filters use
 `from`/`to` with `Y-m-d H:i:s` in the store time zone; the gateway converts UTC inputs and states the zone in the response
@@ -584,80 +559,85 @@ and business rules, 404 covers both unknown routes and missing entities, 500 cov
 | `NoSuchEntityException` | 404 | `The product that was requested doesn't exist.` | `not_found` | Echoes the requested SKU |
 | Unknown route | 404 | `Request does not match any route.` | `not_found` | Endpoint unsupported here; run capability check |
 | Missing or expired token | 401 | `The consumer isn't authorized to access %resources.` | `permission_denied` | Re-authentication required |
-| Insufficient ACL | 401 (403 via proxy) | `The consumer isn't authorized to access %resources.` | `permission_denied` | Same message as an expired token; the startup probe (2.2) records the denied resource server-side |
+| Insufficient ACL | 401 (403 via proxy) | `The consumer isn't authorized to access %resources.` | `permission_denied` | Same message as an expired token; the operator reviews the integration's ACL |
 | `AlreadyExistsException` | 400/409 | `The product with the "%1" SKU already exists.` | `conflict` | SKU conflict with existing entity id |
 | Duplicate URL key | 400 | `URL key for specified store already exists.` | `conflict` | Suggests a different `url_key` |
 | Concurrent edit | 400 | `The order ... cannot be ...` | `conflict` | Refresh and retry |
 | Throttling | 429 | (deployment-specific) | `rate_limited` | Retry-after hint |
 | 5xx, reset, empty body | 500/502/503 | `Internal Error` | `upstream_unavailable` | Instance unhealthy; no payload echo |
 | Client deadline | n/a | n/a | `upstream_timeout` | May have completed; verify before retry |
+| Ambiguous write outcome | timeout, 5xx, reset after send | n/a | `operation_unknown` | Poll the operation; never retry |
+| Idempotency key reused with different args | n/a | n/a | `idempotency_key_reuse` | Use a new key for a different request |
 
 Translation rules: never forward raw messages (they embed class names, SQL fragments, and paths), `trace`, `parameters`, or
 headers; distinguish entity 404 from route 404 by the message, because the recovery differs; map 400s mentioning
 authorization or permission to `permission_denied`, since retrying with different data will not help; log endpoint, status,
 duration, and a request hash, never the token, body, or customer data.
 
-## 12. Rate limits, timeouts, retries, pagination
+## 12. Timeouts, retries, pagination
 
-Magento publishes **no universal REST rate limit**. The only documented rate limiting is the optional carding
-protection added in 2.4.7 for payment-information and order-placement endpoints, backed by Redis `[V-docs]` ([rate limiting](https://developer.adobe.com/commerce/webapi/get-started/rate-limiting/)). Real
-limits come from PHP-FPM workers, nginx, the PaaS WAF, and database capacity.
+Magento publishes **no universal REST rate limit**. Real limits come from
+PHP-FPM workers, nginx, the PaaS WAF, and database capacity. The gateway does
+**not** implement a per-instance concurrency semaphore, token bucket, rate
+limiter, retry loop, or circuit breaker. Those are **PLANNED** (SEC-11,
+PERF-05); limit concurrency at the agent or edge.
 
-| Control | Default | Rationale |
+| Control | As built | Notes |
 |---|---|---|
-| Concurrency per instance | 4 | PHP-FPM pools are commonly 5–10 workers; the storefront must not starve |
-| Sustained rate / burst | 5 req/s / 10 | Below typical single-node capacity; configurable |
-| Connect timeout | 5 s | Fail fast on DNS or TLS problems |
-| Read / write timeout | 30 s / 60 s | Large searches are slow; product saves with media are slower |
-| Async submit timeout | 15 s | Returns a `bulk_uuid` quickly |
-| Retries | 3 on 429, 502, 503, 504, network errors | Backoff 1 s, 2 s, 4 s with full jitter |
-| Non-idempotent write retry | Never automatic | A timed-out POST may have succeeded |
-| Page size / row caps | 200 sales, 500 catalog; 10,000 rows per call | Bound memory and response size |
+| Per-request timeout | 30 s default (`magento.DefaultTimeout`) | A write timeout becomes `operation_unknown`, not `failed` |
+| Tool timeout | 30 s read, 60 s write, 120 s bulk/analysis | Enforced by the MCP middleware |
+| Automatic retries | none | `retryable` is a hint for the caller; the gateway does not retry |
+| Non-idempotent write retry | never automatic | A timed-out POST may have succeeded; the ledger/reconciler decides |
+| Circuit breaker | none | PLANNED |
+| Page size / row caps | per tool (200 order search, 50 product batch, 20,000 sales analysis, 1,000 order summary) | Bound memory and response size |
+| Connection pool | tuned `http.Transport` (100 idle, 16 per host, 32 max per host) | Magento only; Cloudflare/GA4 use the standard client |
 
-On a write timeout the gateway does not retry: it reads back by natural identifier (SKU, source code, category
-id) and reports `succeeded` or `upstream_timeout with unknown outcome`. `Retry-After` is honoured; five consecutive 5xx responses open a per-instance circuit for 30
-seconds.
+A write whose outcome is ambiguous is recorded as `unknown` and returned as
+`operation_unknown`; the worker's reconciler resolves it. The caller must poll,
+never retry.
 
 ## 13. Compatibility and versioning
 
 | Topic | Position | Tag |
 |---|---|---|
 | Primary target / range | 2.4.9 primary; 2.4.x supported; 2.4.4+ assumed for Swagger behaviour | `[V-docs]` (F6) |
-| Schema as source of truth | `GET /rest/{store}/schema?services=all` returns the instance's own Swagger; diff at startup | `[V-docs]` |
-| Async capability | `GET /rest/{store}/async/schema` lists async-enabled services | `[V-docs]` |
+| Schema as source of truth | `GET /rest/{store}/schema?services=all` returns the instance's own Swagger; the gateway does **not** fetch or diff it at startup | `[V-docs]` |
+| Async capability | Not used; the gateway has its own PostgreSQL job queue | `CONTRACT` |
 | Swagger UI | Disabled in production mode since 2.4.4; `/swagger` may be exposed by default | `[V-docs]` |
-| GraphQL | Introspection enabled by default (`graphql.disable_introspection` to disable); prefer `attribute_id_v2` | `[V-docs]` |
+| GraphQL | No Magento GraphQL client; storefront verification is not implemented (ADR-0022) | `CONTRACT` |
 | Import endpoints | Adobe Commerce only; absent in Magento Open Source | `[V-docs]` |
 | Legacy stock APIs | `CatalogInventory` endpoints superseded by MSI but still present | `[V-docs]` |
 | 2FA on admin users | Plain admin token endpoint insufficient; TFA route required | `[V-docs]` |
 | SaaS / IMS OAuth | Out of scope: different auth, different async path, no CSV import | `[V-docs]` |
 
-**Capability detection.** At startup and on an interval the gateway fetches the schema and derives
-which paths, methods, and async services exist. A tool whose endpoint is absent is not advertised, and a call to
-it returns `not_found` with `hint: capability_absent` instead of a raw 404. Missing capabilities are logged once per instance version.
+**Capability detection is not implemented.** The gateway does not fetch the
+schema at startup, does not diff it, and does not hide a tool whose endpoint is
+missing; a missing route surfaces as `not_found`/`unsupported_capability` from the
+call. A startup probe is **PLANNED**.
 
-**Behavioural differences, not just availability:** 2.4.4+ hides Swagger UI outside developer mode
-(the schema endpoint is unaffected); MSI is the inventory authority from 2.3 onward, so writing `stock_item` through the
-product payload is a compatibility path; async and bulk require a message queue; SaaS reorders the async path
-and drops CSV import, so the gateway refuses to start against a SaaS base URL rather than failing at the first
-write.
+**Behavioural differences, not just availability:** 2.4.4+ hides Swagger UI
+outside developer mode (the schema endpoint is unaffected); MSI is the inventory
+authority from 2.3 onward, so writing `stock_item` through the product payload is
+a compatibility path; async and bulk require a message queue, which the gateway
+does not use; SaaS reorders the async path and drops CSV import, and is out of
+scope for v0.x.
 
 ## 14. Security considerations
 
 | Control | Requirement |
 |---|---|
 | Token storage | Memory or OS keyring; never in logs, errors, audit rows, or tool output; config references an env var or file path, never a committed literal |
-| Least privilege | One integration per environment, restricted to the manifest for its mode (section 2.2). The credential, not the tool surface, is the boundary: the startup probe disables a read-only instance whose credential holds a write resource and a write instance missing a required one; `Magento_Backend::store` and `Magento_Config::config` are `acl_unverifiable` and must be checked in the integration's Available APIs |
+| Least privilege | One integration per environment, restricted to the manifest for its mode (section 2.2). The credential, not the tool surface, is the boundary. The gateway does **not** probe the ACL at startup; review the integration's Available APIs against section 2.2 |
 | Read-only deployments | Read-only manifest only; catalog, source-item and sales-document reads require the write manifest because 2.4.9 grants no read-only resource for them, and an instance with those resources is never described as read-only |
 | Store configuration | `Magento_Config::config` and its section children are never granted; core 2.4.9 has no REST write route for store config, and store-view administration remains the residual of `Magento_Backend::store` (section 2.2) |
-| Import formats | CSV and JSON; XLSX only through the bounded converter (64 MiB decompressed, 10,000 entries, shared-strings cap, macros rejected, external links ignored); gzip CSV off unless enabled; every cap after decompression; the bomb and macro cases are blocking tests (section 9, T-23/§5.8) |
+| Import formats | CSV and JSON only, 8 MiB decoded and 5,000 rows; XLSX, XLS, gzip, and archives are rejected with `unsupported_format` (section 9) |
 | Admin credentials | Opt-in through the `admin:<username>:<password>` credential form; the password stays in process memory, is never logged, persisted, or echoed in errors, and mints a token that is cached for 4 h − 5 min and re-minted once on 401. Admin ACL exceeds an integration's, so use a dedicated API-only admin with the least-privilege role, never a human administrator |
 | Credential logging | Method, path, status, duration, body hash only; `Authorization`, cookies, `Set-Cookie` redacted at the transport layer |
 | Write confirmation | `delete`, `replace`, and bulk deletes require the two-step confirmation protocol (ADR-0014): opaque `confirmation_id`, approval by a different human identity, parameter-hash binding, single use. No `confirm` boolean exists |
-| Audit fields | Actor, tool, instance, store code, natural key, request hash, status, upstream correlation id; no bodies |
+| Audit fields | Subject hash, tool, instance, scope, decision, phase, state, error code, request id; the canonical argument hash is stored in the confirmation and operation ledger, not in the audit row; no bodies |
 | Admin session abuse | No session cookies, no `/swagger`, no admin UI routes, no admin user creation |
 | Response leakage | Messages translated (section 11); `trace` and `parameters` dropped |
-| Replay / minimisation | Non-idempotent writes carry a persisted idempotency key; order tools project fields and aggregates exclude customer identifiers |
+| Replay / minimisation | Writes are gated by the operation ledger with fencing and idempotency keys; the money tools accept an explicit `idempotency_key` and return `operation_unknown` on ambiguity. Order reads project fields and aggregates exclude customer identifiers |
 
 Threat-model detail belongs in `docs/security/`; this is the Magento-specific subset.
 
@@ -673,7 +653,7 @@ Threat-model detail belongs in `docs/security/`; this is the Magento-specific su
 | Async route registration | 2026-11-18 | `webapi_async.xml` @ 2.4.9 | Two core routes | `[V-docs]` |
 | ACL manifests | 2026-11-19 | 2.4.9 `acl.xml` files and `webapi.xml` route resources | Matches section 2.2 | `[V-docs]` |
 | ACL denial status and probe safety | 2026-11-19 | `RequestValidator.php`, `ErrorProcessor.php` @ 2.4.9 | Denial is 401 before body parsing; probe accepts 401/403 | `[V-docs]` |
-| Format policy | 2026-11-19 | Threat model §5.8 and Import API page | Bounded converter, post-decompression caps; §5.8 wording to be reconciled | `[U]` |
+| Format policy | 2026-11-19 | Threat model §5.8 and Import API page | CSV/JSON only, 8 MiB decoded, 5,000 rows; body-cap floor 12 MiB | `CONTRACT` |
 | Live behaviour of any endpoint | — | No instance available | Not run | `[U]` |
 
 The probe suite that closes the `[U]` items is in [docs/evidence/magento.md](../evidence/magento.md). No live verification was possible in this session because
@@ -684,20 +664,21 @@ against a staging instance before the module is described as working.
 
 | ID | Question | Resolution | Blocking? |
 |---|---|---|---|
-| U1 | Does `POST /V1/products` accept `configurable_product_links` at create time, validated against existing children? | Create parent with links, then GraphQL | No |
+| U1 | Does `POST /V1/products` accept `configurable_product_links` at create time, validated against existing children? | Create parent, link children, read back `configurable.children` | No |
 | U2 | Real maximum media payload size (`post_max_size`, `client_max_body_size`) | Upload increasing sizes until 400/413 | No |
 | U3 | Exact 404 payload for a missing product vs an unknown route | Two probes, compare `message` | No |
 | U4 | No REST endpoint for per-variant price deltas in 2.4.9; confirm no supported write path | Schema search for `super`; CSV round-trip | Yes for price-differentiated variants |
 | U5 | ~~Is `PUT /async/V1/products/{sku}` registered?~~ Resolved: not registered in 2.4.9 (F26) | `GET /rest/default/async/schema` for other installs | Closed |
 | U6 | Default `pageSize` per endpoint when omitted | `GET /V1/products` without `pageSize` | No |
-| U7 | Delay between source-item write and GraphQL `stock_status`, with and without consumers | Timed staging probe | Yes for the inventory budget |
+| U7 | Delay between source-item write and salable/stock status, with and without consumers | Timed staging probe against the REST source-item read-back | Yes for the inventory budget |
 | U8 | ~~Exact ACL resource ids for MSI source items and store config~~ Resolved: source items are `Magento_InventoryApi::source`; store config reads are `Magento_Backend::store` (section 2.2) | Integration ACL tree | Closed |
 | U9 | Does 2.4.9 return 409 or 400 for a duplicate SKU? | Duplicate create probe | No |
 | U10 | Can store-view write scope be detected over REST? | No REST write route is gated by `Magento_Backend::store`; compare the integration's Available APIs tree with section 2.2 at startup review | No (residual, reported as `acl_unverifiable`) |
-| U11 | XLSX converter peak memory and shared-strings ratio on real workbooks | Generate workbooks up to the 64 MiB cap, measure RSS and abort behaviour | No |
+| U11 | Real maximum media payload accepted by the target's PHP/nginx limits | Upload increasing sizes until 400/413 | No |
 
-**Decision record.** [ADR-0003](../adr/0003-magento-client-design.md) records: REST-only writes with GraphQL as
-read verification; the configurable lifecycle as a persisted, resumable state machine with per-transition
-idempotency keys; explicit store code configuration; async and CSV import as optional runtime-detected
-capabilities; `integration_oauth1` as the production default credential mode; and SaaS/IMS OAuth rejected at configuration time
-for v0.x.
+**Decision record.** [ADR-0003](../adr/0003-magento-client-design.md) records
+REST-only access with no Magento GraphQL client; the configurable lifecycle as a
+staged workflow with an operation id for resume and orphan reporting; explicit
+store code configuration; the gateway's PostgreSQL job queue for imports (not
+Magento async); CSV/JSON import with an 8 MiB decoded cap; and SaaS/IMS OAuth out
+of scope for v0.x.
