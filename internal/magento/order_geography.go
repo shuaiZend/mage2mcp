@@ -30,13 +30,14 @@ type CountryStat struct {
 // Only country codes, counts, and revenue are returned; names, streets, cities,
 // postcodes, and phone numbers are never read into the result.
 type OrderGeography struct {
-	From          string        `json:"from"`
-	To            string        `json:"to"`
-	OrdersScanned int           `json:"orders_scanned"`
-	Truncated     bool          `json:"truncated"`
-	TotalOrders   int           `json:"total_orders"`
-	TotalRevenue  float64       `json:"total_revenue"`
-	Countries     []CountryStat `json:"countries"`
+	From           string        `json:"from"`
+	To             string        `json:"to"`
+	OrdersScanned  int           `json:"orders_scanned"`
+	TotalAvailable int           `json:"total_available"`
+	Truncated      bool          `json:"truncated"`
+	TotalOrders    int           `json:"total_orders"`
+	TotalRevenue   float64       `json:"total_revenue"`
+	Countries      []CountryStat `json:"countries"`
 }
 
 // OrderGeography aggregates orders created in [from, to) by the country of their
@@ -66,12 +67,15 @@ func (s *Service) OrderGeography(ctx context.Context, from, to time.Time, maxOrd
 		query.Set("searchCriteria[filter_groups][0][filters][1][field]", "created_at")
 		query.Set("searchCriteria[filter_groups][0][filters][1][value]", to.UTC().Format("2006-01-02 15:04:05"))
 		query.Set("searchCriteria[filter_groups][0][filters][1][condition_type]", "lt")
+		query.Set("searchCriteria[sortOrders][0][field]", "created_at")
+		query.Set("searchCriteria[sortOrders][0][direction]", "desc")
 		raw, err := s.client.do(ctx, http.MethodGet, "/orders", query, nil)
 		if err != nil {
 			return nil, err
 		}
 		var payload struct {
-			Items []struct {
+			TotalCount int `json:"total_count"`
+			Items      []struct {
 				GrandTotal          float64 `json:"grand_total"`
 				ExtensionAttributes struct {
 					ShippingAssignments []struct {
@@ -86,6 +90,9 @@ func (s *Service) OrderGeography(ctx context.Context, from, to time.Time, maxOrd
 		}
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order payload").WithCause(err)
+		}
+		if page == 1 {
+			result.TotalAvailable = payload.TotalCount
 		}
 		if len(payload.Items) == 0 {
 			break
@@ -116,6 +123,7 @@ func (s *Service) OrderGeography(ctx context.Context, from, to time.Time, maxOrd
 			break
 		}
 	}
+	result.Truncated = result.TotalAvailable > result.OrdersScanned
 	result.Countries = make([]CountryStat, 0, len(counts))
 	for _, stat := range counts {
 		result.Countries = append(result.Countries, *stat)
