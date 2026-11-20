@@ -271,30 +271,22 @@ remediation:
 
 | Status | Count |
 |---|---|
-| Closed (fixed, verified, already fixed, or recorded as documentation) | 112 |
-| Partial | 3 |
-| Open P0, P1 or P2 | **2** (`REL-16`, `MCP-08`) |
+| Closed (fixed, verified, already fixed, or recorded as documentation) | 114 |
+| Partial | 1 |
+| Open P0, P1 or P2 | **0** |
 
-The two open P2 items are bounded and were accepted by the audit, not overlooked:
+The one partial item is `PERF-16`, and it is a performance optimisation rather than a
+defect. Bulk product updates and bulk attribute-option creation now fan out under a
+bound. No stage inside the configurable workflow can be parallelised without changing
+the failure contract: children and links both fail fast and report one SKU, and the link
+stage ends with a verification read the whole stage depends on. The audit itself measured
+the remaining latency as fitting the tool budget — "fine, but linear and fragile" — so
+closing it means trading a deterministic failure report for latency, which is a
+maintainer's decision rather than a defect fix. `perf-16-options.md` records the options
+and the corrected analysis.
 
-- **`REL-16`** — the outcome audit row is written by the middleware after the tool
-  commits for the five self-ledgered money tools. A crash in that window leaves the
-  `operations` row correct but its audit row missing. The ledger remains the authority
-  on whether the mutation happened, so the gap is in the audit trail, not in the money.
-
-  The obvious fix — have the ledger write the row in its own transaction, as
-  `RecoverExpired` and `Abort` already do — makes things worse, and it took reading the
-  call order to see why: `CreateOrder` validates its input **before** `ops.Begin`, so a
-  call that fails validation opens no operation. If the audit row came only from the
-  ledger, that call would have no audit row at all. A correct fix needs the middleware
-  to write the row when no operation was opened and the ledger to write it when one
-  was, which requires a signal that does not exist today.
-- **`MCP-08`** — every output property now carries a description, enforced at
-  registration. What is missing is a common output envelope (instance, request id),
-  which would change all 106 output schemas.
-
-The third partial item, `PERF-16`, is a performance optimisation, not a behavioural
-defect.
+Everything that could change an outcome for a caller was fixed and verified, most of it
+against a real store.
 
 Each of the three has a note laying out the options and their costs, so the remaining
 work is a choice rather than an open question:
