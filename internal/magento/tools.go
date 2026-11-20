@@ -996,8 +996,9 @@ const (
 
 	configurableChildrenSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
-		"parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Configurable parent SKU."}
-	}, "required": ["instance", "parent_sku"], "additionalProperties": false}`
+		"parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Configurable parent SKU."},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Alias for parent_sku."}
+	}, "required": ["instance"], "additionalProperties": false}`
 
 	attributeOptionsSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -1015,6 +1016,7 @@ const (
 type configurableChildrenInput struct {
 	Instance  string `json:"instance"`
 	ParentSKU string `json:"parent_sku"`
+	SKU       string `json:"sku"`
 }
 
 type configurableChildrenOutput struct {
@@ -1052,7 +1054,14 @@ func newConfigurableChildrenTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, configurableChildrenOutput{}, err
 				}
-				children, err := svc.Children(ctx, in.ParentSKU)
+				parentSKU := in.ParentSKU
+				if parentSKU == "" {
+					parentSKU = in.SKU
+				}
+				if parentSKU == "" {
+					return nil, configurableChildrenOutput{}, invalidf("parent_sku or sku is required")
+				}
+				children, err := svc.Children(ctx, parentSKU)
 				if err != nil {
 					return nil, configurableChildrenOutput{}, err
 				}

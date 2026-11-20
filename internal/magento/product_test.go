@@ -153,3 +153,20 @@ func TestProductUnmarshalCategories(t *testing.T) {
 		t.Fatalf("website ids = %v", product.WebsiteIDs)
 	}
 }
+
+func TestProductUnmarshalDetailFields(t *testing.T) {
+	var product Product
+	raw := []byte(`{"id":7,"sku":"SKU-7","name":"Detail","type_id":"simple","price":9.99,"weight":0.25,
+		"description":"<p>Rich copy</p>","short_description":"Short","url_key":"detail",
+		"meta_title":"Meta","meta_description":"Meta description",
+		"custom_attributes":[{"attribute_code":"color","value":"49"},{"attribute_code":"special_price","value":"7.99"}]}`)
+	if err := json.Unmarshal(raw, &product); err != nil {
+		t.Fatal(err)
+	}
+	if product.Description != "<p>Rich copy</p>" || product.URLKey != "detail" || product.Weight != 0.25 {
+		t.Fatalf("product = %+v", product)
+	}
+	if product.Attributes["color"] != "49" || product.Attributes["special_price"] != "7.99" {
+		t.Fatalf("attributes = %+v", product.Attributes)
+	}
+}

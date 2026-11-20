@@ -14,16 +14,17 @@ import (
 
 // SEOCheck is one deterministic content/SEO finding for a product.
 type SEOCheck struct {
-	Field   string `json:"field"`
-	Status  string `json:"status"` // pass, warn, fail
-	Message string `json:"message"`
+	Field    string `json:"field"`
+	Status   string `json:"status"` // pass, warn, fail
+	Message  string `json:"message"`
+	Optional bool   `json:"optional,omitempty"`
 }
 
 // SEOAudit reports content and SEO completeness. It never invents copy: it
 // points at missing or weak fields so an operator or agent can improve them.
 type SEOAudit struct {
 	SKU    string     `json:"sku"`
-	Score  int        `json:"score"` // percentage of passing checks
+	Score  int        `json:"score"` // percentage of passing required checks
 	Checks []SEOCheck `json:"checks"`
 }
 
@@ -101,15 +102,29 @@ func (s *Service) AuditSEO(ctx context.Context, sku string) (*SEOAudit, error) {
 	}
 	if values["meta_keywords"] == "" {
 		add("meta_keywords", "warn", "optional: meta_keywords has little ranking value, but a short relevant list is harmless")
+		audit.Checks[len(audit.Checks)-1].Optional = true
 	} else {
 		add("meta_keywords", "pass", "meta_keywords present")
 	}
-	passed := 0
+	scoreSEO(audit)
+	return audit, nil
+}
+
+// scoreSEO computes the percentage of passing required checks; optional checks
+// (for example meta_keywords on Magento builds without that attribute) do not
+// lower the score.
+func scoreSEO(audit *SEOAudit) {
+	passed, required := 0, 0
 	for _, check := range audit.Checks {
+		if check.Optional {
+			continue
+		}
+		required++
 		if check.Status == "pass" {
 			passed++
 		}
 	}
-	audit.Score = passed * 100 / len(audit.Checks)
-	return audit, nil
+	if required > 0 {
+		audit.Score = passed * 100 / required
+	}
 }

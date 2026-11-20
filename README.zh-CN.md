@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/shuaiZend/mage2mcp?include_prereleases&sort=semver)](https://github.com/shuaiZend/mage2mcp/releases)
-[![Latest release v0.9.0](https://img.shields.io/badge/latest-v0.9.0-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0)
+[![Latest release v0.9.0](https://img.shields.io/badge/latest-v0.9.0-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](go.mod)
 
@@ -10,7 +10,7 @@
 一个端点、一套认证、一条审计链，提供类型化、有文档、可安全使用的 AI 工具。
 写操作默认关闭并需要两步人工审批；读操作默认只读且 PII 安全。
 
-> **状态：v0.10.0（1.0 之前）。** 112 个工具（Magento 101 个）。已在真实 Magento
+> **状态：v0.11.0（1.0 之前）。** 112 个工具（Magento 101 个）。已在真实 Magento
 > 生产店铺完成只读验收（23 项检查）与 30 天经营下钻（924 单），全程无写入。
 > 发布包含签名产物、SBOM 与多架构镜像；1.0 之前接口仍可能通过 ADR 变更。
 
@@ -46,14 +46,14 @@ Magento 重点能力：商品与 SEO、可配置商品全链路、MSI 库存、�
 |---|---|
 | 源代码 | 生产级 Go 网关：MCP、认证、RBAC、审计、指标、PostgreSQL 队列、Docker |
 | 测试与 CI | 单元、集成（PostgreSQL）、竞态、静态、安全、供应链与端到端任务 |
-| 发布 | [v0.10.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0)：签名产物、校验和、SBOM、多架构 GHCR 镜像 |
+| 发布 | [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0)：签名产物、校验和、SBOM、多架构 GHCR 镜像 |
 | 生产验证 | 真实 Magento 店铺只读验收 + 30 天经营报告 |
 | 文档 | 架构、22 份 ADR、工具目录、字段参考、兼容性、运维、发布说明 |
 | 许可证与社区 | [Apache-2.0](LICENSE)、[NOTICE](NOTICE)、[CONTRIBUTING.md](CONTRIBUTING.md)、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)、[SECURITY.md](SECURITY.md)、[SUPPORT.md](SUPPORT.md) |
 
 ## 发布
 
-最新版本是 [**v0.9.0**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0)
+最新版本是 [**v0.9.0**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0)
 （2026-11-20），写入验证版本：修复了在真实 Magento 演示环境验证中发现的
 W1–W6、W9、W11、W12，暴露上游 400/422 错误信息，并把
 `magento.category.tree` 的输出键从 `roots` 改名为 `categories`。
@@ -78,7 +78,7 @@ sha256sum --check checksums.txt
 
 | 版本 | 说明 | 要点 |
 |---|---|---|
-| [v0.10.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0) | [发布说明](docs/releases/v0.9.0.md) | 写入验证修复 W1–W6、W9、W11、W12；上游错误信息 |
+| [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0) | [发布说明](docs/releases/v0.9.0.md) | 写入验证修复 W1–W6、W9、W11、W12；上游错误信息 |
 | [v0.8.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.1) | [发布说明](docs/releases/v0.8.1.md) | 结构化工具错误（G12） |
 | [v0.8.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.0) | [发布说明](docs/releases/v0.8.0.md) | 经营分析修复；`store.configs` 与 `categories.flat` |
 

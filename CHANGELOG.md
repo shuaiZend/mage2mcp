@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-20
+
+Write-safety guidance and product-copy defect fixes.
+
 ### Added
+
+- `write_safety` MCP prompt and write-tool descriptions warn that category,
+  attribute/option, and url_key changes can alter product URLs and require
+  explicit confirmation; `docs/write-safety.md` documents the checklist.
+
 
 - Magento `admin:<username>:<password>` credential form: the gateway mints an
   admin bearer token from
@@ -18,6 +27,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   errors. `bearer:` and `oauth1:` are unchanged. Admin credentials are more
   powerful than an integration token, so prefer a dedicated API-only admin with
   a least-privilege ACL role.
+
+### Fixed
+
+- Product-copy defects D1–D3, D5, D6, D8–D11: custom-option creation falls back to
+  the product update endpoint (this demo rejects both paths, so the error now
+  carries both statuses and messages); `weight` is a top-level field (no longer silently
+  dropped); configurable parents get their stock status after linking and report
+  `parent_in_stock`; product reads include SEO/content/weight/custom attributes;
+  configurable children expose variant attributes; child/variation names are
+  optional; `configurable.children` accepts a `sku` alias; optional SEO checks no
+  longer lower the score.
 
 ### Changed
 

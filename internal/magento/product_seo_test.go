@@ -17,6 +17,7 @@ import (
 func TestCreateProductSendsSEOAttributes(t *testing.T) {
 	var body struct {
 		Product struct {
+			Weight           string             `json:"weight"`
 			CustomAttributes []productAttribute `json:"custom_attributes"`
 		} `json:"product"`
 	}
@@ -254,6 +255,7 @@ func TestUpdateProductRejectsBadCategoryIDs(t *testing.T) {
 func TestCreateProductSendsPricingAttributes(t *testing.T) {
 	var body struct {
 		Product struct {
+			Weight           string             `json:"weight"`
 			CustomAttributes []productAttribute `json:"custom_attributes"`
 		} `json:"product"`
 	}
@@ -279,7 +281,13 @@ func TestCreateProductSendsPricingAttributes(t *testing.T) {
 	for _, attr := range body.Product.CustomAttributes {
 		got[attr.AttributeCode] = attr.Value
 	}
-	if got["weight"] != "1.25" || got["special_price"] != "7.99" || got["tax_class_id"] != "2" {
+	if body.Product.Weight != "1.25" {
+		t.Fatalf("weight = %q, want top-level weight", body.Product.Weight)
+	}
+	if _, ok := got["weight"]; ok {
+		t.Fatalf("weight must not be a custom attribute: %+v", got)
+	}
+	if got["special_price"] != "7.99" || got["tax_class_id"] != "2" {
 		t.Fatalf("attributes = %+v", got)
 	}
 	if got["special_from_date"] != "2026-11-01" || got["special_to_date"] != "2026-11-30" {
