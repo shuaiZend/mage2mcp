@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-20
+
+Minor release: fixes G1, G2, G4–G9 from the production business drill-down, adds
+store config and flat category reads, and extends the analysis dimensions.
+
 ### Fixed
 
 - Business analysis gaps G1, G2, G4–G9: the product projection now carries
@@ -592,7 +597,8 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.7.6...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.0
 [0.7.6]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.6
 [0.7.5]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.5
 [0.7.4]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.4
