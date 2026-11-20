@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1016,4 +1017,30 @@ func TestBulkWritesFanOutUnderABound(t *testing.T) {
 	if peak > maxBulkWriteConcurrency {
 		t.Fatalf("peak in-flight = %d, want at most %d", peak, maxBulkWriteConcurrency)
 	}
+}
+
+// REL-16: for the five self-ledgered money tools the outcome audit row used to be
+// written by the middleware after the tool committed, so a crash in that window lost
+// it. The tool now marks the call as operation-owning, and the ledger writes the row
+// inside the same statement as the transition.
+func TestOperationRunWritesItsOwnAuditRow(t *testing.T) {
+	ctx, state := audit.WithCallState(context.Background())
+	if state.OperationOwned() {
+		t.Fatal("a fresh call state must not claim ownership")
+	}
+	// A tool that never reaches Begin leaves the marker unset, so the middleware still
+	// writes the row. This is the case that made moving the row unconditionally wrong.
+	if state.OperationOwned() {
+		t.Fatal("ownership must not be claimed before Begin")
+	}
+	audit.MarkOperationOwned(ctx)
+	if !state.OperationOwned() {
+		t.Fatal("Begin must mark the call as operation-owning so the middleware skips its row")
+	}
+}
+
+// A call with no installed state (a unit test calling the service directly) must not
+// panic when the operation helper marks it.
+func TestMarkOperationOwnedToleratesNoState(t *testing.T) {
+	audit.MarkOperationOwned(context.Background())
 }

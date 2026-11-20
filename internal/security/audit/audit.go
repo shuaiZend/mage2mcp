@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -114,4 +115,58 @@ func newEventID() (string, error) {
 	b[6] = 0x70 | (b[6] & 0x0f) // version 7
 	b[8] = 0x80 | (b[8] & 0x3f) // RFC 4122 variant
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+// CallState is the per-call marker the middleware installs and the tool updates.
+//
+// A context value cannot carry information upward, so the marker has to be a pointer
+// the middleware owns and the tool mutates.
+type CallState struct {
+	operationOwned atomic.Bool
+}
+
+// MarkOperationOwned records that the tool opened its own ledger operation and will
+// write its own outcome audit row.
+func (c *CallState) MarkOperationOwned() {
+	if c != nil {
+		c.operationOwned.Store(true)
+	}
+}
+
+// OperationOwned reports whether the tool claimed ownership of the audit outcome.
+func (c *CallState) OperationOwned() bool {
+	return c != nil && c.operationOwned.Load()
+}
+
+// callStateKey is the context key for the per-call marker.
+type callStateKey struct{}
+
+// WithCallState installs a fresh marker for one call and returns the context and the
+// state the caller reads afterwards.
+func WithCallState(ctx context.Context) (context.Context, *CallState) {
+	state := &CallState{}
+	if ctx == nil {
+		return ctx, state
+	}
+	return context.WithValue(ctx, callStateKey{}, state), state
+}
+
+// CallStateFrom returns the marker installed for this call, or nil.
+func CallStateFrom(ctx context.Context) *CallState {
+	if ctx == nil {
+		return nil
+	}
+	state, _ := ctx.Value(callStateKey{}).(*CallState)
+	return state
+}
+
+// MarkOperationOwned records, for the current call, that the tool opened its own
+// operation and therefore owns its outcome audit row.
+//
+// The middleware writes the outcome row for every call it gates. For a self-ledgered
+// tool it cannot know whether the tool got as far as opening an operation — a tool that
+// fails validation returns before `Begin` — so without this marker it would either
+// duplicate the row or leave a call unaudited. The tool is the only party that knows.
+func MarkOperationOwned(ctx context.Context) {
+	CallStateFrom(ctx).MarkOperationOwned()
 }

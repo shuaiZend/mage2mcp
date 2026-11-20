@@ -135,7 +135,7 @@ wiring is reverted.
 | REL-13 | P2 | **VERIFIED** | `t11` — lookup matches the real unique index | `t38` |
 | REL-14 | P2 | **VERIFIED** | `t11` — Cancel reports only real transitions | `t38` |
 | REL-15 | P2 | **VERIFIED** | `t11` — suite is repeatable on a dirty database | `t38` (ran twice) |
-| REL-16 | P2 | PARTIAL | Atomic for the 50 middleware-gated tools; the five self-ledgered money tools still get their outcome audit row from the middleware after they commit (`REL-16-R`). **Why the obvious fix does not work:** moving the row into the ledger (as `RecoverExpired` and `Abort` already do) would leave calls that fail *before* `ops.Begin` — `CreateOrder` validates its input first — with no audit row at all, which is worse than the gap being closed. A correct fix needs the middleware to write the row when no operation was opened and the ledger when one was, and nothing currently tells it which happened. That signal is the design decision | `t38` confirmed bounded; `docs/audit/known-limitations.md` REL-16-R |
+| REL-16 | P2 | FIXED | The five self-ledgered money tools now write their outcome audit row inside the same statement as the ledger transition. `Begin` marks the call as operation-owning; the middleware writes the row only when the mark is absent, which keeps a call that fails validation before `Begin` audited — the case that made moving the row unconditionally wrong. `FinishCall` passes `writeAudit=false` because it supplies its own richer row | `TestOperationRunWritesItsOwnAuditRow` |
 | REL-17..20 | P3 | **VERIFIED** | `t11` — backoff, transactional enqueue, `canceling` state, migrate connection | `t38` |
 | REL-21 | P3 | DOC | Threat model described a ledger that did not exist | `t33` |
 

@@ -221,6 +221,9 @@ func installPolicy(srv *mcp.Server, opts Options) {
 			if !ok {
 				return next(ctx, method, req)
 			}
+			// Install the per-call marker before anything can claim ownership of the
+			// audit outcome, and keep the handle so the result path can consult it.
+			ctx, callState := audit.WithCallState(ctx)
 			tool := call.Params.Name
 			instance := instanceArgument(call.Params.Arguments)
 			if opts.Audit != nil {
@@ -365,7 +368,13 @@ func installPolicy(srv *mcp.Server, opts Options) {
 					state = "outcome_unknown"
 				}
 			}
-			recordOutcome(opts, ctx, tool, instance, state, code)
+			// A self-ledgered tool that opened an operation already wrote its outcome
+			// audit row inside that transaction. Writing a second one here would
+			// duplicate it, and skipping it unconditionally would leave a call that
+			// failed before `Begin` unaudited — which is why the tool marks the call.
+			if !callState.OperationOwned() {
+				recordOutcome(opts, ctx, tool, instance, state, code)
+			}
 			return result, err
 		}
 	})

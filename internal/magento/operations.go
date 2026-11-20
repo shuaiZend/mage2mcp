@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"strconv"
 	"strings"
 	"sync"
@@ -239,6 +240,9 @@ func (r *OperationRun) Unknown(ctx context.Context, errorCode string) error {
 //	in progress   -> conflict, poll operation_id
 //	unknown       -> operation_unknown, poll and never retry
 func (o *Operations) Begin(ctx context.Context, req OperationRequest) (*OperationRun, *storage.BeginResult, error) {
+	// The tool now owns this call's outcome audit row: it writes it inside its own
+	// ledger transaction, so the middleware must not write a second one afterwards.
+	audit.MarkOperationOwned(ctx)
 	argsHash, err := operationArgsHash(req.Args)
 	if err != nil {
 		return nil, nil, err

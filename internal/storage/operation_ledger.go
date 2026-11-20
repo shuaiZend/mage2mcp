@@ -423,10 +423,10 @@ func (l *OperationLedger) executeNotApplied(ctx context.Context, id string) erro
 
 // Succeed implements T3: executing -> succeeded, storing the replayable result.
 func (l *OperationLedger) Succeed(ctx context.Context, id, fence, upstreamRef string, result json.RawMessage) (bool, error) {
-	return l.succeedExec(ctx, l.store.pool, id, fence, upstreamRef, result)
+	return l.succeedExec(ctx, l.store.pool, id, fence, upstreamRef, result, true)
 }
 
-func (l *OperationLedger) succeedExec(ctx context.Context, ex executor, id, fence, upstreamRef string, result json.RawMessage) (bool, error) {
+func (l *OperationLedger) succeedExec(ctx context.Context, ex executor, id, fence, upstreamRef string, result json.RawMessage, writeAudit bool) (bool, error) {
 	return l.transition(ctx, ex, id, "succeeded", OpExecuting, `
 		WITH updated AS (
 			UPDATE operations
@@ -437,17 +437,27 @@ func (l *OperationLedger) succeedExec(ctx context.Context, ex executor, id, fenc
 		), logged AS (
 			INSERT INTO operation_transitions (operation_id, from_state, to_state, fence, attempt, reason)
 			SELECT id, 'executing', state, fence, attempt, 'succeeded' FROM updated
+		), audited AS (
+			-- The outcome audit row is written in the same statement as the transition,
+			-- so a crash between the tool's commit and the middleware cannot lose it.
+			-- This is the five self-ledgered money tools' only audit write.
+			INSERT INTO audit_events (event_id, occurred_at, subject_hash, identity_class, tool,
+			                          instance_id, scope, decision, phase, state, error_code)
+			SELECT gen_random_uuid(), now(), o.subject_hash, 'service', o.operation,
+			       o.instance_id, 'self', 'allow', 'outcome', 'succeeded', NULLIF('', '')
+			  FROM updated u JOIN operations o ON o.id = u.id
+		 WHERE $5::boolean
 		)
-		SELECT id FROM updated`, id, fence, upstreamRef, jsonArg(result))
+		SELECT id FROM updated`, id, fence, upstreamRef, jsonArg(result), writeAudit)
 }
 
 // Fail implements T4: executing -> failed. Only call it when the upstream system
 // proves the mutation was not applied; an ambiguous outcome is Unknown.
 func (l *OperationLedger) Fail(ctx context.Context, id, fence, errorCode string) (bool, error) {
-	return l.failExec(ctx, l.store.pool, id, fence, errorCode)
+	return l.failExec(ctx, l.store.pool, id, fence, errorCode, true)
 }
 
-func (l *OperationLedger) failExec(ctx context.Context, ex executor, id, fence, errorCode string) (bool, error) {
+func (l *OperationLedger) failExec(ctx context.Context, ex executor, id, fence, errorCode string, writeAudit bool) (bool, error) {
 	if isAmbiguousCode(errorCode) {
 		return false, errs.New(errs.CodeInvalidArgument,
 			"ambiguous outcomes must be recorded with Unknown, not Fail").
@@ -463,17 +473,27 @@ func (l *OperationLedger) failExec(ctx context.Context, ex executor, id, fence, 
 		), logged AS (
 			INSERT INTO operation_transitions (operation_id, from_state, to_state, fence, attempt, reason)
 			SELECT id, 'executing', state, fence, attempt, 'failed' FROM updated
+		), audited AS (
+			-- The outcome audit row is written in the same statement as the transition,
+			-- so a crash between the tool's commit and the middleware cannot lose it.
+			-- This is the five self-ledgered money tools' only audit write.
+			INSERT INTO audit_events (event_id, occurred_at, subject_hash, identity_class, tool,
+			                          instance_id, scope, decision, phase, state, error_code)
+			SELECT gen_random_uuid(), now(), o.subject_hash, 'service', o.operation,
+			       o.instance_id, 'self', 'allow', 'outcome', 'failed', NULLIF($3, '')
+			  FROM updated u JOIN operations o ON o.id = u.id
+		 WHERE $4::boolean
 		)
-		SELECT id FROM updated`, id, fence, errorCode)
+		SELECT id FROM updated`, id, fence, errorCode, writeAudit)
 }
 
 // Unknown implements T5: executing -> unknown. This is the transition that makes
 // a retry safe, because it stops the retry: the row must be reconciled first.
 func (l *OperationLedger) Unknown(ctx context.Context, id, fence, errorCode string, retryAfter time.Duration) (bool, error) {
-	return l.unknownExec(ctx, l.store.pool, id, fence, errorCode, retryAfter)
+	return l.unknownExec(ctx, l.store.pool, id, fence, errorCode, retryAfter, true)
 }
 
-func (l *OperationLedger) unknownExec(ctx context.Context, ex executor, id, fence, errorCode string, retryAfter time.Duration) (bool, error) {
+func (l *OperationLedger) unknownExec(ctx context.Context, ex executor, id, fence, errorCode string, retryAfter time.Duration, writeAudit bool) (bool, error) {
 	if retryAfter <= 0 {
 		retryAfter = time.Minute
 	}
@@ -488,8 +508,18 @@ func (l *OperationLedger) unknownExec(ctx context.Context, ex executor, id, fenc
 		), logged AS (
 			INSERT INTO operation_transitions (operation_id, from_state, to_state, fence, attempt, reason)
 			SELECT id, 'executing', state, fence, attempt, 'unknown' FROM updated
+		), audited AS (
+			-- The outcome audit row is written in the same statement as the transition,
+			-- so a crash between the tool's commit and the middleware cannot lose it.
+			-- This is the five self-ledgered money tools' only audit write.
+			INSERT INTO audit_events (event_id, occurred_at, subject_hash, identity_class, tool,
+			                          instance_id, scope, decision, phase, state, error_code)
+			SELECT gen_random_uuid(), now(), o.subject_hash, 'service', o.operation,
+			       o.instance_id, 'self', 'allow', 'outcome', 'outcome_unknown', NULLIF($3, '')
+			  FROM updated u JOIN operations o ON o.id = u.id
+		 WHERE $5::boolean
 		)
-		SELECT id FROM updated`, id, fence, errorCode, retryAfter.String())
+		SELECT id FROM updated`, id, fence, errorCode, retryAfter.String(), writeAudit)
 }
 
 // RecoverExpired resolves rows whose owner died, so a money operation can never
@@ -1168,11 +1198,11 @@ func (l *OperationLedger) FinishCall(ctx context.Context, ticket GateTicket, out
 	var applied bool
 	switch out.State {
 	case OpSucceeded:
-		applied, err = l.succeedExec(ctx, tx, ticket.OperationID, ticket.Fence, out.UpstreamRef, out.Result)
+		applied, err = l.succeedExec(ctx, tx, ticket.OperationID, ticket.Fence, out.UpstreamRef, out.Result, false)
 	case OpFailed:
-		applied, err = l.failExec(ctx, tx, ticket.OperationID, ticket.Fence, out.ErrorCode)
+		applied, err = l.failExec(ctx, tx, ticket.OperationID, ticket.Fence, out.ErrorCode, false)
 	case OpUnknown:
-		applied, err = l.unknownExec(ctx, tx, ticket.OperationID, ticket.Fence, out.ErrorCode, out.RetryAfter)
+		applied, err = l.unknownExec(ctx, tx, ticket.OperationID, ticket.Fence, out.ErrorCode, out.RetryAfter, false)
 	default:
 		return errs.New(errs.CodeInvalidArgument, "unknown operation outcome").
 			WithDetail("state", out.State)
