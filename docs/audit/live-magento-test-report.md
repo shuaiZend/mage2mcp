@@ -299,3 +299,25 @@ One case, `magento.import.resume`, flips between `pass` and `soft-fail` across r
 because its outcome depends on whether the job it resumes happens to have failed
 rows. It is marked soft for that reason; the variance is in the fixture, not in the
 gateway.
+
+## 11. Verification of the published v0.11.2 artifact
+
+The v0.11.2 release was verified by running the full matrix against the **published
+container image**, not a locally built binary, so what was tested is what was shipped.
+
+| Step | Result |
+|---|---|
+| `docker pull ghcr.io/shuaizend/mage2mcp:v0.11.2` | pulled |
+| `/readyz` from the image | `{"status":"ready","tools":102}` |
+| Full matrix (123 cases, 101 tools) | **82 pass, 16 soft, 1 fail, 24 skipped** |
+
+Identical to the run before the release. The single hard failure is still the store's
+missing custom-option route, which is an environment limitation rather than a gateway
+defect.
+
+The Release workflow for the tag completed successfully and published 36 assets —
+three binaries for five platforms, each with a cosign keyless signature, plus
+`checksums.txt` and `THIRD_PARTY_NOTICES.tar.gz`.
+
+The test containers were removed afterwards; the production stack
+(`mage2mcp-server-1`, `mage2mcp-worker-1`, `mage2mcp-postgres-1`) was not touched.
