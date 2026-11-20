@@ -31,6 +31,15 @@ Day-to-day commits are verified locally with `scripts/local-ci.sh`; GitHub does
   mandatory approval for the solo maintainer; PRs remain required with linear
   history.
 
+### Measured effect (2026-11-20)
+
+Before: every push/PR ran CI (~3m05), Security (~1m45), and the release dry run
+(~3m15) — about **8 minutes of runner time per commit**, three workflows.
+
+After: **0 minutes per commit**. One manual pre-release run takes **3m15** wall
+time (verify 3m06; e2e 55s, integration 52s, docker 17s in parallel, warm caches),
+and the release workflow runs its own tests/build in `verify`.
+
 ### Before a release
 
 ```bash
