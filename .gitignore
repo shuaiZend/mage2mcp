@@ -44,3 +44,6 @@ service-account*.json
 .vscode/
 *.swp
 *~
+
+# Generated business reports (local only, may contain production data)
+docs/reports/
