@@ -40,37 +40,37 @@ func (b Binding) Validate() error {
 
 // Traffic is the Cloudflare side of a comparison.
 type Traffic struct {
-	Requests       float64 `json:"requests"`
-	CachedRequests float64 `json:"cached_requests"`
-	Rows           int     `json:"rows"`
+	Requests       float64 `json:"requests" jsonschema:"Requests counted."`
+	CachedRequests float64 `json:"cached_requests" jsonschema:"Requests served from cache."`
+	Rows           int     `json:"rows" jsonschema:"Per-row results, in input order."`
 }
 
 // Sessions is the GA4 side of a comparison.
 type Sessions struct {
-	Sessions float64 `json:"sessions"`
-	Users    float64 `json:"users"`
-	TimeZone string  `json:"time_zone"`
-	Sampled  bool    `json:"sampled"`
+	Sessions float64 `json:"sessions" jsonschema:"Sessions counted."`
+	Users    float64 `json:"users" jsonschema:"Distinct users counted."`
+	TimeZone string  `json:"time_zone" jsonschema:"IANA time zone the report was computed in."`
+	Sampled  bool    `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
 }
 
 // Quality qualifies a comparison result.
 type Quality struct {
-	Aligned bool     `json:"aligned"`
-	Sampled bool     `json:"sampled"`
-	Notes   []string `json:"notes,omitempty"`
+	Aligned bool     `json:"aligned" jsonschema:"True when both windows cover the same length."`
+	Sampled bool     `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
+	Notes   []string `json:"notes,omitempty" jsonschema:"Free-text notes."`
 }
 
 // Comparison is the result of comparing Cloudflare requests with GA4 sessions.
 type Comparison struct {
-	Binding    string    `json:"binding"`
-	From       time.Time `json:"from"`
-	To         time.Time `json:"to"`
-	Cloudflare Traffic   `json:"cloudflare"`
-	GA4        Sessions  `json:"ga4"`
+	Binding    string    `json:"binding" jsonschema:"The unified binding that was resolved."`
+	From       time.Time `json:"from" jsonschema:"Start of the comparison window."`
+	To         time.Time `json:"to" jsonschema:"End of the comparison window."`
+	Cloudflare Traffic   `json:"cloudflare" jsonschema:"Cloudflare traffic figures for the same window."`
+	GA4        Sessions  `json:"ga4" jsonschema:"GA4 figures for the same window."`
 	// RequestsPerSession is nil when GA4 reported no sessions; a ratio against
 	// zero would be a fabricated number.
-	RequestsPerSession *float64 `json:"requests_per_session"`
-	Quality            Quality  `json:"quality"`
+	RequestsPerSession *float64 `json:"requests_per_session" jsonschema:"Requests per session in the window."`
+	Quality            Quality  `json:"quality" jsonschema:"Data-quality flags for this result."`
 }
 
 // TrafficProvider returns Cloudflare aggregates for an instance and window.

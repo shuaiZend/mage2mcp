@@ -12,12 +12,12 @@ import (
 // the property is known to track ecommerce events; otherwise the gateway
 // returns ecommerce_not_tracked instead of a table of zeros.
 type EcommerceOverview struct {
-	Rows            []TrafficRow          `json:"rows"`
-	Totals          map[string]float64    `json:"totals"`
-	TimeZone        string                `json:"time_zone"`
-	Currency        string                `json:"currency"`
-	Sampled         bool                  `json:"sampled"`
-	CapabilityCheck *PropertyCapabilities `json:"capability_check,omitempty"`
+	Rows            []TrafficRow          `json:"rows" jsonschema:"Per-row results, in input order."`
+	Totals          map[string]float64    `json:"totals" jsonschema:"Totals across every row, computed by the store."`
+	TimeZone        string                `json:"time_zone" jsonschema:"IANA time zone the report was computed in."`
+	Currency        string                `json:"currency" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	Sampled         bool                  `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
+	CapabilityCheck *PropertyCapabilities `json:"capability_check,omitempty" jsonschema:"How the capability was determined."`
 }
 
 const (
@@ -81,11 +81,11 @@ type ProductRow struct {
 
 // ProductPerformance is the item-level report envelope.
 type ProductPerformance struct {
-	Products        []ProductRow          `json:"products"`
-	Currency        string                `json:"currency"`
-	TimeZone        string                `json:"time_zone"`
-	Sampled         bool                  `json:"sampled"`
-	CapabilityCheck *PropertyCapabilities `json:"capability_check,omitempty"`
+	Products        []ProductRow          `json:"products" jsonschema:"Products that matched."`
+	Currency        string                `json:"currency" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	TimeZone        string                `json:"time_zone" jsonschema:"IANA time zone the report was computed in."`
+	Sampled         bool                  `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
+	CapabilityCheck *PropertyCapabilities `json:"capability_check,omitempty" jsonschema:"How the capability was determined."`
 }
 
 // TopProducts reports item-level views, carts, purchases, and revenue.

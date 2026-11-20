@@ -22,13 +22,13 @@ const (
 )
 
 type compareInput struct {
-	Binding string `json:"binding"`
+	Binding string `json:"binding" jsonschema:"The unified binding that was resolved."`
 	Start   string `json:"start"`
 	End     string `json:"end"`
 }
 
 type compareOutput struct {
-	Comparison *Comparison `json:"comparison"`
+	Comparison *Comparison `json:"comparison" jsonschema:"Per-dimension comparison between the two windows."`
 }
 
 // Register adds the unified analytics tools to reg.

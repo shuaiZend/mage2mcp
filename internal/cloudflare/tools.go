@@ -61,7 +61,7 @@ const (
 // TrafficInput is the input of cloudflare.analytics.traffic.
 type TrafficInput struct {
 	// Instance is the configured instance alias; it does not select credentials.
-	Instance string `json:"instance"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	Since    string `json:"since"`
 	Until    string `json:"until"`
 	// GroupBy is one of "hostname", "country", or "status".
@@ -73,14 +73,14 @@ type TrafficInput struct {
 // SecurityInput is the input of cloudflare.security.summary.
 type SecurityInput struct {
 	// Instance is the configured instance alias; it does not select credentials.
-	Instance string `json:"instance"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	Since    string `json:"since"`
 	Until    string `json:"until"`
 }
 
 // SecurityEventsInput is the input of cloudflare.security.events.
 type SecurityEventsInput struct {
-	Instance string `json:"instance"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	Since    string `json:"since"`
 	Until    string `json:"until"`
 	Limit    int    `json:"limit,omitempty"`
@@ -88,39 +88,39 @@ type SecurityEventsInput struct {
 
 // SecurityEventsOutput is a bounded page of sampled security events.
 type SecurityEventsOutput struct {
-	Events        []SecurityEvent `json:"events"`
-	Sampled       bool            `json:"sampled"`
-	RetentionDays int             `json:"retention_days"`
-	Truncated     bool            `json:"truncated"`
+	Events        []SecurityEvent `json:"events" jsonschema:"Events returned by this call."`
+	Sampled       bool            `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
+	RetentionDays int             `json:"retention_days" jsonschema:"How many days of history this store keeps."`
+	Truncated     bool            `json:"truncated" jsonschema:"True when more records exist than were returned."`
 }
 
 // Quality carries data-quality caveats attached to an analytics result.
 type Quality struct {
 	// Sampled reports whether the upstream dataset is adaptively sampled.
-	Sampled bool `json:"sampled"`
+	Sampled bool `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
 	// Notes are short, agent-facing caveats about how to read the result.
-	Notes []string `json:"notes,omitempty"`
+	Notes []string `json:"notes,omitempty" jsonschema:"Free-text notes."`
 }
 
 // TrafficOutput is the structured result of cloudflare.analytics.traffic.
 type TrafficOutput struct {
-	Rows []TrafficRow `json:"rows"`
+	Rows []TrafficRow `json:"rows" jsonschema:"Per-row results, in input order."`
 	// Sampled is false: httpRequests1hGroups is pre-aggregated, not adaptive.
-	Sampled bool `json:"sampled"`
+	Sampled bool `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
 	// Quality repeats the sampling flag and adds phrasing caveats.
-	Quality Quality `json:"quality"`
+	Quality Quality `json:"quality" jsonschema:"Data-quality flags for this result."`
 }
 
 // SecurityOutput is the structured result of cloudflare.security.summary.
 type SecurityOutput struct {
 	// Actions maps a Cloudflare action value to its event count.
-	Actions map[string]int `json:"actions"`
+	Actions map[string]int `json:"actions" jsonschema:"Actions returned by this call."`
 	// Total is the sum of Actions; events, not requests.
-	Total int `json:"total"`
+	Total int `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
 	// Sampled reports that the adaptive dataset is sampled.
-	Sampled bool `json:"sampled"`
+	Sampled bool `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
 	// RetentionDays is the documented Security Events retention.
-	RetentionDays int `json:"retention_days"`
+	RetentionDays int `json:"retention_days" jsonschema:"How many days of history this store keeps."`
 }
 
 // Register adds the read-only Cloudflare analytics and security tools to reg.

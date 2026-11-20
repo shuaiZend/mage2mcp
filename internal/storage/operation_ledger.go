@@ -139,20 +139,20 @@ type Operation struct {
 
 // OperationRecord is a read-only view used for polling and diagnostics.
 type OperationRecord struct {
-	ID             string          `json:"id"`
+	ID             string          `json:"id" jsonschema:"Magento entity id."`
 	IdempotencyKey string          `json:"idempotency_key"`
 	Operation      string          `json:"operation"`
-	InstanceID     string          `json:"instance_id"`
+	InstanceID     string          `json:"instance_id" jsonschema:"Configured instance the result came from."`
 	EntityType     string          `json:"entity_type"`
-	EntityID       string          `json:"entity_id"`
-	State          string          `json:"state"`
+	EntityID       string          `json:"entity_id" jsonschema:"Magento entity id."`
+	State          string          `json:"state" jsonschema:"Current state."`
 	AmountMinor    *int64          `json:"amount_minor,omitempty"`
-	Currency       string          `json:"currency,omitempty"`
+	Currency       string          `json:"currency,omitempty" jsonschema:"ISO 4217 code the amounts are expressed in."`
 	Fence          string          `json:"fence"`
 	Attempt        int             `json:"attempt"`
 	UpstreamRef    string          `json:"upstream_ref,omitempty"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	ErrorCode      string          `json:"error_code,omitempty"`
+	Result         json.RawMessage `json:"result,omitempty" jsonschema:"The operation result."`
+	ErrorCode      string          `json:"error_code,omitempty" jsonschema:"Taxonomy code of the failure, when there is one."`
 	ReconcileCount int             `json:"reconcile_count"`
 	FinishedAt     *time.Time      `json:"finished_at,omitempty"`
 }

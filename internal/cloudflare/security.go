@@ -89,7 +89,7 @@ type securityResponse struct {
 		Zones []struct {
 			Groups []struct {
 				Count      int            `json:"count"`
-				Dimensions map[string]any `json:"dimensions"`
+				Dimensions map[string]any `json:"dimensions" jsonschema:"Dimensions the report was grouped by."`
 			} `json:"firewallEventsAdaptiveGroups"`
 		} `json:"zones"`
 	} `json:"viewer"`
@@ -115,19 +115,19 @@ const securityEventsQuery = `query ZoneSecurityEvents($zoneTag: string, $since: 
 // SecurityEvent is one sampled security event.
 type SecurityEvent struct {
 	Time      string `json:"time"`
-	Action    string `json:"action"`
+	Action    string `json:"action" jsonschema:"create, update or skipped."`
 	RuleID    string `json:"rule_id,omitempty"`
-	Country   string `json:"country,omitempty"`
-	Path      string `json:"path,omitempty"`
+	Country   string `json:"country,omitempty" jsonschema:"ISO country code."`
+	Path      string `json:"path,omitempty" jsonschema:"Full path of ids from the root."`
 	UserAgent string `json:"user_agent,omitempty"`
 }
 
 // SecurityEventPage is a bounded page of security events.
 type SecurityEventPage struct {
-	Events        []SecurityEvent `json:"events"`
-	Sampled       bool            `json:"sampled"`
-	RetentionDays int             `json:"retention_days"`
-	Truncated     bool            `json:"truncated"`
+	Events        []SecurityEvent `json:"events" jsonschema:"Events returned by this call."`
+	Sampled       bool            `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
+	RetentionDays int             `json:"retention_days" jsonschema:"How many days of history this store keeps."`
+	Truncated     bool            `json:"truncated" jsonschema:"True when more records exist than were returned."`
 }
 
 type securityEventsResponse struct {
@@ -135,7 +135,7 @@ type securityEventsResponse struct {
 		Zones []struct {
 			Events []struct {
 				DateTime          string `json:"datetime"`
-				Action            string `json:"action"`
+				Action            string `json:"action" jsonschema:"create, update or skipped."`
 				RuleID            string `json:"ruleId"`
 				ClientCountryName string `json:"clientCountryName"`
 				ClientRequestPath string `json:"clientRequestPath"`

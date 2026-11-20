@@ -15,13 +15,13 @@ import (
 
 // OrderStatusHistory is one entry of an order's status history.
 type OrderStatusHistory struct {
-	EntityID           int      `json:"entity_id"`
-	ParentID           int      `json:"parent_id"`
-	Status             string   `json:"status"`
+	EntityID           int      `json:"entity_id" jsonschema:"Magento entity id."`
+	ParentID           int      `json:"parent_id" jsonschema:"Parent category id; 0 for the root."`
+	Status             string   `json:"status" jsonschema:"Current status."`
 	Comment            string   `json:"comment"`
 	IsCustomerNotified flexBool `json:"is_customer_notified"`
 	IsVisibleOnFront   flexBool `json:"is_visible_on_front"`
-	CreatedAt          string   `json:"created_at"`
+	CreatedAt          string   `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
 }
 
 // flexBool decodes Magento's habit of returning booleans as 0/1 integers or
@@ -43,37 +43,37 @@ func (b *flexBool) UnmarshalJSON(data []byte) error {
 
 // Invoice is the invoice projection this slice exposes.
 type Invoice struct {
-	EntityID       int     `json:"entity_id"`
-	IncrementID    string  `json:"increment_id"`
-	OrderID        int     `json:"order_id"`
-	State          int     `json:"state"`
-	GrandTotal     float64 `json:"grand_total"`
-	Subtotal       float64 `json:"subtotal"`
-	DiscountAmount float64 `json:"discount_amount"`
-	ShippingAmount float64 `json:"shipping_amount"`
-	TaxAmount      float64 `json:"tax_amount"`
-	TotalQty       float64 `json:"total_qty"`
-	Currency       string  `json:"order_currency_code"`
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      string  `json:"updated_at"`
+	EntityID       int     `json:"entity_id" jsonschema:"Magento entity id."`
+	IncrementID    string  `json:"increment_id" jsonschema:"Human-facing document number, for example 000000123."`
+	OrderID        int     `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+	State          int     `json:"state" jsonschema:"Current state."`
+	GrandTotal     float64 `json:"grand_total" jsonschema:"Document total including shipping and tax."`
+	Subtotal       float64 `json:"subtotal" jsonschema:"Line subtotal before shipping, tax and discount."`
+	DiscountAmount float64 `json:"discount_amount" jsonschema:"Discount applied, as a positive number."`
+	ShippingAmount float64 `json:"shipping_amount" jsonschema:"Shipping charged."`
+	TaxAmount      float64 `json:"tax_amount" jsonschema:"Tax charged."`
+	TotalQty       float64 `json:"total_qty" jsonschema:"Total quantity on the document."`
+	Currency       string  `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	CreatedAt      string  `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	UpdatedAt      string  `json:"updated_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
 }
 
 // ShipmentTrack is one tracking number of a shipment.
 type ShipmentTrack struct {
-	Title       string `json:"title"`
+	Title       string `json:"title" jsonschema:"Display title for this entry."`
 	TrackNumber string `json:"track_number"`
 	CarrierCode string `json:"carrier_code"`
 }
 
 // Shipment is the shipment projection this slice exposes.
 type Shipment struct {
-	EntityID    int             `json:"entity_id"`
-	IncrementID string          `json:"increment_id"`
-	OrderID     int             `json:"order_id"`
-	TotalQty    float64         `json:"total_qty"`
-	CreatedAt   string          `json:"created_at"`
-	UpdatedAt   string          `json:"updated_at"`
-	Tracks      []ShipmentTrack `json:"tracks,omitempty"`
+	EntityID    int             `json:"entity_id" jsonschema:"Magento entity id."`
+	IncrementID string          `json:"increment_id" jsonschema:"Human-facing document number, for example 000000123."`
+	OrderID     int             `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+	TotalQty    float64         `json:"total_qty" jsonschema:"Total quantity on the document."`
+	CreatedAt   string          `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	UpdatedAt   string          `json:"updated_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	Tracks      []ShipmentTrack `json:"tracks,omitempty" jsonschema:"Tracking numbers attached to the shipment."`
 }
 
 // OrderStatusHistory returns the status history of one order.
@@ -89,7 +89,7 @@ func (s *Service) OrderStatusHistory(ctx context.Context, orderID int) ([]OrderS
 		return nil, err
 	}
 	var envelope struct {
-		Items []OrderStatusHistory `json:"items"`
+		Items []OrderStatusHistory `json:"items" jsonschema:"Entries returned by this call."`
 	}
 	if err := json.Unmarshal(raw, &envelope); err == nil && envelope.Items != nil {
 		return envelope.Items, nil
@@ -117,7 +117,7 @@ func (s *Service) OrderInvoices(ctx context.Context, orderID int) ([]Invoice, er
 		return nil, err
 	}
 	var envelope struct {
-		Items []Invoice `json:"items"`
+		Items []Invoice `json:"items" jsonschema:"Entries returned by this call."`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable invoice payload").WithCause(err)
@@ -160,7 +160,7 @@ func (s *Service) OrderShipments(ctx context.Context, orderID int) ([]Shipment, 
 		return nil, err
 	}
 	var envelope struct {
-		Items []Shipment `json:"items"`
+		Items []Shipment `json:"items" jsonschema:"Entries returned by this call."`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable shipment payload").WithCause(err)
@@ -199,20 +199,20 @@ func (s *Service) requireOrderService() error {
 
 // Creditmemo is the creditmemo projection this slice exposes.
 type Creditmemo struct {
-	EntityID       int     `json:"entity_id"`
-	IncrementID    string  `json:"increment_id"`
-	OrderID        int     `json:"order_id"`
-	State          int     `json:"state"`
-	GrandTotal     float64 `json:"grand_total"`
-	Subtotal       float64 `json:"subtotal"`
-	DiscountAmount float64 `json:"discount_amount"`
-	ShippingAmount float64 `json:"shipping_amount"`
-	TaxAmount      float64 `json:"tax_amount"`
-	Adjustment     float64 `json:"adjustment"`
-	TotalQty       float64 `json:"total_qty"`
-	Currency       string  `json:"order_currency_code"`
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      string  `json:"updated_at"`
+	EntityID       int     `json:"entity_id" jsonschema:"Magento entity id."`
+	IncrementID    string  `json:"increment_id" jsonschema:"Human-facing document number, for example 000000123."`
+	OrderID        int     `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+	State          int     `json:"state" jsonschema:"Current state."`
+	GrandTotal     float64 `json:"grand_total" jsonschema:"Document total including shipping and tax."`
+	Subtotal       float64 `json:"subtotal" jsonschema:"Line subtotal before shipping, tax and discount."`
+	DiscountAmount float64 `json:"discount_amount" jsonschema:"Discount applied, as a positive number."`
+	ShippingAmount float64 `json:"shipping_amount" jsonschema:"Shipping charged."`
+	TaxAmount      float64 `json:"tax_amount" jsonschema:"Tax charged."`
+	Adjustment     float64 `json:"adjustment" jsonschema:"Manual adjustment applied to the credit memo total."`
+	TotalQty       float64 `json:"total_qty" jsonschema:"Total quantity on the document."`
+	Currency       string  `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	CreatedAt      string  `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	UpdatedAt      string  `json:"updated_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
 }
 
 // OrderCreditmemos lists the credit memos of one order.
@@ -228,7 +228,7 @@ func (s *Service) OrderCreditmemos(ctx context.Context, orderID int) ([]Creditme
 		return nil, err
 	}
 	var envelope struct {
-		Items []Creditmemo `json:"items"`
+		Items []Creditmemo `json:"items" jsonschema:"Entries returned by this call."`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable creditmemo payload").WithCause(err)

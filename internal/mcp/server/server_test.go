@@ -302,7 +302,7 @@ type confirmInput struct {
 }
 
 type confirmOutput struct {
-	OK bool `json:"ok"`
+	OK bool `json:"ok" jsonschema:"True when the call succeeded."`
 }
 
 func TestConfirmationFlowThroughHTTP(t *testing.T) {
@@ -506,7 +506,7 @@ type authzInput struct {
 }
 
 type authzOutput struct {
-	OK bool `json:"ok"`
+	OK bool `json:"ok" jsonschema:"True when the call succeeded."`
 }
 
 // authzStubTool builds a tool with the given declared permission. ran, when not

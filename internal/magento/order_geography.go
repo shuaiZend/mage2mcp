@@ -21,9 +21,9 @@ const (
 
 // CountryStat is the PII-free per-country aggregate of an order window.
 type CountryStat struct {
-	CountryID string  `json:"country_id"`
-	Orders    int     `json:"orders"`
-	Revenue   float64 `json:"revenue"`
+	CountryID string  `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	Orders    int     `json:"orders" jsonschema:"Orders that matched."`
+	Revenue   float64 `json:"revenue" jsonschema:"Revenue for this window."`
 }
 
 // OrderGeography aggregates orders by shipping country over a bounded window.
@@ -35,18 +35,18 @@ type CountryStat struct {
 // the remainder the cap excluded. Truncated is true exactly when that remainder
 // is non-zero.
 type OrderGeography struct {
-	From            string `json:"from"`
-	To              string `json:"to"`
-	OrdersScanned   int    `json:"orders_scanned"`
-	TotalAvailable  int    `json:"total_available"`
-	UnscannedOrders int    `json:"unscanned_orders"`
+	From            string `json:"from" jsonschema:"Start of the comparison window."`
+	To              string `json:"to" jsonschema:"End of the comparison window."`
+	OrdersScanned   int    `json:"orders_scanned" jsonschema:"Orders actually read to build this aggregation."`
+	TotalAvailable  int    `json:"total_available" jsonschema:"Orders the store reports for the window."`
+	UnscannedOrders int    `json:"unscanned_orders" jsonschema:"Orders that exist but were not read."`
 	// DuplicatesSkipped counts orders returned on more than one page and
 	// dropped, so an unstable page boundary cannot double-count revenue.
-	DuplicatesSkipped int           `json:"duplicates_skipped"`
-	Truncated         bool          `json:"truncated"`
-	TotalOrders       int           `json:"total_orders"`
-	TotalRevenue      float64       `json:"total_revenue"`
-	Countries         []CountryStat `json:"countries"`
+	DuplicatesSkipped int           `json:"duplicates_skipped" jsonschema:"Duplicate rows that were skipped rather than counted twice."`
+	Truncated         bool          `json:"truncated" jsonschema:"True when more records exist than were returned."`
+	TotalOrders       int           `json:"total_orders" jsonschema:"Orders counted in the window."`
+	TotalRevenue      float64       `json:"total_revenue" jsonschema:"Revenue in the window."`
+	Countries         []CountryStat `json:"countries" jsonschema:"Per-country breakdown."`
 }
 
 // OrderGeography aggregates orders created in [from, to) by the country of their
@@ -93,18 +93,18 @@ func (s *Service) OrderGeography(ctx context.Context, from, to time.Time, maxOrd
 		var payload struct {
 			TotalCount int `json:"total_count"`
 			Items      []struct {
-				EntityID            int     `json:"entity_id"`
-				GrandTotal          float64 `json:"grand_total"`
+				EntityID            int     `json:"entity_id" jsonschema:"Magento entity id."`
+				GrandTotal          float64 `json:"grand_total" jsonschema:"Document total including shipping and tax."`
 				ExtensionAttributes struct {
 					ShippingAssignments []struct {
 						Shipping struct {
 							Address struct {
-								CountryID string `json:"country_id"`
-							} `json:"address"`
+								CountryID string `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+							} `json:"address" jsonschema:"The customer address that was written."`
 						} `json:"shipping"`
 					} `json:"shipping_assignments"`
 				} `json:"extension_attributes"`
-			} `json:"items"`
+			} `json:"items" jsonschema:"Entries returned by this call."`
 		}
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order payload").WithCause(err)

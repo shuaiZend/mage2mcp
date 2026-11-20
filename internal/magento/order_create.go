@@ -39,24 +39,24 @@ const (
 
 // OrderAddressInput is one billing or shipping address for order creation.
 type OrderAddressInput struct {
-	Firstname string   `json:"firstname"`
-	Lastname  string   `json:"lastname"`
-	Street    []string `json:"street"`
-	City      string   `json:"city"`
-	Postcode  string   `json:"postcode"`
-	CountryID string   `json:"country_id"`
-	Telephone string   `json:"telephone"`
-	Region    string   `json:"region,omitempty"`
+	Firstname string   `json:"firstname" jsonschema:"Given name."`
+	Lastname  string   `json:"lastname" jsonschema:"Family name."`
+	Street    []string `json:"street" jsonschema:"Street lines, most specific first."`
+	City      string   `json:"city" jsonschema:"City or locality."`
+	Postcode  string   `json:"postcode" jsonschema:"Postal code as the destination country writes it."`
+	CountryID string   `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	Telephone string   `json:"telephone" jsonschema:"Contact phone number."`
+	Region    string   `json:"region,omitempty" jsonschema:"Region name."`
 	// RegionID is the numeric region (state/province) id. Magento requires it for
 	// countries that have a region directory — Poland among them — and rejects the
 	// address with `"regionId" is required` without it.
-	RegionID int `json:"region_id,omitempty"`
+	RegionID int `json:"region_id,omitempty" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
 }
 
 // OrderItemInput is one line to add to the cart.
 type OrderItemInput struct {
-	SKU string  `json:"sku"`
-	Qty float64 `json:"qty"`
+	SKU string  `json:"sku" jsonschema:"Product SKU."`
+	Qty float64 `json:"qty" jsonschema:"Quantity at this source."`
 }
 
 // CreateOrderInput describes one order to place for an existing customer.
@@ -79,12 +79,12 @@ type CreateOrderInput struct {
 
 // CreateOrderResult is the recorded outcome of one order placement.
 type CreateOrderResult struct {
-	Order       Order  `json:"order"`
-	OperationID string `json:"operation_id,omitempty"`
-	Replayed    bool   `json:"replayed,omitempty"`
+	Order       Order  `json:"order" jsonschema:"The order that was read."`
+	OperationID string `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
+	Replayed    bool   `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so nothing new happened."`
 	// Reconciled reports that an ambiguous place-order failure was resolved by
 	// reading the customer's orders back rather than by trusting the response.
-	Reconciled bool `json:"reconciled,omitempty"`
+	Reconciled bool `json:"reconciled,omitempty" jsonschema:"True when the result was confirmed by reading the store back rather than by its response."`
 }
 
 // CreateOrder places an order through Magento's admin cart flow:
@@ -299,13 +299,13 @@ func (s *Service) reconcilePlacedOrder(ctx context.Context, run *OperationRun, i
 // cart that produced the order: it is the only exact link between a placement and
 // an order.
 type orderCandidate struct {
-	EntityID    int     `json:"entity_id"`
-	IncrementID string  `json:"increment_id"`
+	EntityID    int     `json:"entity_id" jsonschema:"Magento entity id."`
+	IncrementID string  `json:"increment_id" jsonschema:"Human-facing document number, for example 000000123."`
 	QuoteID     int     `json:"quote_id"`
-	GrandTotal  float64 `json:"grand_total"`
-	Currency    string  `json:"order_currency_code"`
-	CreatedAt   string  `json:"created_at"`
-	Status      string  `json:"status"`
+	GrandTotal  float64 `json:"grand_total" jsonschema:"Document total including shipping and tax."`
+	Currency    string  `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	CreatedAt   string  `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	Status      string  `json:"status" jsonschema:"Current status."`
 }
 
 // orderReconcileFields requests quote_id explicitly: without it the search
@@ -327,7 +327,7 @@ func (s *Service) searchOrderCandidates(ctx context.Context, customerID int, sin
 		return nil, err
 	}
 	var payload struct {
-		Items []orderCandidate `json:"items"`
+		Items []orderCandidate `json:"items" jsonschema:"Entries returned by this call."`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order search payload").WithCause(err)
@@ -387,8 +387,8 @@ func orderRef(order Order) string {
 // orderCreateArgs is the canonical argument set hashed for replay detection.
 type orderCreateArgs struct {
 	CustomerID          int               `json:"customer_id"`
-	StoreID             int               `json:"store_id"`
-	Items               []OrderItemInput  `json:"items"`
+	StoreID             int               `json:"store_id" jsonschema:"Store view the entity belongs to."`
+	Items               []OrderItemInput  `json:"items" jsonschema:"Entries returned by this call."`
 	BillingAddress      OrderAddressInput `json:"billing_address"`
 	ShippingAddress     OrderAddressInput `json:"shipping_address"`
 	ShippingCarrierCode string            `json:"shipping_carrier_code"`
@@ -410,8 +410,8 @@ type cartItemBody struct {
 }
 
 type cartItem struct {
-	SKU     string  `json:"sku"`
-	Qty     float64 `json:"qty"`
+	SKU     string  `json:"sku" jsonschema:"Product SKU."`
+	Qty     float64 `json:"qty" jsonschema:"Quantity at this source."`
 	QuoteID string  `json:"quote_id"`
 }
 
@@ -427,15 +427,15 @@ type addressInformation struct {
 }
 
 type addressPayload struct {
-	Firstname string   `json:"firstname"`
-	Lastname  string   `json:"lastname"`
-	Street    []string `json:"street"`
-	City      string   `json:"city"`
-	Postcode  string   `json:"postcode"`
-	CountryID string   `json:"country_id"`
-	Telephone string   `json:"telephone"`
-	Region    string   `json:"region,omitempty"`
-	RegionID  int      `json:"region_id,omitempty"`
+	Firstname string   `json:"firstname" jsonschema:"Given name."`
+	Lastname  string   `json:"lastname" jsonschema:"Family name."`
+	Street    []string `json:"street" jsonschema:"Street lines, most specific first."`
+	City      string   `json:"city" jsonschema:"City or locality."`
+	Postcode  string   `json:"postcode" jsonschema:"Postal code as the destination country writes it."`
+	CountryID string   `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	Telephone string   `json:"telephone" jsonschema:"Contact phone number."`
+	Region    string   `json:"region,omitempty" jsonschema:"Region name."`
+	RegionID  int      `json:"region_id,omitempty" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
 }
 
 func (a OrderAddressInput) toPayload() addressPayload {
@@ -447,7 +447,7 @@ type placeOrderBody struct {
 }
 
 type paymentMethod struct {
-	Method string `json:"method"`
+	Method string `json:"method" jsonschema:"How the scan was paged: offset or cursor."`
 }
 
 func validateCreateOrder(in CreateOrderInput) error {

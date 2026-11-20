@@ -100,12 +100,12 @@ type InfoInput struct{}
 
 // InfoOutput is the structured result of platform.info.
 type InfoOutput struct {
-	Name             string              `json:"name"`
-	Version          string              `json:"version"`
-	ProtocolVersions []string            `json:"protocol_versions"`
-	Tools            []string            `json:"tools"`
-	Instances        map[string][]string `json:"instances,omitempty"`
-	WritesEnabled    bool                `json:"writes_enabled"`
+	Name             string              `json:"name" jsonschema:"Display name."`
+	Version          string              `json:"version" jsonschema:"Gateway version."`
+	ProtocolVersions []string            `json:"protocol_versions" jsonschema:"MCP protocol versions this server speaks."`
+	Tools            []string            `json:"tools" jsonschema:"Names of every registered tool."`
+	Instances        map[string][]string `json:"instances,omitempty" jsonschema:"Configured instance ids per module."`
+	WritesEnabled    bool                `json:"writes_enabled" jsonschema:"True when write tools are registered on this deployment."`
 }
 
 // NewMCP builds the MCP server and registers every tool in the registry.

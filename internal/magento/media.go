@@ -21,19 +21,19 @@ import (
 
 // MediaEntry is one product media entry (image, video, or other file).
 type MediaEntry struct {
-	ID        int      `json:"id"`
-	MediaType string   `json:"media_type"`
-	Label     string   `json:"label"`
-	Position  int      `json:"position"`
-	Disabled  bool     `json:"disabled"`
-	Types     []string `json:"types"`
-	File      string   `json:"file"`
+	ID        int      `json:"id" jsonschema:"Magento entity id."`
+	MediaType string   `json:"media_type" jsonschema:"Magento media type, always image for gallery entries."`
+	Label     string   `json:"label" jsonschema:"Label shown to the shopper."`
+	Position  int      `json:"position" jsonschema:"Sort position among siblings."`
+	Disabled  bool     `json:"disabled" jsonschema:"True when the entry is hidden in the storefront."`
+	Types     []string `json:"types" jsonschema:"Media roles available for the attribute set."`
+	File      string   `json:"file" jsonschema:"Stored file path inside the media gallery."`
 	// Deduplicated reports that this upload matched an existing entry by content
 	// hash, so no new entry was created.
-	Deduplicated bool `json:"deduplicated,omitempty"`
+	Deduplicated bool `json:"deduplicated,omitempty" jsonschema:"True when the upload matched an existing entry by content hash, so no new entry was created."`
 	// DemotedFrom lists the entries that lost a role to this one. Magento moves
 	// `image` silently, so the caller is told which base image was replaced.
-	DemotedFrom []int `json:"demoted_from,omitempty"`
+	DemotedFrom []int `json:"demoted_from,omitempty" jsonschema:"Entries that lost a role to this one, so the operator learns which base image was replaced."`
 }
 
 // ProductMedia lists the media gallery of one product.
@@ -261,15 +261,15 @@ type mediaUploadBody struct {
 }
 
 type mediaUploadEntry struct {
-	MediaType string   `json:"media_type"`
-	Label     string   `json:"label,omitempty"`
-	Position  int      `json:"position,omitempty"`
-	Disabled  bool     `json:"disabled"`
-	Types     []string `json:"types,omitempty"`
+	MediaType string   `json:"media_type" jsonschema:"Magento media type, always image for gallery entries."`
+	Label     string   `json:"label,omitempty" jsonschema:"Label shown to the shopper."`
+	Position  int      `json:"position,omitempty" jsonschema:"Sort position among siblings."`
+	Disabled  bool     `json:"disabled" jsonschema:"True when the entry is hidden in the storefront."`
+	Types     []string `json:"types,omitempty" jsonschema:"Media roles available for the attribute set."`
 	Content   struct {
 		Base64 string `json:"base64_encoded_data"`
-		Type   string `json:"type"`
-		Name   string `json:"name"`
+		Type   string `json:"type" jsonschema:"Input control type."`
+		Name   string `json:"name" jsonschema:"Display name."`
 	} `json:"content"`
 }
 
@@ -417,13 +417,13 @@ type mediaUpdateBody struct {
 }
 
 type mediaUpdateEntry struct {
-	ID        int      `json:"id"`
-	MediaType string   `json:"media_type"`
-	File      string   `json:"file"`
-	Label     *string  `json:"label,omitempty"`
-	Position  *int     `json:"position,omitempty"`
-	Types     []string `json:"types,omitempty"`
-	Disabled  *bool    `json:"disabled,omitempty"`
+	ID        int      `json:"id" jsonschema:"Magento entity id."`
+	MediaType string   `json:"media_type" jsonschema:"Magento media type, always image for gallery entries."`
+	File      string   `json:"file" jsonschema:"Stored file path inside the media gallery."`
+	Label     *string  `json:"label,omitempty" jsonschema:"Label shown to the shopper."`
+	Position  *int     `json:"position,omitempty" jsonschema:"Sort position among siblings."`
+	Types     []string `json:"types,omitempty" jsonschema:"Media roles available for the attribute set."`
+	Disabled  *bool    `json:"disabled,omitempty" jsonschema:"True when the entry is hidden in the storefront."`
 }
 
 // GetMedia returns one gallery entry with GET /products/{sku}/media/{id}.
@@ -451,7 +451,7 @@ func (s *Service) GetMedia(ctx context.Context, sku string, entryID int) (*Media
 // MediaType is one gallery role available for an attribute set.
 type MediaType struct {
 	Code  string `json:"code"`
-	Label string `json:"label"`
+	Label string `json:"label" jsonschema:"Label shown to the shopper."`
 }
 
 // MediaTypes lists the media roles for an attribute set with

@@ -65,13 +65,13 @@ func (p *Product) UnmarshalJSON(data []byte) error {
 		*productAlias
 		ExtensionAttributes struct {
 			CategoryLinks []struct {
-				CategoryID any `json:"category_id"`
+				CategoryID any `json:"category_id" jsonschema:"Magento category entity id."`
 			} `json:"category_links"`
 			WebsiteIDs []int `json:"website_ids"`
 		} `json:"extension_attributes"`
 		CustomAttributes []struct {
-			AttributeCode string          `json:"attribute_code"`
-			Value         json.RawMessage `json:"value"`
+			AttributeCode string          `json:"attribute_code" jsonschema:"Attribute code, not its id or label."`
+			Value         json.RawMessage `json:"value" jsonschema:"Value of the entry."`
 		} `json:"custom_attributes"`
 	}{productAlias: (*productAlias)(p)}
 	if err := json.Unmarshal(data, aux); err != nil {
@@ -272,7 +272,7 @@ func (s *Service) Search(ctx context.Context, q ProductQuery) ([]Product, int, e
 		return nil, 0, err
 	}
 	var payload struct {
-		Items      []Product `json:"items"`
+		Items      []Product `json:"items" jsonschema:"Entries returned by this call."`
 		TotalCount int       `json:"total_count"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -317,7 +317,7 @@ func (s *Service) BatchGet(ctx context.Context, skus []string) ([]Product, error
 		return nil, err
 	}
 	var payload struct {
-		Items []Product `json:"items"`
+		Items []Product `json:"items" jsonschema:"Entries returned by this call."`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable product payload").WithCause(err)

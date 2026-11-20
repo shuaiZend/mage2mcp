@@ -29,30 +29,30 @@ var carrierCodeRE = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 // DocumentLine is one order item and the quantity to process.
 type DocumentLine struct {
 	OrderItemID int     `json:"order_item_id"`
-	Qty         float64 `json:"qty"`
+	Qty         float64 `json:"qty" jsonschema:"Quantity at this source."`
 }
 
 // ShipmentTrackInput is one tracking number to attach to a shipment.
 type ShipmentTrackInput struct {
 	TrackNumber string `json:"track_number"`
-	Title       string `json:"title"`
+	Title       string `json:"title" jsonschema:"Display title for this entry."`
 	CarrierCode string `json:"carrier_code"`
 }
 
 // ShipmentCreateInput is one shipment creation request.
 type ShipmentCreateInput struct {
-	OrderID int                  `json:"order_id"`
-	Items   []DocumentLine       `json:"items"`
-	Tracks  []ShipmentTrackInput `json:"tracks,omitempty"`
+	OrderID int                  `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+	Items   []DocumentLine       `json:"items" jsonschema:"Entries returned by this call."`
+	Tracks  []ShipmentTrackInput `json:"tracks,omitempty" jsonschema:"Tracking numbers attached to the shipment."`
 	Comment string               `json:"comment,omitempty"`
 	Notify  bool                 `json:"notify"`
 }
 
 // CreditmemoCreateInput is one credit memo creation request.
 type CreditmemoCreateInput struct {
-	OrderID            int            `json:"order_id"`
+	OrderID            int            `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	InvoiceID          int            `json:"invoice_id,omitempty"`
-	Items              []DocumentLine `json:"items"`
+	Items              []DocumentLine `json:"items" jsonschema:"Entries returned by this call."`
 	AdjustmentPositive float64        `json:"adjustment_positive,omitempty"`
 	AdjustmentNegative float64        `json:"adjustment_negative,omitempty"`
 	Comment            string         `json:"comment,omitempty"`
@@ -62,15 +62,15 @@ type CreditmemoCreateInput struct {
 	// arguments returns the recorded credit memo instead of refunding twice.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	// Instance is the configured instance id recorded in the operation ledger.
-	Instance string `json:"instance,omitempty"`
+	Instance string `json:"instance,omitempty" jsonschema:"Configured instance id the result came from."`
 }
 
 // CreditmemoCreateResult is the recorded outcome of a credit memo creation.
 type CreditmemoCreateResult struct {
-	Creditmemo  Creditmemo `json:"creditmemo"`
+	Creditmemo  Creditmemo `json:"creditmemo" jsonschema:"The credit memo that was created or read."`
 	InvoiceID   int        `json:"invoice_id"`
-	OperationID string     `json:"operation_id,omitempty"`
-	Replayed    bool       `json:"replayed,omitempty"`
+	OperationID string     `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
+	Replayed    bool       `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so nothing new happened."`
 }
 
 // CreateShipment ships order items with POST /shipments.
@@ -211,19 +211,19 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 
 // creditmemoArgs is the canonical argument set hashed for replay detection.
 type creditmemoArgs struct {
-	OrderID            int            `json:"order_id"`
+	OrderID            int            `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	InvoiceID          int            `json:"invoice_id"`
-	Items              []DocumentLine `json:"items"`
+	Items              []DocumentLine `json:"items" jsonschema:"Entries returned by this call."`
 	AdjustmentPositive float64        `json:"adjustment_positive"`
 	AdjustmentNegative float64        `json:"adjustment_negative"`
 }
 
 // orderRefundState is the part of an order a refund decision needs.
 type orderRefundState struct {
-	EntityID   int               `json:"entity_id"`
-	Currency   string            `json:"order_currency_code"`
-	GrandTotal float64           `json:"grand_total"`
-	Items      []OrderItem       `json:"items"`
+	EntityID   int               `json:"entity_id" jsonschema:"Magento entity id."`
+	Currency   string            `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	GrandTotal float64           `json:"grand_total" jsonschema:"Document total including shipping and tax."`
+	Items      []OrderItem       `json:"items" jsonschema:"Entries returned by this call."`
 	Refund     []orderRefundItem `json:"-"`
 }
 
@@ -242,17 +242,17 @@ func (s *Service) orderRefundState(ctx context.Context, orderID int) (*orderRefu
 		return nil, err
 	}
 	var wire struct {
-		EntityID   int     `json:"entity_id"`
-		Currency   string  `json:"order_currency_code"`
-		GrandTotal float64 `json:"grand_total"`
+		EntityID   int     `json:"entity_id" jsonschema:"Magento entity id."`
+		Currency   string  `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
+		GrandTotal float64 `json:"grand_total" jsonschema:"Document total including shipping and tax."`
 		Items      []struct {
 			ItemID      int     `json:"item_id"`
-			SKU         string  `json:"sku"`
+			SKU         string  `json:"sku" jsonschema:"Product SKU."`
 			Price       float64 `json:"price"`
 			RowTotal    float64 `json:"row_total"`
 			QtyInvoiced float64 `json:"qty_invoiced"`
 			QtyRefunded float64 `json:"qty_refunded"`
-		} `json:"items"`
+		} `json:"items" jsonschema:"Entries returned by this call."`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order payload").WithCause(err)
@@ -337,16 +337,16 @@ type shipmentCreateBody struct {
 }
 
 type shipmentEntityBody struct {
-	OrderID int                 `json:"order_id"`
-	Items   []invoiceItemBody   `json:"items"`
-	Tracks  []shipmentTrackBody `json:"tracks,omitempty"`
+	OrderID int                 `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+	Items   []invoiceItemBody   `json:"items" jsonschema:"Entries returned by this call."`
+	Tracks  []shipmentTrackBody `json:"tracks,omitempty" jsonschema:"Tracking numbers attached to the shipment."`
 	Comment documentComment     `json:"comment"`
 	Notify  bool                `json:"notify"`
 }
 
 type shipmentTrackBody struct {
 	TrackNumber string `json:"track_number"`
-	Title       string `json:"title,omitempty"`
+	Title       string `json:"title,omitempty" jsonschema:"Display title for this entry."`
 	CarrierCode string `json:"carrier_code"`
 }
 
@@ -355,9 +355,9 @@ type creditmemoCreateBody struct {
 }
 
 type creditmemoEntityBody struct {
-	OrderID            int               `json:"order_id"`
+	OrderID            int               `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	InvoiceID          int               `json:"invoice_id,omitempty"`
-	Items              []invoiceItemBody `json:"items"`
+	Items              []invoiceItemBody `json:"items" jsonschema:"Entries returned by this call."`
 	AdjustmentPositive float64           `json:"adjustment_positive,omitempty"`
 	AdjustmentNegative float64           `json:"adjustment_negative,omitempty"`
 	Comment            documentComment   `json:"comment"`

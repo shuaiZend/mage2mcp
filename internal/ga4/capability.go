@@ -28,11 +28,11 @@ const (
 // EcommerceTracked is true only when at least one standard ecommerce event has
 // a positive count in the probe window; Evidence records what the probes saw.
 type PropertyCapabilities struct {
-	EcommerceTracked bool      `json:"ecommerce_tracked"`
-	Currency         string    `json:"currency"`
-	TimeZone         string    `json:"time_zone"`
-	CheckedAt        time.Time `json:"checked_at"`
-	Evidence         []string  `json:"evidence"`
+	EcommerceTracked bool      `json:"ecommerce_tracked" jsonschema:"True when the property has ecommerce tracking enabled."`
+	Currency         string    `json:"currency" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	TimeZone         string    `json:"time_zone" jsonschema:"IANA time zone the report was computed in."`
+	CheckedAt        time.Time `json:"checked_at" jsonschema:"When this capability snapshot was taken."`
+	Evidence         []string  `json:"evidence" jsonschema:"How the capability was determined."`
 }
 
 // Capabilities probes the property for ecommerce tracking over the last seven

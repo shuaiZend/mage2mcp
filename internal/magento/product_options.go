@@ -17,21 +17,21 @@ import (
 // ProductOptionValue is one value of a custom option.
 type ProductOptionValue struct {
 	OptionTypeID int     `json:"option_type_id"`
-	Title        string  `json:"title"`
+	Title        string  `json:"title" jsonschema:"Display title for this entry."`
 	Price        float64 `json:"price"`
 	PriceType    string  `json:"price_type"`
-	SKU          string  `json:"sku,omitempty"`
-	SortOrder    int     `json:"sort_order"`
+	SKU          string  `json:"sku,omitempty" jsonschema:"Product SKU."`
+	SortOrder    int     `json:"sort_order" jsonschema:"Sort position among siblings."`
 }
 
 // ProductOption is one custom option (not a configurable variant option).
 type ProductOption struct {
-	OptionID  int                  `json:"option_id"`
-	Title     string               `json:"title"`
-	Type      string               `json:"type"`
-	IsRequire bool                 `json:"is_require"`
-	SortOrder int                  `json:"sort_order"`
-	Values    []ProductOptionValue `json:"values"`
+	OptionID  int                  `json:"option_id" jsonschema:"Custom option id."`
+	Title     string               `json:"title" jsonschema:"Display title for this entry."`
+	Type      string               `json:"type" jsonschema:"Input control type."`
+	IsRequire bool                 `json:"is_require" jsonschema:"True when the shopper must choose this option."`
+	SortOrder int                  `json:"sort_order" jsonschema:"Sort position among siblings."`
+	Values    []ProductOptionValue `json:"values" jsonschema:"Selectable values of this option."`
 }
 
 // ProductOptions lists a product's custom options with
@@ -106,9 +106,9 @@ func (s *Service) CreateProductOption(ctx context.Context, sku string, in Custom
 		// back to saving the option through the product update endpoint.
 		fallback := struct {
 			Product struct {
-				SKU     string                `json:"sku"`
-				Options []customOptionPayload `json:"options"`
-			} `json:"product"`
+				SKU     string                `json:"sku" jsonschema:"Product SKU."`
+				Options []customOptionPayload `json:"options" jsonschema:"Custom options of the product."`
+			} `json:"product" jsonschema:"The product that was created or read."`
 		}{}
 		fallback.Product.SKU = sku
 		fallback.Product.Options = []customOptionPayload{body.Option}
@@ -155,24 +155,24 @@ func (s *Service) CreateProductOption(ctx context.Context, sku string, in Custom
 }
 
 type customOptionBody struct {
-	Option customOptionPayload `json:"option"`
+	Option customOptionPayload `json:"option" jsonschema:"The option that was created or read."`
 }
 
 type customOptionPayload struct {
-	OptionID  int                        `json:"option_id,omitempty"`
-	Title     string                     `json:"title"`
-	Type      string                     `json:"type"`
-	IsRequire bool                       `json:"is_require"`
-	SortOrder int                        `json:"sort_order"`
-	Values    []customOptionValuePayload `json:"values,omitempty"`
+	OptionID  int                        `json:"option_id,omitempty" jsonschema:"Custom option id."`
+	Title     string                     `json:"title" jsonschema:"Display title for this entry."`
+	Type      string                     `json:"type" jsonschema:"Input control type."`
+	IsRequire bool                       `json:"is_require" jsonschema:"True when the shopper must choose this option."`
+	SortOrder int                        `json:"sort_order" jsonschema:"Sort position among siblings."`
+	Values    []customOptionValuePayload `json:"values,omitempty" jsonschema:"Selectable values of this option."`
 }
 
 type customOptionValuePayload struct {
-	Title     string  `json:"title"`
+	Title     string  `json:"title" jsonschema:"Display title for this entry."`
 	Price     float64 `json:"price"`
 	PriceType string  `json:"price_type"`
-	SKU       string  `json:"sku,omitempty"`
-	SortOrder int     `json:"sort_order"`
+	SKU       string  `json:"sku,omitempty" jsonschema:"Product SKU."`
+	SortOrder int     `json:"sort_order" jsonschema:"Sort position among siblings."`
 }
 
 func validateCustomOption(in CustomOptionInput) ([]customOptionValuePayload, error) {

@@ -21,15 +21,15 @@ const (
 
 // Category is the category projection this slice exposes.
 type Category struct {
-	ID            int    `json:"id"`
-	ParentID      int    `json:"parent_id"`
-	Name          string `json:"name"`
-	IsActive      bool   `json:"is_active"`
-	Position      int    `json:"position"`
-	Level         int    `json:"level"`
-	IncludeInMenu bool   `json:"include_in_menu"`
-	Path          string `json:"path,omitempty"`
-	ChildrenCount string `json:"children_count,omitempty"`
+	ID            int    `json:"id" jsonschema:"Magento category entity id."`
+	ParentID      int    `json:"parent_id" jsonschema:"Parent category id; 0 for the root."`
+	Name          string `json:"name" jsonschema:"Display name."`
+	IsActive      bool   `json:"is_active" jsonschema:"True when the category is enabled."`
+	Position      int    `json:"position" jsonschema:"Sort position among siblings."`
+	Level         int    `json:"level" jsonschema:"Depth in the category tree; the root is 1."`
+	IncludeInMenu bool   `json:"include_in_menu" jsonschema:"True when the category appears in the navigation menu."`
+	Path          string `json:"path,omitempty" jsonschema:"Full path of category ids from the root."`
+	ChildrenCount string `json:"children_count,omitempty" jsonschema:"Number of direct children."`
 }
 
 // AttributeSet is one product attribute set.
@@ -42,7 +42,7 @@ type AttributeSet struct {
 // Attribute is one attribute in an attribute set.
 type Attribute struct {
 	ID          int    `json:"attribute_id"`
-	Code        string `json:"attribute_code"`
+	Code        string `json:"attribute_code" jsonschema:"Attribute code, not its id or label."`
 	Label       string `json:"frontend_label"`
 	Input       string `json:"frontend_input"`
 	Required    bool   `json:"is_required"`
@@ -128,7 +128,7 @@ func (s *Service) AttributeSets(ctx context.Context) ([]AttributeSet, error) {
 		return nil, err
 	}
 	var payload struct {
-		Items []AttributeSet `json:"items"`
+		Items []AttributeSet `json:"items" jsonschema:"Entries returned by this call."`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable attribute-set payload").WithCause(err)
@@ -156,7 +156,7 @@ func (s *Service) Attributes(ctx context.Context, attributeSetID int) ([]Attribu
 	if err := json.Unmarshal(raw, &attributes); err != nil {
 		// Some deployments wrap the array in an items envelope.
 		var wrapped struct {
-			Items []Attribute `json:"items"`
+			Items []Attribute `json:"items" jsonschema:"Entries returned by this call."`
 		}
 		if wrappedErr := json.Unmarshal(raw, &wrapped); wrappedErr != nil {
 			return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable attribute payload").WithCause(err)
@@ -171,8 +171,8 @@ func (s *Service) Attributes(ctx context.Context, attributeSetID int) ([]Attribu
 
 // AttributeOption is one selectable value of an attribute.
 type AttributeOption struct {
-	Label string `json:"label"`
-	Value string `json:"value"`
+	Label string `json:"label" jsonschema:"Label shown to the shopper."`
+	Value string `json:"value" jsonschema:"Value of the entry."`
 }
 
 // AttributesOptions lists the options of a select/multiselect attribute.
@@ -233,7 +233,7 @@ func (s *Service) CategoryProducts(ctx context.Context, categoryID, limit, offse
 		return products, total, nil
 	}
 	var payload struct {
-		Items      []Product `json:"items"`
+		Items      []Product `json:"items" jsonschema:"Entries returned by this call."`
 		TotalCount int       `json:"total_count"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -274,11 +274,11 @@ func (s *Service) CreateAttributeOption(ctx context.Context, attributeCode, labe
 }
 
 type attributeOptionBody struct {
-	Option attributeOptionPayload `json:"option"`
+	Option attributeOptionPayload `json:"option" jsonschema:"The option that was created or read."`
 }
 
 type attributeOptionPayload struct {
-	Label string `json:"label"`
+	Label string `json:"label" jsonschema:"Label shown to the shopper."`
 }
 
 // DeleteAttributeOption removes one select/multiselect option with
@@ -303,18 +303,18 @@ const maxBulkOptions = 50
 
 // OptionBulkRow is one option's outcome in a bulk create.
 type OptionBulkRow struct {
-	Label  string `json:"label"`
-	Value  string `json:"value,omitempty"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	Label  string `json:"label" jsonschema:"Label shown to the shopper."`
+	Value  string `json:"value,omitempty" jsonschema:"Value of the entry."`
+	Status string `json:"status" jsonschema:"Current status."`
+	Error  string `json:"error,omitempty" jsonschema:"Why the row failed."`
 }
 
 // OptionBulkResult reports a partial-success option creation.
 type OptionBulkResult struct {
-	Total   int             `json:"total"`
-	Created int             `json:"created"`
-	Failed  int             `json:"failed"`
-	Rows    []OptionBulkRow `json:"rows"`
+	Total   int             `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Created int             `json:"created" jsonschema:"Rows that created a product."`
+	Failed  int             `json:"failed" jsonschema:"Rows that failed."`
+	Rows    []OptionBulkRow `json:"rows" jsonschema:"Per-row results, in input order."`
 }
 
 // BulkCreateAttributeOptions adds up to 50 options to one attribute. Each label

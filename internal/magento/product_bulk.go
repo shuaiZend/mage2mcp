@@ -13,18 +13,18 @@ const maxBulkUpdateSKUs = 50
 
 // BulkUpdateRow is one SKU's outcome in a bulk update.
 type BulkUpdateRow struct {
-	SKU    string `json:"sku"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	SKU    string `json:"sku" jsonschema:"Product SKU."`
+	Status string `json:"status" jsonschema:"Current status."`
+	Error  string `json:"error,omitempty" jsonschema:"Why the row failed."`
 }
 
 // BulkUpdateResult reports a partial-success bulk update. Updates are applied
 // per SKU and never rolled back.
 type BulkUpdateResult struct {
-	Total   int             `json:"total"`
-	Updated int             `json:"updated"`
-	Failed  int             `json:"failed"`
-	Rows    []BulkUpdateRow `json:"rows"`
+	Total   int             `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Updated int             `json:"updated" jsonschema:"Rows that updated a product."`
+	Failed  int             `json:"failed" jsonschema:"Rows that failed."`
+	Rows    []BulkUpdateRow `json:"rows" jsonschema:"Per-row results, in input order."`
 }
 
 // BulkUpdateProducts applies the same partial update to up to 50 SKUs.

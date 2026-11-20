@@ -39,8 +39,8 @@ var (
 // OrderItem is one line of an order. It carries no customer data.
 type OrderItem struct {
 	ItemID      int     `json:"item_id"`
-	SKU         string  `json:"sku"`
-	Name        string  `json:"name"`
+	SKU         string  `json:"sku" jsonschema:"Product SKU."`
+	Name        string  `json:"name" jsonschema:"Display name."`
 	ProductType string  `json:"product_type"`
 	QtyOrdered  float64 `json:"qty_ordered"`
 	Price       float64 `json:"price"`
@@ -120,7 +120,7 @@ func (s *Service) SearchOrders(ctx context.Context, q OrderQuery) ([]Order, int,
 		return nil, 0, err
 	}
 	var payload struct {
-		Items      []Order `json:"items"`
+		Items      []Order `json:"items" jsonschema:"Entries returned by this call."`
 		TotalCount int     `json:"total_count"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -134,10 +134,10 @@ func (s *Service) SearchOrders(ctx context.Context, q OrderQuery) ([]Order, int,
 
 // SalesDay is one calendar day of aggregated sales.
 type SalesDay struct {
-	Date    string  `json:"date"`
-	Orders  int     `json:"orders"`
-	Revenue float64 `json:"revenue"`
-	Items   float64 `json:"items"`
+	Date    string  `json:"date" jsonschema:"Calendar day, YYYY-MM-DD."`
+	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
+	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
+	Items   float64 `json:"items" jsonschema:"Entries returned by this call."`
 }
 
 // SalesSummary aggregates orders per day over a bounded window.
@@ -147,17 +147,17 @@ type SalesDay struct {
 // ExcludedOrders is the difference. Truncated is true only when at least one
 // order was excluded.
 type SalesSummary struct {
-	Window         string     `json:"window"`
-	Days           []SalesDay `json:"days"`
-	TotalOrders    int        `json:"total_orders"`
-	TotalRevenue   float64    `json:"total_revenue"`
-	TotalItems     float64    `json:"total_items"`
-	Currency       string     `json:"currency,omitempty"`
-	MixedCurrency  bool       `json:"mixed_currency"`
-	Truncated      bool       `json:"truncated"`
-	TotalAvailable int        `json:"total_available"`
-	ExcludedOrders int        `json:"excluded_orders"`
-	ScannedOrders  int        `json:"scanned_orders"`
+	Window         string     `json:"window" jsonschema:"Time window the figures cover, as RFC 3339 start/end."`
+	Days           []SalesDay `json:"days" jsonschema:"Per-day breakdown, oldest first."`
+	TotalOrders    int        `json:"total_orders" jsonschema:"Orders counted in the window."`
+	TotalRevenue   float64    `json:"total_revenue" jsonschema:"Revenue in the window."`
+	TotalItems     float64    `json:"total_items" jsonschema:"Units sold in the window."`
+	Currency       string     `json:"currency,omitempty" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	MixedCurrency  bool       `json:"mixed_currency" jsonschema:"True when the window contains more than one currency."`
+	Truncated      bool       `json:"truncated" jsonschema:"True when more records exist than were returned."`
+	TotalAvailable int        `json:"total_available" jsonschema:"Orders the store reports for the window."`
+	ExcludedOrders int        `json:"excluded_orders" jsonschema:"Orders that exist but were not read."`
+	ScannedOrders  int        `json:"scanned_orders" jsonschema:"Orders actually read."`
 }
 
 // SalesSummary aggregates order count, revenue, and item quantity per day.
@@ -203,7 +203,7 @@ func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesS
 			return nil, err
 		}
 		var payload struct {
-			Items      []Order `json:"items"`
+			Items      []Order `json:"items" jsonschema:"Entries returned by this call."`
 			TotalCount int     `json:"total_count"`
 		}
 		if err := json.Unmarshal(raw, &payload); err != nil {

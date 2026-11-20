@@ -44,10 +44,10 @@ type TrafficQuery struct {
 // TrafficRow is one aggregate row for the whole window, not one hour.
 type TrafficRow struct {
 	Dimension      string  `json:"dimension"`
-	Requests       float64 `json:"requests"`
-	Bytes          float64 `json:"bytes"`
-	CachedRequests float64 `json:"cached_requests"`
-	CachedBytes    float64 `json:"cached_bytes"`
+	Requests       float64 `json:"requests" jsonschema:"Requests counted."`
+	Bytes          float64 `json:"bytes" jsonschema:"Bytes transferred."`
+	CachedRequests float64 `json:"cached_requests" jsonschema:"Requests served from cache."`
+	CachedBytes    float64 `json:"cached_bytes" jsonschema:"Bytes served from cache."`
 }
 
 // Traffic returns hourly traffic aggregates for one dimension of the zone.
@@ -145,10 +145,10 @@ type trafficResponse struct {
 }
 
 type trafficGroup struct {
-	Dimensions map[string]any `json:"dimensions"`
+	Dimensions map[string]any `json:"dimensions" jsonschema:"Dimensions the report was grouped by."`
 	Sum        struct {
-		Requests       float64 `json:"requests"`
-		Bytes          float64 `json:"bytes"`
+		Requests       float64 `json:"requests" jsonschema:"Requests counted."`
+		Bytes          float64 `json:"bytes" jsonschema:"Bytes transferred."`
 		CachedRequests float64 `json:"cachedRequests"`
 		CachedBytes    float64 `json:"cachedBytes"`
 	} `json:"sum"`

@@ -19,10 +19,10 @@ const (
 
 // TierPrice is one quantity-based price for a customer group and website.
 type TierPrice struct {
-	SKU           string  `json:"sku"`
+	SKU           string  `json:"sku" jsonschema:"Product SKU."`
 	Price         float64 `json:"price"`
 	PriceType     string  `json:"price_type"`
-	WebsiteID     int     `json:"website_id"`
+	WebsiteID     int     `json:"website_id" jsonschema:"Website the entity belongs to."`
 	CustomerGroup string  `json:"customer_group"`
 	Quantity      float64 `json:"quantity"`
 }
@@ -89,14 +89,14 @@ func (s *Service) tierPricesFromProduct(ctx context.Context, sku string) ([]Tier
 }
 
 type tierPriceFallback struct {
-	SKU             string  `json:"sku"`
+	SKU             string  `json:"sku" jsonschema:"Product SKU."`
 	Price           float64 `json:"price"`
 	PriceType       string  `json:"price_type"`
-	WebsiteID       int     `json:"website_id"`
+	WebsiteID       int     `json:"website_id" jsonschema:"Website the entity belongs to."`
 	CustomerGroupID int     `json:"customer_group_id"`
 	CustomerGroup   string  `json:"customer_group"`
 	Quantity        float64 `json:"quantity"`
-	Qty             float64 `json:"qty"`
+	Qty             float64 `json:"qty" jsonschema:"Quantity at this source."`
 }
 
 // SetTierPrices replaces the tier prices of one SKU with POST
@@ -124,14 +124,14 @@ func (s *Service) SetTierPrices(ctx context.Context, sku string, prices []TierPr
 }
 
 type tierPriceSetBody struct {
-	Prices []tierPriceBody `json:"prices"`
+	Prices []tierPriceBody `json:"prices" jsonschema:"Tier prices now set on the product."`
 }
 
 type tierPriceBody struct {
-	SKU           string  `json:"sku"`
+	SKU           string  `json:"sku" jsonschema:"Product SKU."`
 	Price         float64 `json:"price"`
 	PriceType     string  `json:"price_type"`
-	WebsiteID     int     `json:"website_id"`
+	WebsiteID     int     `json:"website_id" jsonschema:"Website the entity belongs to."`
 	CustomerGroup string  `json:"customer_group"`
 	Quantity      float64 `json:"quantity"`
 }

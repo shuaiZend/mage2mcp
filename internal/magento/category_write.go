@@ -20,11 +20,11 @@ const (
 
 // CategoryCreateInput is one category creation request.
 type CategoryCreateInput struct {
-	ParentID      int    `json:"parent_id"`
-	Name          string `json:"name"`
-	IsActive      bool   `json:"is_active"`
-	Position      int    `json:"position"`
-	IncludeInMenu bool   `json:"include_in_menu"`
+	ParentID      int    `json:"parent_id" jsonschema:"Parent category id; 0 for the root."`
+	Name          string `json:"name" jsonschema:"Display name."`
+	IsActive      bool   `json:"is_active" jsonschema:"True when the entity is enabled."`
+	Position      int    `json:"position" jsonschema:"Sort position among siblings."`
+	IncludeInMenu bool   `json:"include_in_menu" jsonschema:"True when the category appears in the navigation menu."`
 	URLKey        string `json:"url_key,omitempty"`
 }
 
@@ -124,32 +124,32 @@ func (s *Service) AssignProductToCategory(ctx context.Context, categoryID int, s
 }
 
 type categoryCreateBody struct {
-	Category categoryCreatePayload `json:"category"`
+	Category categoryCreatePayload `json:"category" jsonschema:"The category that was created or read."`
 }
 
 type categoryCreatePayload struct {
-	ParentID         int                       `json:"parent_id"`
-	Name             string                    `json:"name"`
-	IsActive         bool                      `json:"is_active"`
-	Position         int                       `json:"position,omitempty"`
-	IncludeInMenu    bool                      `json:"include_in_menu"`
+	ParentID         int                       `json:"parent_id" jsonschema:"Parent category id; 0 for the root."`
+	Name             string                    `json:"name" jsonschema:"Display name."`
+	IsActive         bool                      `json:"is_active" jsonschema:"True when the entity is enabled."`
+	Position         int                       `json:"position,omitempty" jsonschema:"Sort position among siblings."`
+	IncludeInMenu    bool                      `json:"include_in_menu" jsonschema:"True when the category appears in the navigation menu."`
 	CustomAttributes []categoryCustomAttribute `json:"custom_attributes,omitempty"`
 }
 
 type categoryCustomAttribute struct {
-	AttributeCode string `json:"attribute_code"`
-	Value         string `json:"value"`
+	AttributeCode string `json:"attribute_code" jsonschema:"Attribute code, not its id or label."`
+	Value         string `json:"value" jsonschema:"Value of the entry."`
 }
 
 type categoryUpdateBody struct {
-	Category categoryUpdatePayload `json:"category"`
+	Category categoryUpdatePayload `json:"category" jsonschema:"The category that was created or read."`
 }
 
 type categoryUpdatePayload struct {
-	Name          *string `json:"name,omitempty"`
-	IsActive      *bool   `json:"is_active,omitempty"`
-	Position      *int    `json:"position,omitempty"`
-	IncludeInMenu *bool   `json:"include_in_menu,omitempty"`
+	Name          *string `json:"name,omitempty" jsonschema:"Display name."`
+	IsActive      *bool   `json:"is_active,omitempty" jsonschema:"True when the entity is enabled."`
+	Position      *int    `json:"position,omitempty" jsonschema:"Sort position among siblings."`
+	IncludeInMenu *bool   `json:"include_in_menu,omitempty" jsonschema:"True when the category appears in the navigation menu."`
 }
 
 type categoryProductBody struct {
@@ -157,9 +157,9 @@ type categoryProductBody struct {
 }
 
 type categoryProductLink struct {
-	SKU        string `json:"sku"`
-	Position   int    `json:"position"`
-	CategoryID string `json:"category_id"`
+	SKU        string `json:"sku" jsonschema:"Product SKU."`
+	Position   int    `json:"position" jsonschema:"Sort position among siblings."`
+	CategoryID string `json:"category_id" jsonschema:"Magento category entity id."`
 }
 
 func validateCategoryName(name string) error {

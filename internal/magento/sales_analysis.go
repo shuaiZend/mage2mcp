@@ -35,84 +35,84 @@ const (
 // completeness without guessing.
 type PagingInfo struct {
 	// Method is the paging mechanism ("offset").
-	Method string `json:"method"`
+	Method string `json:"method" jsonschema:"How the scan was paged: offset or cursor."`
 	// OrderBy is the sort key the scan requested.
-	OrderBy string `json:"order_by"`
+	OrderBy string `json:"order_by" jsonschema:"Field the scan was ordered by."`
 	// SnapshotConsistent reports whether the scan observed a fixed snapshot.
 	// It is false for offset paging.
-	SnapshotConsistent bool `json:"snapshot_consistent"`
+	SnapshotConsistent bool `json:"snapshot_consistent" jsonschema:"True when the pages came from one consistent snapshot."`
 	// DuplicatesSkipped counts orders returned on more than one page and
 	// dropped, so an unstable page boundary cannot double-count revenue.
-	DuplicatesSkipped int `json:"duplicates_skipped"`
+	DuplicatesSkipped int `json:"duplicates_skipped" jsonschema:"Duplicate rows that were skipped rather than counted twice."`
 	// Caveat explains how a caller must read the completeness fields.
-	Caveat string `json:"caveat,omitempty"`
+	Caveat string `json:"caveat,omitempty" jsonschema:"Known limitation of how the scan was paged."`
 }
 
 // DimensionStat is one grouped measure (status, country, payment, store).
 type DimensionStat struct {
 	Key     string  `json:"key"`
-	Orders  int     `json:"orders"`
-	Revenue float64 `json:"revenue"`
+	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
+	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
 }
 
 // ShippingStat is one shipping method's volume and cost.
 type ShippingStat struct {
-	Method       string  `json:"method"`
-	Orders       int     `json:"orders"`
-	Revenue      float64 `json:"revenue"`
+	Method       string  `json:"method" jsonschema:"How the scan was paged: offset or cursor."`
+	Orders       int     `json:"orders" jsonschema:"Orders that matched."`
+	Revenue      float64 `json:"revenue" jsonschema:"Revenue for this window."`
 	ShippingCost float64 `json:"shipping_cost"`
 }
 
 // CurrencyStat is one currency's orders, revenue, and AOV.
 type CurrencyStat struct {
-	Code    string  `json:"code"`
-	Orders  int     `json:"orders"`
-	Revenue float64 `json:"revenue"`
-	AOV     float64 `json:"aov"`
+	Code    string  `json:"code" jsonschema:"Machine code of the entity."`
+	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
+	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
+	AOV     float64 `json:"aov" jsonschema:"Average order value in the window."`
 }
 
 // BandStat is one order-value band.
 type BandStat struct {
-	Label   string  `json:"label"`
-	Orders  int     `json:"orders"`
-	Revenue float64 `json:"revenue"`
+	Label   string  `json:"label" jsonschema:"Label shown to the shopper."`
+	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
+	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
 }
 
 // CouponStat is one normalized coupon code.
 type CouponStat struct {
-	Code   string `json:"code"`
-	Orders int    `json:"orders"`
+	Code   string `json:"code" jsonschema:"Machine code of the entity."`
+	Orders int    `json:"orders" jsonschema:"Orders that matched."`
 }
 
 // SKURefundStat is one SKU's refunded quantity and amount.
 type SKURefundStat struct {
-	SKU    string  `json:"sku"`
-	Qty    float64 `json:"qty"`
+	SKU    string  `json:"sku" jsonschema:"Product SKU."`
+	Qty    float64 `json:"qty" jsonschema:"Quantity at this source."`
 	Amount float64 `json:"amount"`
 }
 
 // ShipLatency is the order-to-shipment latency distribution in days.
 type ShipLatency struct {
-	Avg    float64 `json:"avg"`
-	Median float64 `json:"median"`
-	P90    float64 `json:"p90"`
-	Max    float64 `json:"max"`
+	Avg    float64 `json:"avg" jsonschema:"Average value."`
+	Median float64 `json:"median" jsonschema:"Median value."`
+	P90    float64 `json:"p90" jsonschema:"90th percentile."`
+	Max    float64 `json:"max" jsonschema:"Upper bound of the band."`
 }
 
 // DayStat is one day's order count and revenue.
 type DayStat struct {
-	Date    string  `json:"date"`
-	Orders  int     `json:"orders"`
-	Revenue float64 `json:"revenue"`
+	Date    string  `json:"date" jsonschema:"Calendar day, YYYY-MM-DD."`
+	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
+	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
 }
 
 // SKUStat is one product's sales inside the window.
 type SKUStat struct {
-	SKU     string  `json:"sku"`
-	Name    string  `json:"name"`
-	Qty     float64 `json:"qty"`
-	Revenue float64 `json:"revenue"`
-	Orders  int     `json:"orders"`
+	SKU     string  `json:"sku" jsonschema:"Product SKU."`
+	Name    string  `json:"name" jsonschema:"Display name."`
+	Qty     float64 `json:"qty" jsonschema:"Quantity at this source."`
+	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
+	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
 }
 
 // SalesAnalysis is a PII-free business summary of an order window.
@@ -121,93 +121,93 @@ type SKUStat struct {
 // reported for the window, and ExcludedOrders is the difference. Paging states
 // how the window was scanned and whether the result can be treated as complete.
 type SalesAnalysis struct {
-	From            string          `json:"from"`
-	To              string          `json:"to"`
-	Timezone        string          `json:"timezone"`
-	Orders          int             `json:"orders"`
-	TotalAvailable  int             `json:"total_available"`
-	ExcludedOrders  int             `json:"excluded_orders"`
-	Truncated       bool            `json:"truncated"`
-	Paging          PagingInfo      `json:"paging"`
-	Revenue         float64         `json:"revenue"`
-	Subtotal        float64         `json:"subtotal"`
-	Discount        float64         `json:"discount"`
-	Shipping        float64         `json:"shipping"`
-	Tax             float64         `json:"tax"`
-	ItemsQty        float64         `json:"items_qty"`
-	AOV             float64         `json:"aov"`
-	MixedCurrency   bool            `json:"mixed_currency"`
-	GuestOrders     int             `json:"guest_orders"`
-	Customers       int             `json:"customers"`
-	RepeatCustomers int             `json:"repeat_customers"`
-	RepeatOrders    int             `json:"repeat_orders"`
-	RepeatRevenue   float64         `json:"repeat_revenue"`
-	NewOrders       int             `json:"new_orders"`
-	NewRevenue      float64         `json:"new_revenue"`
-	CouponOrders    int             `json:"coupon_orders"`
-	CouponRevenue   float64         `json:"coupon_revenue"`
-	CouponAOV       float64         `json:"coupon_aov"`
-	NonCouponAOV    float64         `json:"non_coupon_aov"`
-	RefundedAmount  float64         `json:"refunded_amount"`
-	RefundedQty     float64         `json:"refunded_qty"`
-	Currencies      []CurrencyStat  `json:"currencies"`
-	ByDay           []DayStat       `json:"by_day"`
-	ByStatus        []DimensionStat `json:"by_status"`
-	ByCountry       []DimensionStat `json:"by_country"`
-	ByPayment       []DimensionStat `json:"by_payment"`
-	ByStore         []DimensionStat `json:"by_store"`
-	ShippingMethods []ShippingStat  `json:"shipping_methods"`
-	AOVBands        []BandStat      `json:"aov_bands"`
-	Weekday         []int           `json:"weekday"`
-	Hour            []int           `json:"hour"`
-	TopCoupons      []CouponStat    `json:"top_coupons"`
-	RefundedSKUs    []SKURefundStat `json:"refunded_skus"`
-	TopSKUs         []SKUStat       `json:"top_skus"`
-	Shipments       int             `json:"shipments"`
-	UnshippedOrders int             `json:"unshipped_orders"`
-	ShipLatency     ShipLatency     `json:"ship_latency"`
+	From            string          `json:"from" jsonschema:"Start of the comparison window."`
+	To              string          `json:"to" jsonschema:"End of the comparison window."`
+	Timezone        string          `json:"timezone" jsonschema:"IANA time zone the report was computed in."`
+	Orders          int             `json:"orders" jsonschema:"Orders that matched."`
+	TotalAvailable  int             `json:"total_available" jsonschema:"Orders the store reports for the window."`
+	ExcludedOrders  int             `json:"excluded_orders" jsonschema:"Orders that exist but were not read."`
+	Truncated       bool            `json:"truncated" jsonschema:"True when more records exist than were returned."`
+	Paging          PagingInfo      `json:"paging" jsonschema:"Paging state of the scan."`
+	Revenue         float64         `json:"revenue" jsonschema:"Revenue for this window."`
+	Subtotal        float64         `json:"subtotal" jsonschema:"Line subtotal before shipping, tax and discount."`
+	Discount        float64         `json:"discount" jsonschema:"Total discount across the window."`
+	Shipping        float64         `json:"shipping" jsonschema:"Total shipping charged across the window."`
+	Tax             float64         `json:"tax" jsonschema:"Total tax charged across the window."`
+	ItemsQty        float64         `json:"items_qty" jsonschema:"Units sold in the window."`
+	AOV             float64         `json:"aov" jsonschema:"Average order value in the window."`
+	MixedCurrency   bool            `json:"mixed_currency" jsonschema:"True when the window contains more than one currency."`
+	GuestOrders     int             `json:"guest_orders" jsonschema:"Orders placed without an account."`
+	Customers       int             `json:"customers" jsonschema:"Customers that matched."`
+	RepeatCustomers int             `json:"repeat_customers" jsonschema:"Customers with more than one order in the window."`
+	RepeatOrders    int             `json:"repeat_orders" jsonschema:"Orders from returning customers."`
+	RepeatRevenue   float64         `json:"repeat_revenue" jsonschema:"Revenue from returning customers."`
+	NewOrders       int             `json:"new_orders" jsonschema:"Orders from first-time customers."`
+	NewRevenue      float64         `json:"new_revenue" jsonschema:"Revenue from first-time customers."`
+	CouponOrders    int             `json:"coupon_orders" jsonschema:"Orders that used a coupon."`
+	CouponRevenue   float64         `json:"coupon_revenue" jsonschema:"Revenue from coupon orders."`
+	CouponAOV       float64         `json:"coupon_aov" jsonschema:"Average order value for coupon orders."`
+	NonCouponAOV    float64         `json:"non_coupon_aov" jsonschema:"Average order value excluding coupon discounts."`
+	RefundedAmount  float64         `json:"refunded_amount" jsonschema:"Amount refunded across the window."`
+	RefundedQty     float64         `json:"refunded_qty" jsonschema:"Units refunded across the window."`
+	Currencies      []CurrencyStat  `json:"currencies" jsonschema:"Currencies present in the window."`
+	ByDay           []DayStat       `json:"by_day" jsonschema:"Per-day breakdown, oldest first."`
+	ByStatus        []DimensionStat `json:"by_status" jsonschema:"Breakdown by order status."`
+	ByCountry       []DimensionStat `json:"by_country" jsonschema:"Breakdown by country."`
+	ByPayment       []DimensionStat `json:"by_payment" jsonschema:"Breakdown by payment method."`
+	ByStore         []DimensionStat `json:"by_store" jsonschema:"Breakdown by store view."`
+	ShippingMethods []ShippingStat  `json:"shipping_methods" jsonschema:"Breakdown by shipping method."`
+	AOVBands        []BandStat      `json:"aov_bands" jsonschema:"Distribution of order values by band."`
+	Weekday         []int           `json:"weekday" jsonschema:"Breakdown by day of week."`
+	Hour            []int           `json:"hour" jsonschema:"Breakdown by hour of day, 0-23."`
+	TopCoupons      []CouponStat    `json:"top_coupons" jsonschema:"Coupons by revenue, highest first."`
+	RefundedSKUs    []SKURefundStat `json:"refunded_skus" jsonschema:"SKUs by refunded amount, highest first."`
+	TopSKUs         []SKUStat       `json:"top_skus" jsonschema:"SKUs by revenue, highest first."`
+	Shipments       int             `json:"shipments" jsonschema:"Shipments of the order."`
+	UnshippedOrders int             `json:"unshipped_orders" jsonschema:"Orders that are not shipped yet."`
+	ShipLatency     ShipLatency     `json:"ship_latency" jsonschema:"Time from order to shipment."`
 }
 
 type analysisOrderItem struct {
-	SKU            string  `json:"sku"`
-	Name           string  `json:"name"`
-	ProductType    string  `json:"product_type"`
-	ParentItemID   *int    `json:"parent_item_id"`
-	QtyOrdered     float64 `json:"qty_ordered"`
-	QtyRefunded    float64 `json:"qty_refunded"`
-	RowTotal       float64 `json:"row_total"`
-	AmountRefunded float64 `json:"amount_refunded"`
+	SKU            string  `json:"sku" jsonschema:"Product SKU."`
+	Name           string  `json:"name" jsonschema:"Display name."`
+	ProductType    string  `json:"product_type" jsonschema:"Magento product type."`
+	ParentItemID   *int    `json:"parent_item_id" jsonschema:"Parent line id for a child item, absent for a top-level line."`
+	QtyOrdered     float64 `json:"qty_ordered" jsonschema:"Units ordered on this line."`
+	QtyRefunded    float64 `json:"qty_refunded" jsonschema:"Units refunded on this line."`
+	RowTotal       float64 `json:"row_total" jsonschema:"Line total before tax and shipping."`
+	AmountRefunded float64 `json:"amount_refunded" jsonschema:"Amount refunded on this line."`
 }
 
 type analysisOrder struct {
-	EntityID       int     `json:"entity_id"`
-	CreatedAt      string  `json:"created_at"`
-	Status         string  `json:"status"`
-	GrandTotal     float64 `json:"grand_total"`
-	Subtotal       float64 `json:"subtotal"`
-	DiscountAmount float64 `json:"discount_amount"`
-	ShippingAmount float64 `json:"shipping_amount"`
-	TaxAmount      float64 `json:"tax_amount"`
-	TotalQty       float64 `json:"total_qty_ordered"`
-	Currency       string  `json:"order_currency_code"`
+	EntityID       int     `json:"entity_id" jsonschema:"Magento entity id."`
+	CreatedAt      string  `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	Status         string  `json:"status" jsonschema:"Current status."`
+	GrandTotal     float64 `json:"grand_total" jsonschema:"Document total including shipping and tax."`
+	Subtotal       float64 `json:"subtotal" jsonschema:"Line subtotal before shipping, tax and discount."`
+	DiscountAmount float64 `json:"discount_amount" jsonschema:"Discount applied, as a positive number."`
+	ShippingAmount float64 `json:"shipping_amount" jsonschema:"Shipping charged."`
+	TaxAmount      float64 `json:"tax_amount" jsonschema:"Tax charged."`
+	TotalQty       float64 `json:"total_qty_ordered" jsonschema:"Sum of line quantities; a number because Magento allows fractional quantities."`
+	Currency       string  `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
 	StoreName      string  `json:"store_name"`
 	CustomerID     *int    `json:"customer_id"`
 	IsGuest        int     `json:"customer_is_guest"`
 	CouponCode     string  `json:"coupon_code"`
 	ShippingDesc   string  `json:"shipping_description"`
 	Payment        struct {
-		Method string `json:"method"`
+		Method string `json:"method" jsonschema:"How the scan was paged: offset or cursor."`
 	} `json:"payment"`
 	ExtensionAttributes struct {
 		ShippingAssignments []struct {
 			Shipping struct {
 				Address struct {
-					CountryID string `json:"country_id"`
-				} `json:"address"`
+					CountryID string `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+				} `json:"address" jsonschema:"The customer address that was written."`
 			} `json:"shipping"`
 		} `json:"shipping_assignments"`
 	} `json:"extension_attributes"`
-	Items []analysisOrderItem `json:"items"`
+	Items []analysisOrderItem `json:"items" jsonschema:"Entries returned by this call."`
 }
 
 type customerAgg struct {
@@ -265,7 +265,7 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 		}
 		var payload struct {
 			TotalCount int             `json:"total_count"`
-			Items      []analysisOrder `json:"items"`
+			Items      []analysisOrder `json:"items" jsonschema:"Entries returned by this call."`
 		}
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order payload").WithCause(err)
@@ -698,9 +698,9 @@ func (s *Service) shipmentStats(ctx context.Context, from, to time.Time, orderTi
 		}
 		var payload struct {
 			Items []struct {
-				OrderID   int    `json:"order_id"`
-				CreatedAt string `json:"created_at"`
-			} `json:"items"`
+				OrderID   int    `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+				CreatedAt string `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+			} `json:"items" jsonschema:"Entries returned by this call."`
 		}
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return 0, 0, ShipLatency{}

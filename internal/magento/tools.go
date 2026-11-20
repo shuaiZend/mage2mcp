@@ -56,20 +56,20 @@ const (
 )
 
 type productGetInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
 }
 
 type productGetOutput struct {
-	Product Product `json:"product"`
+	Product Product `json:"product" jsonschema:"The product that was created or read."`
 }
 
 type productSearchInput struct {
-	Instance    string `json:"instance"`
+	Instance    string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	Query       string `json:"query"`
-	SKU         string `json:"sku"`
+	SKU         string `json:"sku" jsonschema:"Product SKU."`
 	TypeID      string `json:"type_id"`
-	Status      int    `json:"status"`
+	Status      int    `json:"status" jsonschema:"Current status."`
 	PriceFrom   string `json:"price_from"`
 	PriceTo     string `json:"price_to"`
 	CreatedFrom string `json:"created_from"`
@@ -79,8 +79,8 @@ type productSearchInput struct {
 }
 
 type productSearchOutput struct {
-	Products []Product `json:"products"`
-	Total    int       `json:"total"`
+	Products []Product `json:"products" jsonschema:"Products that matched."`
+	Total    int       `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
 }
 
 // RegisterImportReadTools registers only the read-only asynchronous import
@@ -232,13 +232,13 @@ const (
 )
 
 type importValidateInput struct {
-	Instance string `json:"instance"`
-	Format   string `json:"format"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	Format   string `json:"format" jsonschema:"Payload encoding: csv or json."`
 	Data     string `json:"data_base64"`
 }
 
 type importValidateOutput struct {
-	Preview *ImportPreview `json:"preview"`
+	Preview *ImportPreview `json:"preview" jsonschema:"Validation result, including the rows that would fail."`
 }
 
 // importValidateSchema bounds data_base64 to base64.EncodedLen(maxImportBytes)
@@ -334,40 +334,40 @@ const (
 )
 
 type orderGetInput struct {
-	Instance string `json:"instance"`
-	OrderID  int    `json:"order_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	OrderID  int    `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 }
 
 type orderGetOutput struct {
-	Order Order `json:"order"`
+	Order Order `json:"order" jsonschema:"The order that was read."`
 }
 
 type orderSearchInput struct {
-	Instance    string `json:"instance"`
-	Status      string `json:"status"`
-	State       string `json:"state"`
-	IncrementID string `json:"increment_id"`
+	Instance    string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	Status      string `json:"status" jsonschema:"Current status."`
+	State       string `json:"state" jsonschema:"Current state."`
+	IncrementID string `json:"increment_id" jsonschema:"Human-facing document number, for example 000000123."`
 	CreatedFrom string `json:"created_from"`
 	CreatedTo   string `json:"created_to"`
-	StoreID     int    `json:"store_id"`
+	StoreID     int    `json:"store_id" jsonschema:"Store view the entity belongs to."`
 	CustomerID  int    `json:"customer_id"`
 	Limit       int    `json:"limit"`
 	Cursor      string `json:"cursor"`
 }
 
 type orderSearchOutput struct {
-	Orders []Order `json:"orders"`
-	Total  int     `json:"total"`
+	Orders []Order `json:"orders" jsonschema:"Orders that matched."`
+	Total  int     `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
 }
 
 type salesSummaryInput struct {
-	Instance string `json:"instance"`
-	From     string `json:"from"`
-	To       string `json:"to"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	From     string `json:"from" jsonschema:"Start of the comparison window."`
+	To       string `json:"to" jsonschema:"End of the comparison window."`
 }
 
 type salesSummaryOutput struct {
-	Summary SalesSummary `json:"summary"`
+	Summary SalesSummary `json:"summary" jsonschema:"Aggregated figures for the requested window."`
 }
 
 func newOrderGetTool(lookup serviceLookup) registry.Tool {
@@ -510,39 +510,39 @@ const (
 )
 
 type categoryGetInput struct {
-	Instance   string `json:"instance"`
-	CategoryID int    `json:"category_id"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	CategoryID int    `json:"category_id" jsonschema:"Magento category entity id."`
 }
 
 type categoryGetOutput struct {
-	Category Category `json:"category"`
+	Category Category `json:"category" jsonschema:"The category that was created or read."`
 }
 
 type categoryTreeInput struct {
-	Instance string `json:"instance"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	RootID   int    `json:"root_id"`
 	Depth    int    `json:"depth"`
 }
 
 type categoryTreeOutput struct {
-	Categories []Category `json:"categories"`
+	Categories []Category `json:"categories" jsonschema:"Categories that matched."`
 }
 
 type attributeSetsInput struct {
-	Instance string `json:"instance"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 }
 
 type attributeSetsOutput struct {
-	AttributeSets []AttributeSet `json:"attribute_sets"`
+	AttributeSets []AttributeSet `json:"attribute_sets" jsonschema:"Attribute sets available in the store."`
 }
 
 type attributesInput struct {
-	Instance       string `json:"instance"`
+	Instance       string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	AttributeSetID int    `json:"attribute_set_id"`
 }
 
 type attributesOutput struct {
-	Attributes []Attribute `json:"attributes"`
+	Attributes []Attribute `json:"attributes" jsonschema:"Attributes of the requested attribute set."`
 }
 
 func newCategoryGetTool(lookup serviceLookup) registry.Tool {
@@ -668,30 +668,30 @@ const (
 )
 
 type productMediaInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
 }
 
 type productMediaOutput struct {
-	Media []MediaEntry `json:"media"`
+	Media []MediaEntry `json:"media" jsonschema:"Gallery entry that was written."`
 }
 
 type stockStatusInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
 }
 
 type stockStatusOutput struct {
-	Status StockStatus `json:"status"`
+	Status StockStatus `json:"status" jsonschema:"Current status."`
 }
 
 type sourceItemsInput struct {
-	Instance string   `json:"instance"`
+	Instance string   `json:"instance" jsonschema:"Configured instance id the result came from."`
 	SKUs     []string `json:"skus"`
 }
 
 type sourceItemsOutput struct {
-	Items []SourceItemRead `json:"items"`
+	Items []SourceItemRead `json:"items" jsonschema:"Entries returned by this call."`
 }
 
 func newProductMediaTool(lookup serviceLookup) registry.Tool {
@@ -801,38 +801,38 @@ const (
 )
 
 type orderIDInput struct {
-	Instance string `json:"instance"`
-	OrderID  int    `json:"order_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	OrderID  int    `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 }
 
 type orderHistoryOutput struct {
-	History []OrderStatusHistory `json:"history"`
+	History []OrderStatusHistory `json:"history" jsonschema:"Status history entries, oldest first."`
 }
 
 type invoiceListOutput struct {
-	Invoices []Invoice `json:"invoices"`
+	Invoices []Invoice `json:"invoices" jsonschema:"Invoices of the order."`
 }
 
 type invoiceGetInput struct {
-	Instance  string `json:"instance"`
+	Instance  string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	InvoiceID int    `json:"invoice_id"`
 }
 
 type invoiceGetOutput struct {
-	Invoice Invoice `json:"invoice"`
+	Invoice Invoice `json:"invoice" jsonschema:"The invoice that was created or read."`
 }
 
 type shipmentListOutput struct {
-	Shipments []Shipment `json:"shipments"`
+	Shipments []Shipment `json:"shipments" jsonschema:"Shipments of the order."`
 }
 
 type shipmentGetInput struct {
-	Instance   string `json:"instance"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	ShipmentID int    `json:"shipment_id"`
 }
 
 type shipmentGetOutput struct {
-	Shipment Shipment `json:"shipment"`
+	Shipment Shipment `json:"shipment" jsonschema:"The shipment that was created or read."`
 }
 
 func newOrderHistoryTool(lookup serviceLookup) registry.Tool {
@@ -960,16 +960,16 @@ const (
 )
 
 type creditmemoListOutput struct {
-	Creditmemos []Creditmemo `json:"creditmemos"`
+	Creditmemos []Creditmemo `json:"creditmemos" jsonschema:"Credit memos of the order."`
 }
 
 type creditmemoGetInput struct {
-	Instance     string `json:"instance"`
+	Instance     string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	CreditmemoID int    `json:"creditmemo_id"`
 }
 
 type creditmemoGetOutput struct {
-	Creditmemo Creditmemo `json:"creditmemo"`
+	Creditmemo Creditmemo `json:"creditmemo" jsonschema:"The credit memo that was created or read."`
 }
 
 func newCreditmemoListTool(lookup serviceLookup) registry.Tool {
@@ -1052,34 +1052,34 @@ const (
 )
 
 type configurableChildrenInput struct {
-	Instance  string `json:"instance"`
-	ParentSKU string `json:"parent_sku"`
-	SKU       string `json:"sku"`
+	Instance  string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	ParentSKU string `json:"parent_sku" jsonschema:"SKU of the configurable parent product."`
+	SKU       string `json:"sku" jsonschema:"Product SKU."`
 }
 
 type configurableChildrenOutput struct {
-	Children []Product `json:"children"`
+	Children []Product `json:"children" jsonschema:"Variant children linked to the parent."`
 }
 
 type attributeOptionsInput struct {
-	Instance      string `json:"instance"`
-	AttributeCode string `json:"attribute_code"`
+	Instance      string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	AttributeCode string `json:"attribute_code" jsonschema:"Attribute code, not its id or label."`
 }
 
 type attributeOptionsOutput struct {
-	Options []AttributeOption `json:"options"`
+	Options []AttributeOption `json:"options" jsonschema:"Custom options of the product."`
 }
 
 type categoryProductsInput struct {
-	Instance   string `json:"instance"`
-	CategoryID int    `json:"category_id"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	CategoryID int    `json:"category_id" jsonschema:"Magento category entity id."`
 	Limit      int    `json:"limit"`
 	Cursor     string `json:"cursor"`
 }
 
 type categoryProductsOutput struct {
-	Products []Product `json:"products"`
-	Total    int       `json:"total"`
+	Products []Product `json:"products" jsonschema:"Products that matched."`
+	Total    int       `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
 }
 
 func newConfigurableChildrenTool(lookup serviceLookup) registry.Tool {
@@ -1191,24 +1191,24 @@ const (
 )
 
 type customerGetInput struct {
-	Instance   string `json:"instance"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	CustomerID int    `json:"customer_id"`
 }
 
 type customerGetOutput struct {
-	Customer Customer `json:"customer"`
+	Customer Customer `json:"customer" jsonschema:"The customer that was created or read."`
 }
 
 type customerSearchInput struct {
-	Instance string `json:"instance"`
-	Email    string `json:"email"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	Email    string `json:"email" jsonschema:"Customer email."`
 	Limit    int    `json:"limit"`
 	Cursor   string `json:"cursor"`
 }
 
 type customerSearchOutput struct {
-	Customers []Customer `json:"customers"`
-	Total     int        `json:"total"`
+	Customers []Customer `json:"customers" jsonschema:"Customers that matched."`
+	Total     int        `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
 }
 
 func newCustomerGetTool(lookup serviceLookup) registry.Tool {
@@ -1277,13 +1277,13 @@ const (
 )
 
 type productLinksInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
-	LinkType string `json:"link_type"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
+	LinkType string `json:"link_type" jsonschema:"Relation kind: related, upsell or crosssell."`
 }
 
 type productLinksOutput struct {
-	Links []ProductLink `json:"links"`
+	Links []ProductLink `json:"links" jsonschema:"Product relations of the requested kind."`
 }
 
 func newProductLinksTool(lookup serviceLookup) registry.Tool {
@@ -1322,12 +1322,12 @@ const (
 )
 
 type productsBatchInput struct {
-	Instance string   `json:"instance"`
+	Instance string   `json:"instance" jsonschema:"Configured instance id the result came from."`
 	SKUs     []string `json:"skus"`
 }
 
 type productsBatchOutput struct {
-	Products []Product `json:"products"`
+	Products []Product `json:"products" jsonschema:"Products that matched."`
 }
 
 func newProductsBatchTool(lookup serviceLookup) registry.Tool {
@@ -1366,12 +1366,12 @@ const (
 )
 
 type productSEOInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
 }
 
 type productSEOOutput struct {
-	Audit SEOAudit `json:"audit"`
+	Audit SEOAudit `json:"audit" jsonschema:"Audit events, newest first."`
 }
 
 func newProductSEOTool(lookup serviceLookup) registry.Tool {
@@ -1409,12 +1409,12 @@ const (
 )
 
 type customerAddressesInput struct {
-	Instance   string `json:"instance"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	CustomerID int    `json:"customer_id"`
 }
 
 type customerAddressesOutput struct {
-	Addresses []CustomerAddress `json:"addresses"`
+	Addresses []CustomerAddress `json:"addresses" jsonschema:"Customer addresses."`
 }
 
 func newCustomerAddressesTool(lookup serviceLookup) registry.Tool {
@@ -1452,12 +1452,12 @@ const (
 )
 
 type stockStatusBatchInput struct {
-	Instance string   `json:"instance"`
+	Instance string   `json:"instance" jsonschema:"Configured instance id the result came from."`
 	SKUs     []string `json:"skus"`
 }
 
 type stockStatusBatchOutput struct {
-	Items []StockStatusBatchItem `json:"items"`
+	Items []StockStatusBatchItem `json:"items" jsonschema:"Entries returned by this call."`
 }
 
 func newStockStatusBatchTool(lookup serviceLookup) registry.Tool {
@@ -1497,12 +1497,12 @@ const (
 )
 
 type tierPricesInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
 }
 
 type tierPricesOutput struct {
-	Prices []TierPrice `json:"prices"`
+	Prices []TierPrice `json:"prices" jsonschema:"Tier prices now set on the product."`
 }
 
 func newTierPricesTool(lookup serviceLookup) registry.Tool {
@@ -1545,16 +1545,16 @@ const (
 )
 
 type inventorySourcesOutput struct {
-	Sources []InventorySource `json:"sources"`
+	Sources []InventorySource `json:"sources" jsonschema:"Inventory sources."`
 	// Total is how many sources the store holds; the list itself is capped.
-	Total int `json:"total"`
+	Total int `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
 	// Truncated is true when the store holds more sources than were returned, so
 	// a caller never concludes a source is missing when it is merely past the cap.
-	Truncated bool `json:"truncated"`
+	Truncated bool `json:"truncated" jsonschema:"True when more records exist than were returned."`
 }
 
 type inventoryStocksOutput struct {
-	Stocks []InventoryStock `json:"stocks"`
+	Stocks []InventoryStock `json:"stocks" jsonschema:"Inventory stocks."`
 }
 
 func newInventorySourcesTool(lookup serviceLookup) registry.Tool {
@@ -1563,7 +1563,7 @@ func newInventorySourcesTool(lookup serviceLookup) registry.Tool {
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(inventorySourcesToolName, inventorySourcesToolTitle, inventorySourcesToolDescription, instanceOnlySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
-				Instance string `json:"instance"`
+				Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 			}) (*mcp.CallToolResult, inventorySourcesOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1590,7 +1590,7 @@ func newInventoryStocksTool(lookup serviceLookup) registry.Tool {
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(inventoryStocksToolName, inventoryStocksToolTitle, inventoryStocksToolDescription, instanceOnlySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
-				Instance string `json:"instance"`
+				Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 			}) (*mcp.CallToolResult, inventoryStocksOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1622,13 +1622,13 @@ const (
 )
 
 type mediaGetInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
-	MediaID  int    `json:"media_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
+	MediaID  int    `json:"media_id" jsonschema:"Gallery entry id."`
 }
 
 type mediaGetOutput struct {
-	Media MediaEntry `json:"media"`
+	Media MediaEntry `json:"media" jsonschema:"Gallery entry that was written."`
 }
 
 func newMediaGetTool(lookup serviceLookup) registry.Tool {
@@ -1667,9 +1667,9 @@ const (
 // alias carries migration metadata, so the two tools no longer have identical
 // behaviour or output schemas. Use magento.sales.summary for new integrations.
 type orderSummaryOutput struct {
-	Summary    SalesSummary `json:"summary"`
-	Deprecated bool         `json:"deprecated"`
-	Use        string       `json:"use"`
+	Summary    SalesSummary `json:"summary" jsonschema:"Aggregated figures for the requested window."`
+	Deprecated bool         `json:"deprecated" jsonschema:"True when this tool is deprecated."`
+	Use        string       `json:"use" jsonschema:"Replacement tool to use instead."`
 }
 
 func newOrderSummaryTool(lookup serviceLookup) registry.Tool {
@@ -1715,12 +1715,12 @@ const (
 )
 
 type productOptionsInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
 }
 
 type productOptionsOutput struct {
-	Options []ProductOption `json:"options"`
+	Options []ProductOption `json:"options" jsonschema:"Custom options of the product."`
 }
 
 func newProductOptionsTool(lookup serviceLookup) registry.Tool {
@@ -1759,12 +1759,12 @@ const (
 )
 
 type mediaTypesInput struct {
-	Instance         string `json:"instance"`
+	Instance         string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	AttributeSetName string `json:"attribute_set_name"`
 }
 
 type mediaTypesOutput struct {
-	Types []MediaType `json:"types"`
+	Types []MediaType `json:"types" jsonschema:"Media roles available for the attribute set."`
 }
 
 func newMediaTypesTool(lookup serviceLookup) registry.Tool {
@@ -1808,11 +1808,11 @@ const (
 )
 
 type customerGroupsOutput struct {
-	Groups []CustomerGroup `json:"groups"`
+	Groups []CustomerGroup `json:"groups" jsonschema:"Customer groups."`
 }
 
 type taxClassesOutput struct {
-	Classes []TaxClass `json:"classes"`
+	Classes []TaxClass `json:"classes" jsonschema:"Tax classes."`
 }
 
 func newCustomerGroupsTool(lookup serviceLookup) registry.Tool {
@@ -1821,7 +1821,7 @@ func newCustomerGroupsTool(lookup serviceLookup) registry.Tool {
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(customerGroupsToolName, customerGroupsToolTitle, customerGroupsToolDescription, customerGroupsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
-				Instance string `json:"instance"`
+				Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 			}) (*mcp.CallToolResult, customerGroupsOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1844,7 +1844,7 @@ func newTaxClassesTool(lookup serviceLookup) registry.Tool {
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(taxClassesToolName, taxClassesToolTitle, taxClassesToolDescription, customerGroupsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
-				Instance string `json:"instance"`
+				Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 			}) (*mcp.CallToolResult, taxClassesOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1880,14 +1880,14 @@ const (
 )
 
 type orderGeographyInput struct {
-	Instance  string `json:"instance"`
-	From      string `json:"from"`
-	To        string `json:"to"`
+	Instance  string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	From      string `json:"from" jsonschema:"Start of the comparison window."`
+	To        string `json:"to" jsonschema:"End of the comparison window."`
 	MaxOrders int    `json:"max_orders"`
 }
 
 type orderGeographyOutput struct {
-	Geography OrderGeography `json:"geography"`
+	Geography OrderGeography `json:"geography" jsonschema:"Per-country order aggregation for the window."`
 }
 
 func newOrderGeographyTool(lookup serviceLookup) registry.Tool {
@@ -1941,15 +1941,15 @@ const (
 )
 
 type salesAnalysisInput struct {
-	Instance  string `json:"instance"`
-	From      string `json:"from"`
-	To        string `json:"to"`
+	Instance  string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	From      string `json:"from" jsonschema:"Start of the comparison window."`
+	To        string `json:"to" jsonschema:"End of the comparison window."`
 	MaxOrders int    `json:"max_orders"`
 	Timezone  string `json:"timezone"`
 }
 
 type salesAnalysisOutput struct {
-	Analysis SalesAnalysis `json:"analysis"`
+	Analysis SalesAnalysis `json:"analysis" jsonschema:"Per-order analysis for the window."`
 }
 
 func newSalesAnalysisTool(lookup serviceLookup) registry.Tool {
@@ -2002,11 +2002,11 @@ const (
 )
 
 type storeConfigsOutput struct {
-	Stores []StoreConfig `json:"stores"`
+	Stores []StoreConfig `json:"stores" jsonschema:"Store views of the instance."`
 }
 
 type flatCategoriesOutput struct {
-	Categories []CategoryFlat `json:"categories"`
+	Categories []CategoryFlat `json:"categories" jsonschema:"Categories that matched."`
 }
 
 func newStoreConfigsTool(lookup serviceLookup) registry.Tool {
@@ -2015,7 +2015,7 @@ func newStoreConfigsTool(lookup serviceLookup) registry.Tool {
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(storeConfigsToolName, storeConfigsToolTitle, storeConfigsToolDescription, storeConfigsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
-				Instance string `json:"instance"`
+				Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 			}) (*mcp.CallToolResult, storeConfigsOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2038,7 +2038,7 @@ func newFlatCategoriesTool(lookup serviceLookup) registry.Tool {
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(flatCategoriesToolName, flatCategoriesToolTitle, flatCategoriesToolDescription, storeConfigsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
-				Instance string `json:"instance"`
+				Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 			}) (*mcp.CallToolResult, flatCategoriesOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {

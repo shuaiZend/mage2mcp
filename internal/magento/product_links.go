@@ -17,10 +17,10 @@ var linkTypes = map[string]bool{"related": true, "upsell": true, "crosssell": tr
 
 // ProductLink is one product-to-product relation.
 type ProductLink struct {
-	SKU              string `json:"sku"`
-	LinkType         string `json:"link_type"`
-	LinkedProductSKU string `json:"linked_product_sku"`
-	Position         int    `json:"position"`
+	SKU              string `json:"sku" jsonschema:"Product SKU."`
+	LinkType         string `json:"link_type" jsonschema:"Relation kind: related, upsell or crosssell."`
+	LinkedProductSKU string `json:"linked_product_sku" jsonschema:"The other product in the relation."`
+	Position         int    `json:"position" jsonschema:"Sort position among siblings."`
 }
 
 // ProductLinks lists the related, upsell, or cross-sell links of a product.
@@ -59,10 +59,10 @@ const maxLinkPosition = 10000
 
 // ProductLinkInput is one link creation request.
 type ProductLinkInput struct {
-	SKU              string `json:"sku"`
-	LinkType         string `json:"link_type"`
-	LinkedProductSKU string `json:"linked_product_sku"`
-	Position         int    `json:"position"`
+	SKU              string `json:"sku" jsonschema:"Product SKU."`
+	LinkType         string `json:"link_type" jsonschema:"Relation kind: related, upsell or crosssell."`
+	LinkedProductSKU string `json:"linked_product_sku" jsonschema:"The other product in the relation."`
+	Position         int    `json:"position" jsonschema:"Sort position among siblings."`
 }
 
 // AddProductLink creates a relation with POST /products/{sku}/links.
@@ -106,7 +106,7 @@ func (s *Service) RemoveProductLink(ctx context.Context, sku, linkType, linkedSK
 // POST /products/{sku}/links takes `{"items": [...]}`; sending `{"entity": ...}`
 // is rejected with `"%fieldName" is required` naming `items`.
 type productLinkBody struct {
-	Items []ProductLinkInput `json:"items"`
+	Items []ProductLinkInput `json:"items" jsonschema:"Entries returned by this call."`
 }
 
 func validateProductLink(in ProductLinkInput) error {
@@ -132,17 +132,17 @@ const maxBulkLinks = 50
 
 // LinkBulkRow is one target SKU's outcome in a bulk link operation.
 type LinkBulkRow struct {
-	SKU    string `json:"sku"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	SKU    string `json:"sku" jsonschema:"Product SKU."`
+	Status string `json:"status" jsonschema:"Current status."`
+	Error  string `json:"error,omitempty" jsonschema:"Why the row failed."`
 }
 
 // LinkBulkResult reports a partial-success bulk link change.
 type LinkBulkResult struct {
-	Total   int           `json:"total"`
-	Changed int           `json:"changed"`
-	Failed  int           `json:"failed"`
-	Rows    []LinkBulkRow `json:"rows"`
+	Total   int           `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Changed int           `json:"changed" jsonschema:"Fields that actually changed."`
+	Failed  int           `json:"failed" jsonschema:"Rows that failed."`
+	Rows    []LinkBulkRow `json:"rows" jsonschema:"Per-row results, in input order."`
 }
 
 // BulkChangeLinks adds or removes one link type for up to 50 target SKUs.

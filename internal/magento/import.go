@@ -77,38 +77,38 @@ func importTooLargeError(observed int, encoded bool) error {
 
 // ImportRow is one parsed product row.
 type ImportRow struct {
-	RowNumber  int               `json:"row_number"`
-	SKU        string            `json:"sku"`
-	Name       string            `json:"name"`
+	RowNumber  int               `json:"row_number" jsonschema:"1-based row number in the import payload."`
+	SKU        string            `json:"sku" jsonschema:"Product SKU."`
+	Name       string            `json:"name" jsonschema:"Display name."`
 	TypeID     string            `json:"type_id"`
 	Price      string            `json:"price,omitempty"`
-	Attributes map[string]string `json:"attributes,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty" jsonschema:"Attributes of the requested attribute set."`
 }
 
 // ImportRowError describes one rejected row.
 type ImportRowError struct {
-	RowNumber int    `json:"row_number"`
+	RowNumber int    `json:"row_number" jsonschema:"1-based row number in the import payload."`
 	Field     string `json:"field"`
 	Message   string `json:"message"`
 }
 
 // ImportWarning is a non-blocking content/SEO suggestion for one row.
 type ImportWarning struct {
-	RowNumber int    `json:"row_number"`
+	RowNumber int    `json:"row_number" jsonschema:"1-based row number in the import payload."`
 	Field     string `json:"field"`
 	Message   string `json:"message"`
 }
 
 // ImportPreview is the validation result. Nothing is written upstream.
 type ImportPreview struct {
-	Format            string           `json:"format"`
-	Total             int              `json:"total"`
-	Valid             int              `json:"valid"`
-	Invalid           int              `json:"invalid"`
-	Errors            []ImportRowError `json:"errors,omitempty"`
-	Warnings          []ImportWarning  `json:"warnings,omitempty"`
-	WarningsTruncated bool             `json:"warnings_truncated"`
-	Sample            []ImportRow      `json:"sample,omitempty"`
+	Format            string           `json:"format" jsonschema:"Payload encoding: csv or json."`
+	Total             int              `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Valid             int              `json:"valid" jsonschema:"Rows that passed validation."`
+	Invalid           int              `json:"invalid" jsonschema:"Rows that failed validation."`
+	Errors            []ImportRowError `json:"errors,omitempty" jsonschema:"Validation errors, one per invalid row."`
+	Warnings          []ImportWarning  `json:"warnings,omitempty" jsonschema:"Non-fatal validation warnings."`
+	WarningsTruncated bool             `json:"warnings_truncated" jsonschema:"True when more warnings exist than were returned."`
+	Sample            []ImportRow      `json:"sample,omitempty" jsonschema:"The first few rows, for eyeballing the payload."`
 }
 
 // ValidateImport parses and validates a CSV or JSON product import.
@@ -266,11 +266,11 @@ func parseImportCSV(data []byte) ([]ImportRow, error) {
 
 func parseImportJSON(data []byte) ([]ImportRow, error) {
 	var raw []struct {
-		SKU        string            `json:"sku"`
-		Name       string            `json:"name"`
+		SKU        string            `json:"sku" jsonschema:"Product SKU."`
+		Name       string            `json:"name" jsonschema:"Display name."`
 		TypeID     string            `json:"type_id"`
 		Price      string            `json:"price"`
-		Attributes map[string]string `json:"attributes"`
+		Attributes map[string]string `json:"attributes" jsonschema:"Attributes of the requested attribute set."`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if err := decoder.Decode(&raw); err != nil {
@@ -331,11 +331,11 @@ func validateImportRow(row ImportRow, seen map[string]int) []ImportRowError {
 
 // ImportResultRow is the outcome of one executed row.
 type ImportResultRow struct {
-	RowNumber int    `json:"row_number"`
-	SKU       string `json:"sku"`
-	Action    string `json:"action"`
-	Status    string `json:"status"`
-	Error     string `json:"error,omitempty"`
+	RowNumber int    `json:"row_number" jsonschema:"1-based row number in the import payload."`
+	SKU       string `json:"sku" jsonschema:"Product SKU."`
+	Action    string `json:"action" jsonschema:"create, update or skipped."`
+	Status    string `json:"status" jsonschema:"Current status."`
+	Error     string `json:"error,omitempty" jsonschema:"Why the row failed."`
 }
 
 // existingSKUs resolves which import rows already exist in Magento, in batches.
@@ -372,12 +372,12 @@ func (s *Service) existingSKUs(ctx context.Context, rows []ImportRow) (map[strin
 
 // ImportResult reports a partial-success execution. It never claims atomicity.
 type ImportResult struct {
-	Total   int               `json:"total"`
-	Created int               `json:"created"`
-	Updated int               `json:"updated"`
-	Skipped int               `json:"skipped"`
-	Failed  int               `json:"failed"`
-	Rows    []ImportResultRow `json:"rows"`
+	Total   int               `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Created int               `json:"created" jsonschema:"Rows that created a product."`
+	Updated int               `json:"updated" jsonschema:"Rows that updated a product."`
+	Skipped int               `json:"skipped" jsonschema:"Rows skipped because the product existed."`
+	Failed  int               `json:"failed" jsonschema:"Rows that failed."`
+	Rows    []ImportResultRow `json:"rows" jsonschema:"Per-row results, in input order."`
 }
 
 // ExecuteImport validates and executes a bounded product import.
@@ -592,20 +592,20 @@ const maxReportFailures = 100
 
 // ImportFailure is one failed row in a compact async report.
 type ImportFailure struct {
-	RowNumber int    `json:"row_number"`
-	SKU       string `json:"sku"`
-	Action    string `json:"action"`
-	Error     string `json:"error"`
+	RowNumber int    `json:"row_number" jsonschema:"1-based row number in the import payload."`
+	SKU       string `json:"sku" jsonschema:"Product SKU."`
+	Action    string `json:"action" jsonschema:"create, update or skipped."`
+	Error     string `json:"error" jsonschema:"Why the row failed."`
 }
 
 // ImportReport is the bounded summary stored on an asynchronous import job.
 type ImportReport struct {
-	Total             int             `json:"total"`
-	Created           int             `json:"created"`
-	Updated           int             `json:"updated"`
-	Skipped           int             `json:"skipped"`
-	Failed            int             `json:"failed"`
-	Failures          []ImportFailure `json:"failures,omitempty"`
+	Total             int             `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Created           int             `json:"created" jsonschema:"Rows that created a product."`
+	Updated           int             `json:"updated" jsonschema:"Rows that updated a product."`
+	Skipped           int             `json:"skipped" jsonschema:"Rows skipped because the product existed."`
+	Failed            int             `json:"failed" jsonschema:"Rows that failed."`
+	Failures          []ImportFailure `json:"failures,omitempty" jsonschema:"Per-row failures, bounded by the report cap."`
 	FailuresTruncated bool            `json:"failures_truncated"`
 }
 

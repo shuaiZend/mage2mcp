@@ -27,13 +27,13 @@ const (
 // Email, name, and addresses are deliberately absent: callers can locate a
 // customer, but the gateway never echoes personal data back through a tool.
 type Customer struct {
-	ID        int    `json:"id"`
-	GroupID   int    `json:"group_id"`
-	WebsiteID int    `json:"website_id"`
-	StoreID   int    `json:"store_id"`
-	CreatedIn string `json:"created_in,omitempty"`
-	CreatedAt string `json:"created_at,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
+	ID        int    `json:"id" jsonschema:"Magento entity id."`
+	GroupID   int    `json:"group_id" jsonschema:"Customer group id, which decides pricing."`
+	WebsiteID int    `json:"website_id" jsonschema:"Website the entity belongs to."`
+	StoreID   int    `json:"store_id" jsonschema:"Store view the entity belongs to."`
+	CreatedIn string `json:"created_in,omitempty" jsonschema:"Store view the account was created in."`
+	CreatedAt string `json:"created_at,omitempty" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	UpdatedAt string `json:"updated_at,omitempty" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
 }
 
 // GetCustomer returns one customer by id with a PII-safe projection.
@@ -89,7 +89,7 @@ func (s *Service) SearchCustomers(ctx context.Context, email string, limit, offs
 		return nil, 0, err
 	}
 	var payload struct {
-		Items      []customerWire `json:"items"`
+		Items      []customerWire `json:"items" jsonschema:"Entries returned by this call."`
 		TotalCount int            `json:"total_count"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -105,13 +105,13 @@ func (s *Service) SearchCustomers(ctx context.Context, email string, limit, offs
 // customerWire decodes only the fields needed for the projection; personal data
 // in the upstream payload is ignored rather than stored.
 type customerWire struct {
-	ID        int    `json:"id"`
-	GroupID   int    `json:"group_id"`
-	WebsiteID int    `json:"website_id"`
-	StoreID   int    `json:"store_id"`
-	CreatedIn string `json:"created_in"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID        int    `json:"id" jsonschema:"Magento entity id."`
+	GroupID   int    `json:"group_id" jsonschema:"Customer group id, which decides pricing."`
+	WebsiteID int    `json:"website_id" jsonschema:"Website the entity belongs to."`
+	StoreID   int    `json:"store_id" jsonschema:"Store view the entity belongs to."`
+	CreatedIn string `json:"created_in" jsonschema:"Store view the account was created in."`
+	CreatedAt string `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	UpdatedAt string `json:"updated_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
 }
 
 func (w customerWire) projection() *Customer {
@@ -135,12 +135,12 @@ func validateEmail(email string) error {
 // CustomerAddress is a PII-safe address projection: it keeps geography and
 // defaults but omits name, street, city, postcode, and telephone.
 type CustomerAddress struct {
-	ID              int    `json:"id"`
-	CountryID       string `json:"country_id"`
-	Region          string `json:"region,omitempty"`
-	RegionID        int    `json:"region_id,omitempty"`
-	DefaultBilling  bool   `json:"default_billing"`
-	DefaultShipping bool   `json:"default_shipping"`
+	ID              int    `json:"id" jsonschema:"Magento entity id."`
+	CountryID       string `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	Region          string `json:"region,omitempty" jsonschema:"Region name."`
+	RegionID        int    `json:"region_id,omitempty" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
+	DefaultBilling  bool   `json:"default_billing" jsonschema:"True when this is the default billing address."`
+	DefaultShipping bool   `json:"default_shipping" jsonschema:"True when this is the default shipping address."`
 }
 
 // CustomerAddresses returns the PII-safe addresses of one customer.
@@ -157,13 +157,13 @@ func (s *Service) CustomerAddresses(ctx context.Context, customerID int) ([]Cust
 	}
 	var payload struct {
 		Addresses []struct {
-			ID              int    `json:"id"`
-			CountryID       string `json:"country_id"`
-			Region          string `json:"region"`
-			RegionID        int    `json:"region_id"`
-			DefaultBilling  bool   `json:"default_billing"`
-			DefaultShipping bool   `json:"default_shipping"`
-		} `json:"addresses"`
+			ID              int    `json:"id" jsonschema:"Magento entity id."`
+			CountryID       string `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+			Region          string `json:"region" jsonschema:"Region name."`
+			RegionID        int    `json:"region_id" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
+			DefaultBilling  bool   `json:"default_billing" jsonschema:"True when this is the default billing address."`
+			DefaultShipping bool   `json:"default_shipping" jsonschema:"True when this is the default shipping address."`
+		} `json:"addresses" jsonschema:"Customer addresses."`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable customer payload").WithCause(err)
@@ -272,16 +272,16 @@ func (s *Service) UpdateCustomer(ctx context.Context, in CustomerUpdateInput) (*
 }
 
 type customerWriteBody struct {
-	Customer customerWritePayload `json:"customer"`
+	Customer customerWritePayload `json:"customer" jsonschema:"The customer that was created or read."`
 }
 
 type customerWritePayload struct {
-	Email     string `json:"email,omitempty"`
-	Firstname string `json:"firstname,omitempty"`
-	Lastname  string `json:"lastname,omitempty"`
-	WebsiteID int    `json:"website_id,omitempty"`
-	StoreID   int    `json:"store_id,omitempty"`
-	GroupID   int    `json:"group_id,omitempty"`
+	Email     string `json:"email,omitempty" jsonschema:"Customer email."`
+	Firstname string `json:"firstname,omitempty" jsonschema:"Given name."`
+	Lastname  string `json:"lastname,omitempty" jsonschema:"Family name."`
+	WebsiteID int    `json:"website_id,omitempty" jsonschema:"Website the entity belongs to."`
+	StoreID   int    `json:"store_id,omitempty" jsonschema:"Store view the entity belongs to."`
+	GroupID   int    `json:"group_id,omitempty" jsonschema:"Customer group id, which decides pricing."`
 }
 
 func decodeCustomerProjection(raw []byte) (*Customer, error) {
@@ -406,7 +406,7 @@ func (s *Service) createAddressViaCustomerUpdate(ctx context.Context, customerID
 		return nil, err
 	}
 	var updated struct {
-		Addresses []map[string]any `json:"addresses"`
+		Addresses []map[string]any `json:"addresses" jsonschema:"Customer addresses."`
 	}
 	if err := json.Unmarshal(raw, &updated); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable customer payload").WithCause(err)
@@ -447,32 +447,32 @@ func (s *Service) DeleteCustomerAddress(ctx context.Context, addressID int) erro
 }
 
 type customerAddressBody struct {
-	Address customerAddressPayload `json:"address"`
+	Address customerAddressPayload `json:"address" jsonschema:"The customer address that was written."`
 }
 
 type customerAddressPayload struct {
 	CustomerID      int      `json:"customer_id,omitempty"`
-	Firstname       string   `json:"firstname,omitempty"`
-	Lastname        string   `json:"lastname,omitempty"`
-	Street          []string `json:"street,omitempty"`
-	City            string   `json:"city,omitempty"`
-	Postcode        string   `json:"postcode,omitempty"`
-	CountryID       string   `json:"country_id,omitempty"`
-	Telephone       string   `json:"telephone,omitempty"`
-	Region          string   `json:"region,omitempty"`
-	RegionID        int      `json:"region_id,omitempty"`
-	DefaultBilling  bool     `json:"default_billing,omitempty"`
-	DefaultShipping bool     `json:"default_shipping,omitempty"`
+	Firstname       string   `json:"firstname,omitempty" jsonschema:"Given name."`
+	Lastname        string   `json:"lastname,omitempty" jsonschema:"Family name."`
+	Street          []string `json:"street,omitempty" jsonschema:"Street lines, most specific first."`
+	City            string   `json:"city,omitempty" jsonschema:"City or locality."`
+	Postcode        string   `json:"postcode,omitempty" jsonschema:"Postal code as the destination country writes it."`
+	CountryID       string   `json:"country_id,omitempty" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	Telephone       string   `json:"telephone,omitempty" jsonschema:"Contact phone number."`
+	Region          string   `json:"region,omitempty" jsonschema:"Region name."`
+	RegionID        int      `json:"region_id,omitempty" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
+	DefaultBilling  bool     `json:"default_billing,omitempty" jsonschema:"True when this is the default billing address."`
+	DefaultShipping bool     `json:"default_shipping,omitempty" jsonschema:"True when this is the default shipping address."`
 }
 
 func decodeCustomerAddress(raw []byte) (*CustomerAddress, error) {
 	var payload struct {
-		ID              int    `json:"id"`
-		CountryID       string `json:"country_id"`
-		Region          string `json:"region"`
-		RegionID        int    `json:"region_id"`
-		DefaultBilling  bool   `json:"default_billing"`
-		DefaultShipping bool   `json:"default_shipping"`
+		ID              int    `json:"id" jsonschema:"Magento entity id."`
+		CountryID       string `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+		Region          string `json:"region" jsonschema:"Region name."`
+		RegionID        int    `json:"region_id" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
+		DefaultBilling  bool   `json:"default_billing" jsonschema:"True when this is the default billing address."`
+		DefaultShipping bool   `json:"default_shipping" jsonschema:"True when this is the default shipping address."`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable address payload").WithCause(err)

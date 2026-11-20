@@ -15,7 +15,7 @@ import (
 // SEOCheck is one deterministic content/SEO finding for a product.
 type SEOCheck struct {
 	Field    string `json:"field"`
-	Status   string `json:"status"` // pass, warn, fail
+	Status   string `json:"status" jsonschema:"Current status."` // pass, warn, fail
 	Message  string `json:"message"`
 	Optional bool   `json:"optional,omitempty"`
 }
@@ -23,9 +23,9 @@ type SEOCheck struct {
 // SEOAudit reports content and SEO completeness. It never invents copy: it
 // points at missing or weak fields so an operator or agent can improve them.
 type SEOAudit struct {
-	SKU    string     `json:"sku"`
-	Score  int        `json:"score"` // percentage of passing required checks
-	Checks []SEOCheck `json:"checks"`
+	SKU    string     `json:"sku" jsonschema:"Product SKU."`
+	Score  int        `json:"score" jsonschema:"0-100 completeness score for the SEO fields."` // percentage of passing required checks
+	Checks []SEOCheck `json:"checks" jsonschema:"Per-check results of the SEO audit."`
 }
 
 // AuditSEO reads one product and evaluates its content/SEO fields.
@@ -42,8 +42,8 @@ func (s *Service) AuditSEO(ctx context.Context, sku string) (*SEOAudit, error) {
 	}
 	var payload struct {
 		CustomAttributes []struct {
-			AttributeCode string `json:"attribute_code"`
-			Value         any    `json:"value"`
+			AttributeCode string `json:"attribute_code" jsonschema:"Attribute code, not its id or label."`
+			Value         any    `json:"value" jsonschema:"Value of the entry."`
 		} `json:"custom_attributes"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {

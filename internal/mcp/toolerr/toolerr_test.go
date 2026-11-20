@@ -42,7 +42,7 @@ type echoInput struct {
 }
 
 type echoOutput struct {
-	Echo string `json:"echo"`
+	Echo string `json:"echo" jsonschema:"Echoed request value, for tests."`
 }
 
 func TestStructuredErrorEnvelope(t *testing.T) {

@@ -75,7 +75,7 @@ type orderCommentBody struct {
 
 type orderStatusHistoryBody struct {
 	Comment            string `json:"comment"`
-	Status             string `json:"status,omitempty"`
+	Status             string `json:"status,omitempty" jsonschema:"Current status."`
 	IsCustomerNotified int    `json:"is_customer_notified"`
 	IsVisibleOnFront   int    `json:"is_visible_on_front"`
 	EntityName         string `json:"entity_name"`
@@ -96,21 +96,21 @@ func (s *Service) SendOrderEmail(ctx context.Context, orderID int) error {
 
 // CancelOrderInput is one order cancellation request.
 type CancelOrderInput struct {
-	OrderID int `json:"order_id"`
+	OrderID int `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	// IdempotencyKey makes the call replayable: repeating it with the same
 	// arguments returns the recorded cancellation.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	// Instance is the configured instance id recorded in the operation ledger.
-	Instance string `json:"instance,omitempty"`
+	Instance string `json:"instance,omitempty" jsonschema:"Configured instance id the result came from."`
 }
 
 // CancelOrderResult is the recorded outcome of one cancellation.
 type CancelOrderResult struct {
-	OrderID     int    `json:"order_id"`
-	Canceled    bool   `json:"canceled"`
-	OperationID string `json:"operation_id,omitempty"`
-	Replayed    bool   `json:"replayed,omitempty"`
-	Reconciled  bool   `json:"reconciled,omitempty"`
+	OrderID     int    `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+	Canceled    bool   `json:"canceled" jsonschema:"True when the order is now canceled."`
+	OperationID string `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
+	Replayed    bool   `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so nothing new happened."`
+	Reconciled  bool   `json:"reconciled,omitempty" jsonschema:"True when the result was confirmed by reading the store back rather than by its response."`
 }
 
 // CancelOrder cancels an order with POST /orders/{id}/cancel.
@@ -235,5 +235,5 @@ func (s *Service) CancelOrder(ctx context.Context, in CancelOrderInput) (*Cancel
 
 // cancelArgs is the canonical argument set hashed for replay detection.
 type cancelArgs struct {
-	OrderID int `json:"order_id"`
+	OrderID int `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 }

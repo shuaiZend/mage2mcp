@@ -163,7 +163,7 @@ wiring is reverted.
 | MCP-05 | P2 | **FIXED** (`t19`) — declared timeout enforced as a deadline |
 | MCP-06 | P2 | **FIXED** (`t18`) — 55 write disclosures, test-enforced |
 | MCP-07 | P2 | **FIXED** — every required input property carries a description: 229 across the standalone schemas, plus product.create/update and configurable.create asserted at runtime. The four import tools the finding says lack `instance` already carried it; the remaining unannotated properties are optional |
-| MCP-08 | P2 | PARTIAL — `Product`, `Order` and the six money-path outputs (order create, invoice create/capture, credit memo, inventory transfer, configurable create) now describe every field, including the `replayed`, `reconciled` and `outcome` flags an agent must interpret before trusting a result; `inventory.sources` reports `total`/`truncated`. 140 of 177 output fields across the remaining 92 types are still undocumented, and there is no common envelope |
+| MCP-08 | P2 | **PARTIAL** — every output property of every registered tool now carries a description, enforced at registration by `requireDescribedOutput`, and `inventory.sources` reports `total`/`truncated`. A common output envelope (instance, request id) is still absent |
 | MCP-09 | P2 | **FIXED** (`t18`+`t19`) — one envelope shape, code once, no SQLSTATE leak |
 | MCP-10 | P3 | DEFER — naming register recorded |
 | QA-01 | P2 | **FIXED** — `local-ci.sh` runs the suite with `-json` and fails on any skipped test, so the durability layer can no longer be skipped silently |

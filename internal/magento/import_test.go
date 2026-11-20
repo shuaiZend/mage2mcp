@@ -354,7 +354,7 @@ func TestImportLimitIsTransportConsistent(t *testing.T) {
 	}
 	envelope, err := json.Marshal(struct {
 		Instance       string `json:"instance"`
-		Format         string `json:"format"`
+		Format         string `json:"format" jsonschema:"Payload encoding: csv or json."`
 		Data           string `json:"data_base64"`
 		UpdateExisting bool   `json:"update_existing"`
 		IdempotencyKey string `json:"idempotency_key"`
@@ -520,7 +520,7 @@ func TestRealisticImportPayloadPassesBothLimits(t *testing.T) {
 	encoded := base64.StdEncoding.EncodeToString(data)
 	body, err := json.Marshal(struct {
 		Instance       string `json:"instance"`
-		Format         string `json:"format"`
+		Format         string `json:"format" jsonschema:"Payload encoding: csv or json."`
 		Data           string `json:"data_base64"`
 		UpdateExisting bool   `json:"update_existing"`
 		IdempotencyKey string `json:"idempotency_key"`

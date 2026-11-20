@@ -19,31 +19,31 @@ const maxInvoiceItems = 100
 // InvoiceLine is one invoice line: an order item and the quantity to invoice.
 type InvoiceLine struct {
 	OrderItemID int     `json:"order_item_id"`
-	Qty         float64 `json:"qty"`
+	Qty         float64 `json:"qty" jsonschema:"Quantity at this source."`
 }
 
 // InvoiceCreateInput is one invoice creation request.
 type InvoiceCreateInput struct {
-	OrderID int           `json:"order_id"`
+	OrderID int           `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	Capture bool          `json:"capture"`
-	Items   []InvoiceLine `json:"items"`
+	Items   []InvoiceLine `json:"items" jsonschema:"Entries returned by this call."`
 
 	// IdempotencyKey makes the call replayable: repeating it with the same
 	// arguments returns the recorded invoice instead of creating a second one.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	// Instance is the configured instance id recorded in the operation ledger.
-	Instance string `json:"instance,omitempty"`
+	Instance string `json:"instance,omitempty" jsonschema:"Configured instance id the result came from."`
 }
 
 // InvoiceCreateResult is the recorded outcome of an invoice creation.
 type InvoiceCreateResult struct {
-	Invoice Invoice `json:"invoice"`
+	Invoice Invoice `json:"invoice" jsonschema:"The invoice that was created or read."`
 	// Captured reports the invoice state Magento returned: a paid invoice proves
 	// the capture flag was honoured by the workflow route.
 	Captured bool `json:"captured"`
 	// OperationID identifies the ledger operation; a replay returns the same id.
-	OperationID string `json:"operation_id,omitempty"`
-	Replayed    bool   `json:"replayed,omitempty"`
+	OperationID string `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
+	Replayed    bool   `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so nothing new happened."`
 }
 
 // CreateInvoice invoices an order through the invoice workflow route
@@ -137,9 +137,9 @@ const invoiceStatePaid = 2
 
 // invoiceCreateArgs is the canonical argument set hashed for replay detection.
 type invoiceCreateArgs struct {
-	OrderID int           `json:"order_id"`
+	OrderID int           `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	Capture bool          `json:"capture"`
-	Items   []InvoiceLine `json:"items"`
+	Items   []InvoiceLine `json:"items" jsonschema:"Entries returned by this call."`
 }
 
 // invoiceOrderBody is the body of POST /V1/order/{orderId}/invoice
@@ -147,12 +147,12 @@ type invoiceCreateArgs struct {
 // that service method; it is not an invoice entity field.
 type invoiceOrderBody struct {
 	Capture bool              `json:"capture"`
-	Items   []invoiceItemBody `json:"items"`
+	Items   []invoiceItemBody `json:"items" jsonschema:"Entries returned by this call."`
 }
 
 type invoiceItemBody struct {
 	OrderItemID int     `json:"order_item_id"`
-	Qty         float64 `json:"qty"`
+	Qty         float64 `json:"qty" jsonschema:"Quantity at this source."`
 }
 
 func validateInvoiceCreate(in InvoiceCreateInput) error {
@@ -191,15 +191,15 @@ type CaptureInvoiceInput struct {
 	// arguments returns the recorded outcome instead of capturing twice.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	// Instance is the configured instance id recorded in the operation ledger.
-	Instance string `json:"instance,omitempty"`
+	Instance string `json:"instance,omitempty" jsonschema:"Configured instance id the result came from."`
 }
 
 // CaptureResult is the recorded outcome of one capture.
 type CaptureResult struct {
 	InvoiceID   int    `json:"invoice_id"`
 	Captured    bool   `json:"captured"`
-	OperationID string `json:"operation_id,omitempty"`
-	Replayed    bool   `json:"replayed,omitempty"`
+	OperationID string `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
+	Replayed    bool   `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so nothing new happened."`
 }
 
 // CaptureInvoice captures an existing invoice's payment with

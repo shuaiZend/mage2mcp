@@ -20,8 +20,8 @@ import (
 // The payload carries the bounded batch; credentials are resolved by the worker
 // from configuration and are never part of the job.
 type ImportJobPayload struct {
-	Instance       string `json:"instance"`
-	Format         string `json:"format"`
+	Instance       string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	Format         string `json:"format" jsonschema:"Payload encoding: csv or json."`
 	DataBase64     string `json:"data_base64"`
 	UpdateExisting bool   `json:"update_existing"`
 	// OnlyRows limits execution to the given row numbers (import resume).
@@ -97,36 +97,36 @@ func RegisterImportJobs(reg *registry.Registry, resolver *Resolver, queue Import
 }
 
 type importStartInput struct {
-	Instance       string `json:"instance"`
-	Format         string `json:"format"`
+	Instance       string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	Format         string `json:"format" jsonschema:"Payload encoding: csv or json."`
 	Data           string `json:"data_base64"`
 	UpdateExisting bool   `json:"update_existing"`
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
 type importStartOutput struct {
-	JobID  string `json:"job_id"`
-	Rows   int    `json:"rows"`
-	Queued bool   `json:"queued"`
+	JobID  string `json:"job_id" jsonschema:"Import job id, used by import.status and import.batch."`
+	Rows   int    `json:"rows" jsonschema:"Per-row results, in input order."`
+	Queued bool   `json:"queued" jsonschema:"True when the work was queued rather than executed inline."`
 }
 
 type importStatusInput struct {
-	Instance string `json:"instance"`
-	JobID    string `json:"job_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	JobID    string `json:"job_id" jsonschema:"Import job id, used by import.status and import.batch."`
 }
 
 type importStatusOutput struct {
-	Job jobs.JobRecord `json:"job"`
+	Job jobs.JobRecord `json:"job" jsonschema:"The import job."`
 }
 
 type importCancelInput struct {
-	Instance string `json:"instance"`
-	JobID    string `json:"job_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	JobID    string `json:"job_id" jsonschema:"Import job id, used by import.status and import.batch."`
 }
 
 type importCancelOutput struct {
-	JobID    string `json:"job_id"`
-	Canceled bool   `json:"canceled"`
+	JobID    string `json:"job_id" jsonschema:"Import job id, used by import.status and import.batch."`
+	Canceled bool   `json:"canceled" jsonschema:"True when the order is now canceled."`
 }
 
 func newImportStartTool(resolver *Resolver, queue ImportQueue) registry.Tool {
@@ -262,13 +262,13 @@ const (
 )
 
 type importResumeInput struct {
-	Instance string `json:"instance"`
-	JobID    string `json:"job_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	JobID    string `json:"job_id" jsonschema:"Import job id, used by import.status and import.batch."`
 }
 
 type importResumeOutput struct {
-	JobID string `json:"job_id"`
-	Rows  int    `json:"rows"`
+	JobID string `json:"job_id" jsonschema:"Import job id, used by import.status and import.batch."`
+	Rows  int    `json:"rows" jsonschema:"Per-row results, in input order."`
 }
 
 func newImportResumeTool(resolver *Resolver, queue ImportQueue, batches ImportBatchReader) registry.Tool {
@@ -359,21 +359,21 @@ const (
 )
 
 type importBatchListInput struct {
-	Instance string `json:"instance"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	Limit    int    `json:"limit"`
 }
 
 type importBatchListOutput struct {
-	Batches []jobs.ImportBatch `json:"batches"`
+	Batches []jobs.ImportBatch `json:"batches" jsonschema:"Import batches, newest first."`
 }
 
 type importBatchGetInput struct {
-	Instance string `json:"instance"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	BatchID  string `json:"batch_id"`
 }
 
 type importBatchGetOutput struct {
-	Batch *jobs.ImportBatch `json:"batch"`
+	Batch *jobs.ImportBatch `json:"batch" jsonschema:"The import batch."`
 }
 
 func newImportBatchListTool(resolver *Resolver, batches ImportBatchReader) registry.Tool {

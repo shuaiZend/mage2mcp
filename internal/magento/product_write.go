@@ -113,13 +113,13 @@ type UpdateProductInput struct {
 }
 
 type productAttribute struct {
-	AttributeCode string `json:"attribute_code"`
-	Value         string `json:"value"`
+	AttributeCode string `json:"attribute_code" jsonschema:"Attribute code, not its id or label."`
+	Value         string `json:"value" jsonschema:"Value of the entry."`
 }
 
 type categoryLink struct {
-	CategoryID string `json:"category_id"`
-	Position   int    `json:"position"`
+	CategoryID string `json:"category_id" jsonschema:"Magento category entity id."`
+	Position   int    `json:"position" jsonschema:"Sort position among siblings."`
 }
 
 type productExtension struct {
@@ -146,20 +146,20 @@ func (e productExtension) MarshalJSON() ([]byte, error) {
 }
 
 type productPayload struct {
-	SKU                 string             `json:"sku"`
-	Name                string             `json:"name,omitempty"`
+	SKU                 string             `json:"sku" jsonschema:"Product SKU."`
+	Name                string             `json:"name,omitempty" jsonschema:"Display name."`
 	AttributeSetID      int                `json:"attribute_set_id,omitempty"`
 	TypeID              string             `json:"type_id,omitempty"`
 	Price               string             `json:"price,omitempty"`
 	Weight              string             `json:"weight,omitempty"`
-	Status              int                `json:"status,omitempty"`
+	Status              int                `json:"status,omitempty" jsonschema:"Current status."`
 	Visibility          int                `json:"visibility,omitempty"`
 	CustomAttributes    []productAttribute `json:"custom_attributes,omitempty"`
 	ExtensionAttributes *productExtension  `json:"extension_attributes,omitempty"`
 }
 
 type productWriteBody struct {
-	Product productPayload `json:"product"`
+	Product productPayload `json:"product" jsonschema:"The product that was created or read."`
 }
 
 // Create creates one product with POST /products and, when Quantity is set,

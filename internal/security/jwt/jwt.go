@@ -194,7 +194,7 @@ type tokenClaims struct {
 	jwtlib.RegisteredClaims
 	Roles      json.RawMessage `json:"roles"`
 	CommonName string          `json:"common_name"`
-	Type       string          `json:"type"`
+	Type       string          `json:"type" jsonschema:"Input control type."`
 }
 
 // decodeHeader reads alg and kid without verifying anything.
@@ -379,7 +379,7 @@ func (v *Verifier) fetch(ctx context.Context) (map[string]any, error) {
 type jsonWebKey struct {
 	Kty string `json:"kty"`
 	Kid string `json:"kid"`
-	Use string `json:"use"`
+	Use string `json:"use" jsonschema:"Replacement tool to use instead."`
 	N   string `json:"n"`
 	E   string `json:"e"`
 	Crv string `json:"crv"`

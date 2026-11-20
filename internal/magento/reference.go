@@ -13,7 +13,7 @@ import (
 
 // CustomerGroup is one customer group.
 type CustomerGroup struct {
-	ID         int    `json:"id"`
+	ID         int    `json:"id" jsonschema:"Magento entity id."`
 	Code       string `json:"code"`
 	TaxClassID int    `json:"tax_class_id"`
 }
@@ -37,7 +37,7 @@ func (s *Service) CustomerGroups(ctx context.Context) ([]CustomerGroup, error) {
 		return nil, err
 	}
 	var envelope struct {
-		Items []CustomerGroup `json:"items"`
+		Items []CustomerGroup `json:"items" jsonschema:"Entries returned by this call."`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable customer-group payload").WithCause(err)
@@ -60,7 +60,7 @@ func (s *Service) TaxClasses(ctx context.Context) ([]TaxClass, error) {
 		return nil, err
 	}
 	var envelope struct {
-		Items []TaxClass `json:"items"`
+		Items []TaxClass `json:"items" jsonschema:"Entries returned by this call."`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable tax-class payload").WithCause(err)
@@ -73,9 +73,9 @@ func (s *Service) TaxClasses(ctx context.Context) ([]TaxClass, error) {
 
 // StoreConfig is one Magento store view configuration.
 type StoreConfig struct {
-	ID               int    `json:"id"`
+	ID               int    `json:"id" jsonschema:"Magento entity id."`
 	Code             string `json:"code"`
-	WebsiteID        int    `json:"website_id"`
+	WebsiteID        int    `json:"website_id" jsonschema:"Website the entity belongs to."`
 	Locale           string `json:"locale"`
 	BaseCurrencyCode string `json:"base_currency_code"`
 	DisplayCurrency  string `json:"default_display_currency_code"`
@@ -104,11 +104,11 @@ func (s *Service) StoreConfigs(ctx context.Context) ([]StoreConfig, error) {
 
 // CategoryFlat is one category with its materialized path.
 type CategoryFlat struct {
-	ID       int    `json:"id"`
-	ParentID int    `json:"parent_id"`
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	Level    int    `json:"level"`
+	ID       int    `json:"id" jsonschema:"Magento entity id."`
+	ParentID int    `json:"parent_id" jsonschema:"Parent category id; 0 for the root."`
+	Name     string `json:"name" jsonschema:"Display name."`
+	Path     string `json:"path" jsonschema:"Full path of ids from the root."`
+	Level    int    `json:"level" jsonschema:"Depth in the tree; the root is 1."`
 }
 
 // FlatCategories flattens GET /categories into id → path rows.
@@ -121,10 +121,10 @@ func (s *Service) FlatCategories(ctx context.Context) ([]CategoryFlat, error) {
 		return nil, err
 	}
 	var root struct {
-		ID           int               `json:"id"`
-		ParentID     int               `json:"parent_id"`
-		Name         string            `json:"name"`
-		Level        int               `json:"level"`
+		ID           int               `json:"id" jsonschema:"Magento entity id."`
+		ParentID     int               `json:"parent_id" jsonschema:"Parent category id; 0 for the root."`
+		Name         string            `json:"name" jsonschema:"Display name."`
+		Level        int               `json:"level" jsonschema:"Depth in the tree; the root is 1."`
 		ChildrenData []json.RawMessage `json:"children_data"`
 	}
 	if err := json.Unmarshal(raw, &root); err != nil {
@@ -134,10 +134,10 @@ func (s *Service) FlatCategories(ctx context.Context) ([]CategoryFlat, error) {
 	var walk func(node json.RawMessage, parentPath string)
 	walk = func(node json.RawMessage, parentPath string) {
 		var n struct {
-			ID           int               `json:"id"`
-			ParentID     int               `json:"parent_id"`
-			Name         string            `json:"name"`
-			Level        int               `json:"level"`
+			ID           int               `json:"id" jsonschema:"Magento entity id."`
+			ParentID     int               `json:"parent_id" jsonschema:"Parent category id; 0 for the root."`
+			Name         string            `json:"name" jsonschema:"Display name."`
+			Level        int               `json:"level" jsonschema:"Depth in the tree; the root is 1."`
 			ChildrenData []json.RawMessage `json:"children_data"`
 		}
 		if err := json.Unmarshal(node, &n); err != nil {

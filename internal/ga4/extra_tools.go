@@ -37,9 +37,9 @@ type RealtimeInput struct {
 // RealtimeOutput is the structured result of ga4.analytics.realtime: rows plus
 // the property time zone and currency.
 type RealtimeOutput struct {
-	Rows     []TrafficRow `json:"rows"`
-	TimeZone string       `json:"time_zone"`
-	Currency string       `json:"currency"`
+	Rows     []TrafficRow `json:"rows" jsonschema:"Per-row results, in input order."`
+	TimeZone string       `json:"time_zone" jsonschema:"IANA time zone the report was computed in."`
+	Currency string       `json:"currency" jsonschema:"ISO 4217 code the amounts are expressed in."`
 }
 
 // RegisterExtra adds the capability-probe and realtime read-only tools to reg.
@@ -200,7 +200,7 @@ type EcommerceInput struct {
 
 // EcommerceOutput is the structured result of ga4.ecommerce.overview.
 type EcommerceOutput struct {
-	Overview *EcommerceOverview `json:"overview"`
+	Overview *EcommerceOverview `json:"overview" jsonschema:"Headline figures for the window."`
 }
 
 func newEcommerceTool(lookup serviceLookup) registry.Tool {
@@ -248,7 +248,7 @@ type ProductsInput struct {
 
 // ProductsOutput is the structured result of ga4.ecommerce.products.
 type ProductsOutput struct {
-	Performance *ProductPerformance `json:"performance"`
+	Performance *ProductPerformance `json:"performance" jsonschema:"Performance figures for the window."`
 }
 
 func newProductsTool(lookup serviceLookup) registry.Tool {

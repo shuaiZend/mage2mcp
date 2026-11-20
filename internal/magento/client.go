@@ -482,7 +482,7 @@ func (s *Service) ObserveOperation(ctx context.Context, operation, entityType, e
 			return observation, nil
 		}
 		var payload struct {
-			State string `json:"state"`
+			State string `json:"state" jsonschema:"Current state."`
 		}
 		if json.Unmarshal(raw, &payload) != nil {
 			return ObservationInconclusive, nil
@@ -508,8 +508,8 @@ func (s *Service) ObserveOperation(ctx context.Context, operation, entityType, e
 			return observation, nil
 		}
 		var payload struct {
-			Status string `json:"status"`
-			State  string `json:"state"`
+			Status string `json:"status" jsonschema:"Current status."`
+			State  string `json:"state" jsonschema:"Current state."`
 		}
 		if json.Unmarshal(raw, &payload) != nil {
 			return ObservationInconclusive, nil

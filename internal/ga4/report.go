@@ -79,8 +79,8 @@ func (m *Metadata) UnmarshalJSON(data []byte) error {
 // ReportResponse is a parsed properties.runReport response. Row and Metadata
 // decode themselves from the Data API JSON.
 type ReportResponse struct {
-	Rows     []Row    `json:"rows"`
-	Totals   []Row    `json:"totals"`
+	Rows     []Row    `json:"rows" jsonschema:"Per-row results, in input order."`
+	Totals   []Row    `json:"totals" jsonschema:"Totals across every row, computed by the store."`
 	RowCount int64    `json:"rowCount"`
 	Metadata Metadata `json:"metadata"`
 }
@@ -90,10 +90,10 @@ type ReportResponse struct {
 func (row *Row) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		DimensionValues []struct {
-			Value string `json:"value"`
+			Value string `json:"value" jsonschema:"Value of the entry."`
 		} `json:"dimensionValues"`
 		MetricValues []struct {
-			Value string `json:"value"`
+			Value string `json:"value" jsonschema:"Value of the entry."`
 		} `json:"metricValues"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
@@ -133,24 +133,24 @@ type TrafficQuery struct {
 
 // TrafficRow is one date row of a traffic report.
 type TrafficRow struct {
-	Date    string             `json:"date"`
-	Metrics map[string]float64 `json:"metrics"`
+	Date    string             `json:"date" jsonschema:"Calendar day, YYYY-MM-DD."`
+	Metrics map[string]float64 `json:"metrics" jsonschema:"Metrics the report returned."`
 }
 
 // ReportResult is the structured result of a traffic report. Totals are the
 // period aggregates computed by GA4; they are never the sum of Rows.
 type ReportResult struct {
-	Rows     []TrafficRow       `json:"rows"`
-	Totals   map[string]float64 `json:"totals"`
-	TimeZone string             `json:"time_zone"`
-	Currency string             `json:"currency"`
-	Sampled  bool               `json:"sampled"`
+	Rows     []TrafficRow       `json:"rows" jsonschema:"Per-row results, in input order."`
+	Totals   map[string]float64 `json:"totals" jsonschema:"Totals across every row, computed by the store."`
+	TimeZone string             `json:"time_zone" jsonschema:"IANA time zone the report was computed in."`
+	Currency string             `json:"currency" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	Sampled  bool               `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
 }
 
 // PropertyMetadata lists the dimension and metric API names of a property.
 type PropertyMetadata struct {
-	Dimensions []string `json:"dimensions"`
-	Metrics    []string `json:"metrics"`
+	Dimensions []string `json:"dimensions" jsonschema:"Dimensions the report was grouped by."`
+	Metrics    []string `json:"metrics" jsonschema:"Metrics the report returned."`
 }
 
 // Service is the GA4 reporting service for one configured property.
@@ -211,8 +211,8 @@ func (s *Service) Metadata(ctx context.Context) (*PropertyMetadata, error) {
 		return nil, err
 	}
 	var response struct {
-		Dimensions []metadataField `json:"dimensions"`
-		Metrics    []metadataField `json:"metrics"`
+		Dimensions []metadataField `json:"dimensions" jsonschema:"Dimensions the report was grouped by."`
+		Metrics    []metadataField `json:"metrics" jsonschema:"Metrics the report returned."`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "GA4 returned unreadable property metadata").WithOp(op).WithCause(err)

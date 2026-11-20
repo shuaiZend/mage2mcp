@@ -125,7 +125,7 @@ func TestDoSendsBearerAndDecodes(t *testing.T) {
 
 	client := mustClient(t, testConfig(server.URL))
 	var out struct {
-		OK bool `json:"ok"`
+		OK bool `json:"ok" jsonschema:"True when the call succeeded."`
 	}
 	if err := client.do(context.Background(), http.MethodGet, "/zones", nil, &out); err != nil {
 		t.Fatalf("do: %v", err)

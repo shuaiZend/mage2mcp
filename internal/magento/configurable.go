@@ -110,7 +110,7 @@ type ConfigurableProduct struct {
 
 	// Execution record. CreateConfigurable always sets it; GetConfigurable
 	// leaves it empty.
-	OperationID     string              `json:"operation_id,omitempty"`
+	OperationID     string              `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
 	Outcome         ConfigurableOutcome `json:"outcome,omitempty"`
 	Stages          []ConfigurableStage `json:"stages,omitempty"`
 	CompletedStages []string            `json:"completed_stages,omitempty"`
@@ -147,16 +147,16 @@ const (
 
 // ConfigurableStage is one ordered step of the create-configurable workflow.
 type ConfigurableStage struct {
-	Name   string                 `json:"name"`
-	State  ConfigurableStageState `json:"state"`
+	Name   string                 `json:"name" jsonschema:"Display name."`
+	State  ConfigurableStageState `json:"state" jsonschema:"Current state."`
 	Detail string                 `json:"detail,omitempty"`
 }
 
 type configurableOption struct {
 	AttributeID string                    `json:"attribute_id"`
-	Label       string                    `json:"label"`
-	Position    int                       `json:"position"`
-	Values      []configurableOptionValue `json:"values"`
+	Label       string                    `json:"label" jsonschema:"Label shown to the shopper."`
+	Position    int                       `json:"position" jsonschema:"Sort position among siblings."`
+	Values      []configurableOptionValue `json:"values" jsonschema:"Selectable values of this option."`
 }
 
 type configurableOptionValue struct {
@@ -164,7 +164,7 @@ type configurableOptionValue struct {
 }
 
 type configurableOptionBody struct {
-	Option configurableOption `json:"option"`
+	Option configurableOption `json:"option" jsonschema:"The option that was created or read."`
 }
 
 type configurableChildBody struct {
@@ -1069,19 +1069,19 @@ type VariationInput struct {
 
 // VariationRow is one variation's outcome.
 type VariationRow struct {
-	SKU    string `json:"sku"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	SKU    string `json:"sku" jsonschema:"Product SKU."`
+	Status string `json:"status" jsonschema:"Current status."`
+	Error  string `json:"error,omitempty" jsonschema:"Why the row failed."`
 }
 
 // VariationResult reports a partial-success variation creation.
 type VariationResult struct {
-	Total   int            `json:"total"`
-	Created int            `json:"created"`
-	Linked  int            `json:"linked"`
-	Skipped int            `json:"skipped"`
-	Failed  int            `json:"failed"`
-	Rows    []VariationRow `json:"rows"`
+	Total   int            `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Created int            `json:"created" jsonschema:"Rows that created a product."`
+	Linked  int            `json:"linked" jsonschema:"True when the child is now linked to the parent."`
+	Skipped int            `json:"skipped" jsonschema:"Rows skipped because the product existed."`
+	Failed  int            `json:"failed" jsonschema:"Rows that failed."`
+	Rows    []VariationRow `json:"rows" jsonschema:"Per-row results, in input order."`
 }
 
 // CreateVariations creates simple children for an existing configurable parent
@@ -1337,7 +1337,7 @@ func (s *Service) observeParentStock(ctx context.Context, children []ChildProduc
 func (s *Service) setParentStockStatus(ctx context.Context, sku string, productID int, inStock bool) error {
 	body := struct {
 		StockItem struct {
-			IsInStock bool `json:"is_in_stock"`
+			IsInStock bool `json:"is_in_stock" jsonschema:"True when the product is sellable at this source."`
 		} `json:"stockItem"`
 	}{}
 	body.StockItem.IsInStock = inStock

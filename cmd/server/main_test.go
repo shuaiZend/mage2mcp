@@ -230,7 +230,7 @@ type policyFixtureInput struct {
 }
 
 type policyFixtureOutput struct {
-	OK bool `json:"ok"`
+	OK bool `json:"ok" jsonschema:"True when the fixture call succeeded."`
 }
 
 // policyFixtureTool builds a stub with the same name and declared permission as

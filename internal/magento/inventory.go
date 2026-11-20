@@ -42,10 +42,10 @@ type SourceItem struct {
 
 // sourceItemPayload is one sourceItems entry of the MSI write body.
 type sourceItemPayload struct {
-	SKU        string `json:"sku"`
-	SourceCode string `json:"source_code"`
+	SKU        string `json:"sku" jsonschema:"Product SKU."`
+	SourceCode string `json:"source_code" jsonschema:"Inventory source code, for example default."`
 	Quantity   int    `json:"quantity"`
-	Status     int    `json:"status"`
+	Status     int    `json:"status" jsonschema:"Current status."`
 }
 
 // sourceItemsBody is the body of POST /inventory/source-items.
@@ -112,8 +112,8 @@ type SourceItemRef struct {
 
 // sourceItemRefPayload is one sourceItems entry of the MSI unassign body.
 type sourceItemRefPayload struct {
-	SKU        string `json:"sku"`
-	SourceCode string `json:"source_code"`
+	SKU        string `json:"sku" jsonschema:"Product SKU."`
+	SourceCode string `json:"source_code" jsonschema:"Inventory source code, for example default."`
 }
 
 // sourceItemsRefBody is the body of DELETE /inventory/source-items.
@@ -204,7 +204,7 @@ const (
 // returned together with a typed error that carries the same facts.
 type TransferResult struct {
 	TransferID string          `json:"transfer_id"`
-	SKU        string          `json:"sku"`
+	SKU        string          `json:"sku" jsonschema:"Product SKU."`
 	FromSource string          `json:"from_source"`
 	ToSource   string          `json:"to_source"`
 	Quantity   int             `json:"quantity"`
@@ -632,29 +632,29 @@ func (s *Service) LinkStockSource(ctx context.Context, stockID int, sourceCode s
 }
 
 type inventorySourceBody struct {
-	Source inventorySourcePayload `json:"source"`
+	Source inventorySourcePayload `json:"source" jsonschema:"Where the value came from."`
 }
 
 type inventorySourcePayload struct {
-	SourceCode string  `json:"source_code"`
-	Name       string  `json:"name"`
-	Enabled    bool    `json:"enabled"`
-	CountryID  string  `json:"country_id,omitempty"`
-	Region     string  `json:"region,omitempty"`
-	City       string  `json:"city,omitempty"`
-	Postcode   string  `json:"postcode,omitempty"`
-	Latitude   float64 `json:"latitude,omitempty"`
-	Longitude  float64 `json:"longitude,omitempty"`
+	SourceCode string  `json:"source_code" jsonschema:"Inventory source code, for example default."`
+	Name       string  `json:"name" jsonschema:"Display name."`
+	Enabled    bool    `json:"enabled" jsonschema:"True when the entry is enabled."`
+	CountryID  string  `json:"country_id,omitempty" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	Region     string  `json:"region,omitempty" jsonschema:"Region name."`
+	City       string  `json:"city,omitempty" jsonschema:"City or locality."`
+	Postcode   string  `json:"postcode,omitempty" jsonschema:"Postal code as the destination country writes it."`
+	Latitude   float64 `json:"latitude,omitempty" jsonschema:"Latitude of the source."`
+	Longitude  float64 `json:"longitude,omitempty" jsonschema:"Longitude of the source."`
 }
 
 type stockSourceLinkBody struct {
-	Links []stockSourceLink `json:"links"`
+	Links []stockSourceLink `json:"links" jsonschema:"Product relations of the requested kind."`
 }
 
 type stockSourceLink struct {
-	StockID    int    `json:"stock_id"`
-	SourceCode string `json:"source_code"`
-	Position   int    `json:"position"`
+	StockID    int    `json:"stock_id" jsonschema:"Inventory stock id; the default stock is 1."`
+	SourceCode string `json:"source_code" jsonschema:"Inventory source code, for example default."`
+	Position   int    `json:"position" jsonschema:"Sort position among siblings."`
 }
 
 // UnlinkStockSource detaches a source from a stock with

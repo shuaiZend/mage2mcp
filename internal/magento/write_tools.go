@@ -114,17 +114,17 @@ const (
 )
 
 type productCreateInput struct {
-	Instance       string            `json:"instance"`
-	SKU            string            `json:"sku"`
-	Name           string            `json:"name"`
+	Instance       string            `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU            string            `json:"sku" jsonschema:"Product SKU."`
+	Name           string            `json:"name" jsonschema:"Display name."`
 	AttributeSetID int               `json:"attribute_set_id"`
 	TypeID         string            `json:"type_id"`
 	Price          string            `json:"price"`
-	Status         int               `json:"status"`
+	Status         int               `json:"status" jsonschema:"Current status."`
 	Visibility     int               `json:"visibility"`
 	WebsiteIDs     []int             `json:"website_ids"`
 	CategoryIDs    []int             `json:"category_ids"`
-	Attributes     map[string]string `json:"attributes"`
+	Attributes     map[string]string `json:"attributes" jsonschema:"Attributes of the requested attribute set."`
 	Quantity       *int              `json:"quantity"`
 
 	Description      string `json:"description"`
@@ -155,13 +155,13 @@ func (in productCreateInput) toCreateInput() CreateProductInput {
 }
 
 type productUpdateInput struct {
-	Instance   string            `json:"instance"`
-	SKU        string            `json:"sku"`
-	Name       *string           `json:"name"`
+	Instance   string            `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU        string            `json:"sku" jsonschema:"Product SKU."`
+	Name       *string           `json:"name" jsonschema:"Display name."`
 	Price      *string           `json:"price"`
-	Status     *int              `json:"status"`
+	Status     *int              `json:"status" jsonschema:"Current status."`
 	Visibility *int              `json:"visibility"`
-	Attributes map[string]string `json:"attributes"`
+	Attributes map[string]string `json:"attributes" jsonschema:"Attributes of the requested attribute set."`
 
 	Description      *string `json:"description"`
 	ShortDescription *string `json:"short_description"`
@@ -183,18 +183,18 @@ type productUpdateInput struct {
 type variantAttributeInput struct {
 	AttributeID int                 `json:"attribute_id"`
 	Code        string              `json:"code"`
-	Values      []variantValueInput `json:"values"`
+	Values      []variantValueInput `json:"values" jsonschema:"Selectable values of this option."`
 }
 
 type variantValueInput struct {
 	ValueIndex int    `json:"value_index"`
-	Label      string `json:"label"`
+	Label      string `json:"label" jsonschema:"Label shown to the shopper."`
 }
 
 type childProductInput struct {
-	SKU        string            `json:"sku"`
-	Name       string            `json:"name"`
-	Attributes map[string]string `json:"attributes"`
+	SKU        string            `json:"sku" jsonschema:"Product SKU."`
+	Name       string            `json:"name" jsonschema:"Display name."`
+	Attributes map[string]string `json:"attributes" jsonschema:"Attributes of the requested attribute set."`
 	Price      string            `json:"price"`
 	Quantity   *int              `json:"quantity"`
 
@@ -214,33 +214,33 @@ type childProductInput struct {
 }
 
 type configurableCreateInput struct {
-	Instance          string                  `json:"instance"`
-	OperationID       string                  `json:"operation_id"`
+	Instance          string                  `json:"instance" jsonschema:"Configured instance id the result came from."`
+	OperationID       string                  `json:"operation_id" jsonschema:"Ledger operation id, for polling an unknown outcome."`
 	Parent            productCreateInput      `json:"parent"`
 	VariantAttributes []variantAttributeInput `json:"variant_attributes"`
-	Children          []childProductInput     `json:"children"`
+	Children          []childProductInput     `json:"children" jsonschema:"Variant children linked to the parent."`
 }
 
 type configurableAddChildInput struct {
-	Instance  string `json:"instance"`
-	ParentSKU string `json:"parent_sku"`
-	ChildSKU  string `json:"child_sku"`
+	Instance  string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	ParentSKU string `json:"parent_sku" jsonschema:"SKU of the configurable parent product."`
+	ChildSKU  string `json:"child_sku" jsonschema:"SKU of the variant child product."`
 }
 
 type inventoryAssignInput struct {
-	Instance string            `json:"instance"`
-	Items    []sourceItemInput `json:"items"`
+	Instance string            `json:"instance" jsonschema:"Configured instance id the result came from."`
+	Items    []sourceItemInput `json:"items" jsonschema:"Entries returned by this call."`
 }
 
 type sourceItemInput struct {
-	SKU        string `json:"sku"`
-	SourceCode string `json:"source_code"`
+	SKU        string `json:"sku" jsonschema:"Product SKU."`
+	SourceCode string `json:"source_code" jsonschema:"Inventory source code, for example default."`
 	Quantity   int    `json:"quantity"`
-	Status     *int   `json:"status"`
+	Status     *int   `json:"status" jsonschema:"Current status."`
 }
 
 type productWriteOutput struct {
-	Product Product `json:"product"`
+	Product Product `json:"product" jsonschema:"The product that was created or read."`
 }
 
 type configurableCreateOutput struct {
@@ -264,13 +264,13 @@ type configurableCreateOutput struct {
 }
 
 type configurableAddChildOutput struct {
-	ParentSKU string `json:"parent_sku"`
-	ChildSKU  string `json:"child_sku"`
-	Linked    bool   `json:"linked"`
+	ParentSKU string `json:"parent_sku" jsonschema:"SKU of the configurable parent product."`
+	ChildSKU  string `json:"child_sku" jsonschema:"SKU of the variant child product."`
+	Linked    bool   `json:"linked" jsonschema:"True when the child is now linked to the parent."`
 }
 
 type inventoryAssignOutput struct {
-	Assigned int `json:"assigned"`
+	Assigned int `json:"assigned" jsonschema:"True when the product is now assigned."`
 }
 
 // RegisterWrites adds the Magento write tools to reg. Every tool is a write that
@@ -687,15 +687,15 @@ const (
 )
 
 type importExecuteInput struct {
-	Instance       string `json:"instance"`
-	Format         string `json:"format"`
+	Instance       string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	Format         string `json:"format" jsonschema:"Payload encoding: csv or json."`
 	Data           string `json:"data_base64"`
 	UpdateExisting bool   `json:"update_existing"`
 	ConfirmationID string `json:"confirmation_id,omitempty"`
 }
 
 type importExecuteOutput struct {
-	Result *ImportResult `json:"result"`
+	Result *ImportResult `json:"result" jsonschema:"The operation result."`
 }
 
 const importExecuteSchema = `{
@@ -748,13 +748,13 @@ const (
 )
 
 type productDeleteInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
 }
 
 type productDeleteOutput struct {
-	SKU     string `json:"sku"`
-	Deleted bool   `json:"deleted"`
+	SKU     string `json:"sku" jsonschema:"Product SKU."`
+	Deleted bool   `json:"deleted" jsonschema:"True when the entry was removed."`
 }
 
 func destructiveToolMetadata(name, title, description, capability string) registry.Tool {
@@ -821,27 +821,27 @@ const (
 )
 
 type removeChildInput struct {
-	Instance  string `json:"instance"`
-	ParentSKU string `json:"parent_sku"`
-	ChildSKU  string `json:"child_sku"`
+	Instance  string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	ParentSKU string `json:"parent_sku" jsonschema:"SKU of the configurable parent product."`
+	ChildSKU  string `json:"child_sku" jsonschema:"SKU of the variant child product."`
 }
 
 type removeChildOutput struct {
-	ParentSKU string `json:"parent_sku"`
-	ChildSKU  string `json:"child_sku"`
-	Unlinked  bool   `json:"unlinked"`
+	ParentSKU string `json:"parent_sku" jsonschema:"SKU of the configurable parent product."`
+	ChildSKU  string `json:"child_sku" jsonschema:"SKU of the variant child product."`
+	Unlinked  bool   `json:"unlinked" jsonschema:"True when the child was removed from the parent."`
 }
 
 type unassignSourceItemsInput struct {
-	Instance string `json:"instance"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	Items    []struct {
-		SKU        string `json:"sku"`
-		SourceCode string `json:"source_code"`
-	} `json:"items"`
+		SKU        string `json:"sku" jsonschema:"Product SKU."`
+		SourceCode string `json:"source_code" jsonschema:"Inventory source code, for example default."`
+	} `json:"items" jsonschema:"Entries returned by this call."`
 }
 
 type unassignSourceItemsOutput struct {
-	Unassigned int `json:"unassigned"`
+	Unassigned int `json:"unassigned" jsonschema:"True when the source items were removed."`
 }
 
 func newRemoveChildTool(lookup serviceLookup) registry.Tool {
@@ -904,18 +904,18 @@ const (
 )
 
 type mediaUploadInput struct {
-	Instance   string   `json:"instance"`
-	SKU        string   `json:"sku"`
+	Instance   string   `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU        string   `json:"sku" jsonschema:"Product SKU."`
 	Filename   string   `json:"filename"`
 	MIMEType   string   `json:"mime_type"`
 	DataBase64 string   `json:"data_base64"`
-	Label      string   `json:"label"`
-	Position   int      `json:"position"`
-	Types      []string `json:"types"`
+	Label      string   `json:"label" jsonschema:"Label shown to the shopper."`
+	Position   int      `json:"position" jsonschema:"Sort position among siblings."`
+	Types      []string `json:"types" jsonschema:"Media roles available for the attribute set."`
 }
 
 type mediaUploadOutput struct {
-	Media MediaEntry `json:"media"`
+	Media MediaEntry `json:"media" jsonschema:"Gallery entry that was written."`
 }
 
 func newMediaUploadTool(lookup serviceLookup) registry.Tool {
@@ -962,14 +962,14 @@ const (
 )
 
 type invoiceCreateInput struct {
-	Instance       string `json:"instance"`
-	OrderID        int    `json:"order_id"`
+	Instance       string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	OrderID        int    `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	Capture        bool   `json:"capture"`
 	IdempotencyKey string `json:"idempotency_key"`
 	Items          []struct {
 		OrderItemID int     `json:"order_item_id"`
-		Qty         float64 `json:"qty"`
-	} `json:"items"`
+		Qty         float64 `json:"qty" jsonschema:"Quantity at this source."`
+	} `json:"items" jsonschema:"Entries returned by this call."`
 }
 
 type invoiceCreateOutput struct {
@@ -1052,24 +1052,24 @@ const (
 )
 
 type shipmentCreateInput struct {
-	Instance string               `json:"instance"`
-	OrderID  int                  `json:"order_id"`
-	Items    []InvoiceLine        `json:"items"`
-	Tracks   []ShipmentTrackInput `json:"tracks"`
+	Instance string               `json:"instance" jsonschema:"Configured instance id the result came from."`
+	OrderID  int                  `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+	Items    []InvoiceLine        `json:"items" jsonschema:"Entries returned by this call."`
+	Tracks   []ShipmentTrackInput `json:"tracks" jsonschema:"Tracking numbers attached to the shipment."`
 	Comment  string               `json:"comment"`
 	Notify   bool                 `json:"notify"`
 }
 
 type shipmentCreateOutput struct {
-	Shipment Shipment `json:"shipment"`
+	Shipment Shipment `json:"shipment" jsonschema:"The shipment that was created or read."`
 }
 
 type creditmemoCreateInput struct {
-	Instance           string        `json:"instance"`
-	OrderID            int           `json:"order_id"`
+	Instance           string        `json:"instance" jsonschema:"Configured instance id the result came from."`
+	OrderID            int           `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	InvoiceID          int           `json:"invoice_id"`
 	IdempotencyKey     string        `json:"idempotency_key"`
-	Items              []InvoiceLine `json:"items"`
+	Items              []InvoiceLine `json:"items" jsonschema:"Entries returned by this call."`
 	AdjustmentPositive float64       `json:"adjustment_positive"`
 	AdjustmentNegative float64       `json:"adjustment_negative"`
 	Comment            string        `json:"comment"`
@@ -1170,21 +1170,21 @@ const (
 )
 
 type orderCommentInput struct {
-	Instance string `json:"instance"`
-	OrderID  int    `json:"order_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	OrderID  int    `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	Comment  string `json:"comment"`
-	Status   string `json:"status"`
+	Status   string `json:"status" jsonschema:"Current status."`
 	Notify   bool   `json:"notify"`
 }
 
 type orderHoldInput struct {
-	Instance string `json:"instance"`
-	OrderID  int    `json:"order_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	OrderID  int    `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 }
 
 type orderActionOutput struct {
-	OrderID int  `json:"order_id"`
-	Applied bool `json:"applied"`
+	OrderID int  `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+	Applied bool `json:"applied" jsonschema:"True when the change was written."`
 }
 
 func newOrderCommentTool(lookup serviceLookup) registry.Tool {
@@ -1273,43 +1273,43 @@ const (
 )
 
 type categoryCreateInput struct {
-	Instance      string `json:"instance"`
-	ParentID      int    `json:"parent_id"`
-	Name          string `json:"name"`
+	Instance      string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	ParentID      int    `json:"parent_id" jsonschema:"Parent category id; 0 for the root."`
+	Name          string `json:"name" jsonschema:"Display name."`
 	URLKey        string `json:"url_key"`
-	IsActive      *bool  `json:"is_active"`
-	Position      int    `json:"position"`
-	IncludeInMenu *bool  `json:"include_in_menu"`
+	IsActive      *bool  `json:"is_active" jsonschema:"True when the entity is enabled."`
+	Position      int    `json:"position" jsonschema:"Sort position among siblings."`
+	IncludeInMenu *bool  `json:"include_in_menu" jsonschema:"True when the category appears in the navigation menu."`
 }
 
 type categoryCreateOutput struct {
-	Category Category `json:"category"`
+	Category Category `json:"category" jsonschema:"The category that was created or read."`
 }
 
 type categoryUpdateInput struct {
-	Instance      string  `json:"instance"`
-	CategoryID    int     `json:"category_id"`
-	Name          *string `json:"name"`
-	IsActive      *bool   `json:"is_active"`
-	Position      *int    `json:"position"`
-	IncludeInMenu *bool   `json:"include_in_menu"`
+	Instance      string  `json:"instance" jsonschema:"Configured instance id the result came from."`
+	CategoryID    int     `json:"category_id" jsonschema:"Magento category entity id."`
+	Name          *string `json:"name" jsonschema:"Display name."`
+	IsActive      *bool   `json:"is_active" jsonschema:"True when the entity is enabled."`
+	Position      *int    `json:"position" jsonschema:"Sort position among siblings."`
+	IncludeInMenu *bool   `json:"include_in_menu" jsonschema:"True when the category appears in the navigation menu."`
 }
 
 type categoryUpdateOutput struct {
-	Category Category `json:"category"`
+	Category Category `json:"category" jsonschema:"The category that was created or read."`
 }
 
 type categoryAssignInput struct {
-	Instance   string `json:"instance"`
-	CategoryID int    `json:"category_id"`
-	SKU        string `json:"sku"`
-	Position   int    `json:"position"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	CategoryID int    `json:"category_id" jsonschema:"Magento category entity id."`
+	SKU        string `json:"sku" jsonschema:"Product SKU."`
+	Position   int    `json:"position" jsonschema:"Sort position among siblings."`
 }
 
 type categoryAssignOutput struct {
-	CategoryID int    `json:"category_id"`
-	SKU        string `json:"sku"`
-	Assigned   bool   `json:"assigned"`
+	CategoryID int    `json:"category_id" jsonschema:"Magento category entity id."`
+	SKU        string `json:"sku" jsonschema:"Product SKU."`
+	Assigned   bool   `json:"assigned" jsonschema:"True when the product is now assigned."`
 }
 
 func newCategoryCreateTool(lookup serviceLookup) registry.Tool {
@@ -1409,18 +1409,18 @@ const (
 )
 
 type productLinkWriteInput struct {
-	Instance         string `json:"instance"`
-	SKU              string `json:"sku"`
-	LinkType         string `json:"link_type"`
-	LinkedProductSKU string `json:"linked_product_sku"`
-	Position         int    `json:"position"`
+	Instance         string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU              string `json:"sku" jsonschema:"Product SKU."`
+	LinkType         string `json:"link_type" jsonschema:"Relation kind: related, upsell or crosssell."`
+	LinkedProductSKU string `json:"linked_product_sku" jsonschema:"The other product in the relation."`
+	Position         int    `json:"position" jsonschema:"Sort position among siblings."`
 }
 
 type productLinkWriteOutput struct {
-	SKU              string `json:"sku"`
-	LinkType         string `json:"link_type"`
-	LinkedProductSKU string `json:"linked_product_sku"`
-	Applied          bool   `json:"applied"`
+	SKU              string `json:"sku" jsonschema:"Product SKU."`
+	LinkType         string `json:"link_type" jsonschema:"Relation kind: related, upsell or crosssell."`
+	LinkedProductSKU string `json:"linked_product_sku" jsonschema:"The other product in the relation."`
+	Applied          bool   `json:"applied" jsonschema:"True when the change was written."`
 }
 
 func newProductLinkAddTool(lookup serviceLookup) registry.Tool {
@@ -1487,7 +1487,7 @@ const (
 )
 
 type invoiceCaptureInput struct {
-	Instance       string `json:"instance"`
+	Instance       string `json:"instance" jsonschema:"Configured instance id the result came from."`
 	InvoiceID      int    `json:"invoice_id"`
 	IdempotencyKey string `json:"idempotency_key"`
 }
@@ -1500,13 +1500,13 @@ type invoiceCaptureOutput struct {
 }
 
 type orderEmailInput struct {
-	Instance string `json:"instance"`
-	OrderID  int    `json:"order_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	OrderID  int    `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 }
 
 type orderEmailOutput struct {
-	OrderID int  `json:"order_id"`
-	Sent    bool `json:"sent"`
+	OrderID int  `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+	Sent    bool `json:"sent" jsonschema:"True when the store accepted the request to send."`
 }
 
 func newInvoiceCaptureTool(lookup serviceLookup) registry.Tool {
@@ -1565,15 +1565,15 @@ const (
 )
 
 type mediaDeleteInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
-	MediaID  int    `json:"media_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
+	MediaID  int    `json:"media_id" jsonschema:"Gallery entry id."`
 }
 
 type mediaDeleteOutput struct {
-	SKU     string `json:"sku"`
-	MediaID int    `json:"media_id"`
-	Deleted bool   `json:"deleted"`
+	SKU     string `json:"sku" jsonschema:"Product SKU."`
+	MediaID int    `json:"media_id" jsonschema:"Gallery entry id."`
+	Deleted bool   `json:"deleted" jsonschema:"True when the entry was removed."`
 }
 
 func newMediaDeleteTool(lookup serviceLookup) registry.Tool {
@@ -1638,23 +1638,23 @@ const (
 )
 
 type orderAddressWire struct {
-	Firstname string   `json:"firstname"`
-	Lastname  string   `json:"lastname"`
-	Street    []string `json:"street"`
-	City      string   `json:"city"`
-	Postcode  string   `json:"postcode"`
-	CountryID string   `json:"country_id"`
-	Telephone string   `json:"telephone"`
-	Region    string   `json:"region"`
-	RegionID  int      `json:"region_id"`
+	Firstname string   `json:"firstname" jsonschema:"Given name."`
+	Lastname  string   `json:"lastname" jsonschema:"Family name."`
+	Street    []string `json:"street" jsonschema:"Street lines, most specific first."`
+	City      string   `json:"city" jsonschema:"City or locality."`
+	Postcode  string   `json:"postcode" jsonschema:"Postal code as the destination country writes it."`
+	CountryID string   `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	Telephone string   `json:"telephone" jsonschema:"Contact phone number."`
+	Region    string   `json:"region" jsonschema:"Region name."`
+	RegionID  int      `json:"region_id" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
 }
 
 type orderCreateInput struct {
-	Instance            string           `json:"instance"`
+	Instance            string           `json:"instance" jsonschema:"Configured instance id the result came from."`
 	CustomerID          int              `json:"customer_id"`
-	StoreID             int              `json:"store_id"`
+	StoreID             int              `json:"store_id" jsonschema:"Store view the entity belongs to."`
 	IdempotencyKey      string           `json:"idempotency_key"`
-	Items               []OrderItemInput `json:"items"`
+	Items               []OrderItemInput `json:"items" jsonschema:"Entries returned by this call."`
 	BillingAddress      orderAddressWire `json:"billing_address"`
 	ShippingAddress     orderAddressWire `json:"shipping_address"`
 	ShippingCarrierCode string           `json:"shipping_carrier_code"`
@@ -1723,21 +1723,21 @@ const (
 
 type tierPriceWire struct {
 	Price         float64 `json:"price"`
-	WebsiteID     int     `json:"website_id"`
+	WebsiteID     int     `json:"website_id" jsonschema:"Website the entity belongs to."`
 	CustomerGroup string  `json:"customer_group"`
 	Quantity      float64 `json:"quantity"`
 }
 
 type tierPricesSetInput struct {
-	Instance string          `json:"instance"`
-	SKU      string          `json:"sku"`
-	Prices   []tierPriceWire `json:"prices"`
+	Instance string          `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string          `json:"sku" jsonschema:"Product SKU."`
+	Prices   []tierPriceWire `json:"prices" jsonschema:"Tier prices now set on the product."`
 }
 
 type tierPricesSetOutput struct {
-	SKU    string `json:"sku"`
-	Prices int    `json:"prices"`
-	Set    bool   `json:"set"`
+	SKU    string `json:"sku" jsonschema:"Product SKU."`
+	Prices int    `json:"prices" jsonschema:"Tier prices now set on the product."`
+	Set    bool   `json:"set" jsonschema:"True when the values were written."`
 }
 
 func newTierPricesSetTool(lookup serviceLookup) registry.Tool {
@@ -1794,8 +1794,8 @@ const (
 )
 
 type inventoryTransferInput struct {
-	Instance   string `json:"instance"`
-	SKU        string `json:"sku"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU        string `json:"sku" jsonschema:"Product SKU."`
 	FromSource string `json:"from_source"`
 	ToSource   string `json:"to_source"`
 	Quantity   int    `json:"quantity"`
@@ -1876,30 +1876,30 @@ const (
 )
 
 type customerCreateWire struct {
-	Instance  string `json:"instance"`
-	Email     string `json:"email"`
-	Firstname string `json:"firstname"`
-	Lastname  string `json:"lastname"`
-	WebsiteID int    `json:"website_id"`
-	StoreID   int    `json:"store_id"`
-	GroupID   int    `json:"group_id"`
+	Instance  string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	Email     string `json:"email" jsonschema:"Customer email."`
+	Firstname string `json:"firstname" jsonschema:"Given name."`
+	Lastname  string `json:"lastname" jsonschema:"Family name."`
+	WebsiteID int    `json:"website_id" jsonschema:"Website the entity belongs to."`
+	StoreID   int    `json:"store_id" jsonschema:"Store view the entity belongs to."`
+	GroupID   int    `json:"group_id" jsonschema:"Customer group id, which decides pricing."`
 }
 
 type customerCreateOutput struct {
-	Customer Customer `json:"customer"`
+	Customer Customer `json:"customer" jsonschema:"The customer that was created or read."`
 }
 
 type customerUpdateWire struct {
-	Instance   string  `json:"instance"`
+	Instance   string  `json:"instance" jsonschema:"Configured instance id the result came from."`
 	CustomerID int     `json:"customer_id"`
-	Email      *string `json:"email"`
-	Firstname  *string `json:"firstname"`
-	Lastname   *string `json:"lastname"`
-	GroupID    *int    `json:"group_id"`
+	Email      *string `json:"email" jsonschema:"Customer email."`
+	Firstname  *string `json:"firstname" jsonschema:"Given name."`
+	Lastname   *string `json:"lastname" jsonschema:"Family name."`
+	GroupID    *int    `json:"group_id" jsonschema:"Customer group id, which decides pricing."`
 }
 
 type customerUpdateOutput struct {
-	Customer Customer `json:"customer"`
+	Customer Customer `json:"customer" jsonschema:"The customer that was created or read."`
 }
 
 func newCustomerCreateTool(lookup serviceLookup) registry.Tool {
@@ -1975,31 +1975,31 @@ const (
 )
 
 type mediaUpdateInput struct {
-	Instance string   `json:"instance"`
-	SKU      string   `json:"sku"`
-	MediaID  int      `json:"media_id"`
-	Label    *string  `json:"label"`
-	Position *int     `json:"position"`
-	Types    []string `json:"types"`
-	Disabled *bool    `json:"disabled"`
+	Instance string   `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string   `json:"sku" jsonschema:"Product SKU."`
+	MediaID  int      `json:"media_id" jsonschema:"Gallery entry id."`
+	Label    *string  `json:"label" jsonschema:"Label shown to the shopper."`
+	Position *int     `json:"position" jsonschema:"Sort position among siblings."`
+	Types    []string `json:"types" jsonschema:"Media roles available for the attribute set."`
+	Disabled *bool    `json:"disabled" jsonschema:"True when the entry is hidden in the storefront."`
 }
 
 type mediaUpdateOutput struct {
-	Media MediaEntry `json:"media"`
+	Media MediaEntry `json:"media" jsonschema:"Gallery entry that was written."`
 }
 
 type orderCancelInput struct {
-	Instance       string `json:"instance"`
-	OrderID        int    `json:"order_id"`
+	Instance       string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	OrderID        int    `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
 type orderCancelOutput struct {
-	OrderID     int    `json:"order_id"`
-	Canceled    bool   `json:"canceled"`
-	OperationID string `json:"operation_id,omitempty"`
-	Replayed    bool   `json:"replayed,omitempty"`
-	Reconciled  bool   `json:"reconciled,omitempty"`
+	OrderID     int    `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
+	Canceled    bool   `json:"canceled" jsonschema:"True when the order is now canceled."`
+	OperationID string `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
+	Replayed    bool   `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so nothing new happened."`
+	Reconciled  bool   `json:"reconciled,omitempty" jsonschema:"True when the result was confirmed by reading the store back rather than by its response."`
 }
 
 func newMediaUpdateTool(lookup serviceLookup) registry.Tool {
@@ -2067,13 +2067,13 @@ const (
 )
 
 type attributeOptionCreateInput struct {
-	Instance      string `json:"instance"`
-	AttributeCode string `json:"attribute_code"`
-	Label         string `json:"label"`
+	Instance      string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	AttributeCode string `json:"attribute_code" jsonschema:"Attribute code, not its id or label."`
+	Label         string `json:"label" jsonschema:"Label shown to the shopper."`
 }
 
 type attributeOptionCreateOutput struct {
-	Option AttributeOption `json:"option"`
+	Option AttributeOption `json:"option" jsonschema:"The option that was created or read."`
 }
 
 func newAttributeOptionCreateTool(lookup serviceLookup) registry.Tool {
@@ -2110,15 +2110,15 @@ const (
 )
 
 type attributeOptionDeleteInput struct {
-	Instance      string `json:"instance"`
-	AttributeCode string `json:"attribute_code"`
-	OptionID      int    `json:"option_id"`
+	Instance      string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	AttributeCode string `json:"attribute_code" jsonschema:"Attribute code, not its id or label."`
+	OptionID      int    `json:"option_id" jsonschema:"Custom option id."`
 }
 
 type attributeOptionDeleteOutput struct {
-	AttributeCode string `json:"attribute_code"`
-	OptionID      int    `json:"option_id"`
-	Deleted       bool   `json:"deleted"`
+	AttributeCode string `json:"attribute_code" jsonschema:"Attribute code, not its id or label."`
+	OptionID      int    `json:"option_id" jsonschema:"Custom option id."`
+	Deleted       bool   `json:"deleted" jsonschema:"True when the entry was removed."`
 }
 
 func newAttributeOptionDeleteTool(lookup serviceLookup) registry.Tool {
@@ -2159,15 +2159,15 @@ const (
 )
 
 type bulkProductUpdateInput struct {
-	Instance   string            `json:"instance"`
+	Instance   string            `json:"instance" jsonschema:"Configured instance id the result came from."`
 	SKUs       []string          `json:"skus"`
-	Status     *int              `json:"status"`
+	Status     *int              `json:"status" jsonschema:"Current status."`
 	Visibility *int              `json:"visibility"`
-	Attributes map[string]string `json:"attributes"`
+	Attributes map[string]string `json:"attributes" jsonschema:"Attributes of the requested attribute set."`
 }
 
 type bulkProductUpdateOutput struct {
-	Result BulkUpdateResult `json:"result"`
+	Result BulkUpdateResult `json:"result" jsonschema:"The operation result."`
 }
 
 func newBulkProductUpdateTool(lookup serviceLookup) registry.Tool {
@@ -2206,13 +2206,13 @@ const (
 )
 
 type categoryDeleteInput struct {
-	Instance   string `json:"instance"`
-	CategoryID int    `json:"category_id"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	CategoryID int    `json:"category_id" jsonschema:"Magento category entity id."`
 }
 
 type categoryDeleteOutput struct {
-	CategoryID int  `json:"category_id"`
-	Deleted    bool `json:"deleted"`
+	CategoryID int  `json:"category_id" jsonschema:"Magento category entity id."`
+	Deleted    bool `json:"deleted" jsonschema:"True when the entry was removed."`
 }
 
 func newCategoryDeleteTool(lookup serviceLookup) registry.Tool {
@@ -2269,33 +2269,33 @@ const (
 )
 
 type customerAddressCreateInput struct {
-	Instance        string   `json:"instance"`
+	Instance        string   `json:"instance" jsonschema:"Configured instance id the result came from."`
 	CustomerID      int      `json:"customer_id"`
-	Firstname       string   `json:"firstname"`
-	Lastname        string   `json:"lastname"`
-	Street          []string `json:"street"`
-	City            string   `json:"city"`
-	Postcode        string   `json:"postcode"`
-	CountryID       string   `json:"country_id"`
-	Telephone       string   `json:"telephone"`
-	Region          string   `json:"region"`
-	RegionID        int      `json:"region_id"`
-	DefaultBilling  bool     `json:"default_billing"`
-	DefaultShipping bool     `json:"default_shipping"`
+	Firstname       string   `json:"firstname" jsonschema:"Given name."`
+	Lastname        string   `json:"lastname" jsonschema:"Family name."`
+	Street          []string `json:"street" jsonschema:"Street lines, most specific first."`
+	City            string   `json:"city" jsonschema:"City or locality."`
+	Postcode        string   `json:"postcode" jsonschema:"Postal code as the destination country writes it."`
+	CountryID       string   `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	Telephone       string   `json:"telephone" jsonschema:"Contact phone number."`
+	Region          string   `json:"region" jsonschema:"Region name."`
+	RegionID        int      `json:"region_id" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
+	DefaultBilling  bool     `json:"default_billing" jsonschema:"True when this is the default billing address."`
+	DefaultShipping bool     `json:"default_shipping" jsonschema:"True when this is the default shipping address."`
 }
 
 type customerAddressCreateOutput struct {
-	Address CustomerAddress `json:"address"`
+	Address CustomerAddress `json:"address" jsonschema:"The customer address that was written."`
 }
 
 type customerAddressDeleteInput struct {
-	Instance  string `json:"instance"`
-	AddressID int    `json:"address_id"`
+	Instance  string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	AddressID int    `json:"address_id" jsonschema:"Customer address id."`
 }
 
 type customerAddressDeleteOutput struct {
-	AddressID int  `json:"address_id"`
-	Deleted   bool `json:"deleted"`
+	AddressID int  `json:"address_id" jsonschema:"Customer address id."`
+	Deleted   bool `json:"deleted" jsonschema:"True when the entry was removed."`
 }
 
 func newCustomerAddressCreateTool(lookup serviceLookup) registry.Tool {
@@ -2370,24 +2370,24 @@ const (
 )
 
 type customerAddressUpdateInput struct {
-	Instance        string    `json:"instance"`
+	Instance        string    `json:"instance" jsonschema:"Configured instance id the result came from."`
 	CustomerID      int       `json:"customer_id"`
-	AddressID       int       `json:"address_id"`
-	Firstname       *string   `json:"firstname"`
-	Lastname        *string   `json:"lastname"`
-	Street          *[]string `json:"street"`
-	City            *string   `json:"city"`
-	Postcode        *string   `json:"postcode"`
-	CountryID       *string   `json:"country_id"`
-	Telephone       *string   `json:"telephone"`
-	Region          *string   `json:"region"`
-	RegionID        *int      `json:"region_id"`
-	DefaultBilling  *bool     `json:"default_billing"`
-	DefaultShipping *bool     `json:"default_shipping"`
+	AddressID       int       `json:"address_id" jsonschema:"Customer address id."`
+	Firstname       *string   `json:"firstname" jsonschema:"Given name."`
+	Lastname        *string   `json:"lastname" jsonschema:"Family name."`
+	Street          *[]string `json:"street" jsonschema:"Street lines, most specific first."`
+	City            *string   `json:"city" jsonschema:"City or locality."`
+	Postcode        *string   `json:"postcode" jsonschema:"Postal code as the destination country writes it."`
+	CountryID       *string   `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	Telephone       *string   `json:"telephone" jsonschema:"Contact phone number."`
+	Region          *string   `json:"region" jsonschema:"Region name."`
+	RegionID        *int      `json:"region_id" jsonschema:"Numeric region id; Magento requires it for countries with a region directory."`
+	DefaultBilling  *bool     `json:"default_billing" jsonschema:"True when this is the default billing address."`
+	DefaultShipping *bool     `json:"default_shipping" jsonschema:"True when this is the default shipping address."`
 }
 
 type customerAddressUpdateOutput struct {
-	Address CustomerAddress `json:"address"`
+	Address CustomerAddress `json:"address" jsonschema:"The customer address that was written."`
 }
 
 func newCustomerAddressUpdateTool(lookup serviceLookup) registry.Tool {
@@ -2431,15 +2431,15 @@ const (
 )
 
 type bulkLinkInput struct {
-	Instance   string   `json:"instance"`
-	SKU        string   `json:"sku"`
-	LinkType   string   `json:"link_type"`
-	Action     string   `json:"action"`
+	Instance   string   `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU        string   `json:"sku" jsonschema:"Product SKU."`
+	LinkType   string   `json:"link_type" jsonschema:"Relation kind: related, upsell or crosssell."`
+	Action     string   `json:"action" jsonschema:"create, update or skipped."`
 	LinkedSKUs []string `json:"linked_skus"`
 }
 
 type bulkLinkOutput struct {
-	Result LinkBulkResult `json:"result"`
+	Result LinkBulkResult `json:"result" jsonschema:"The operation result."`
 }
 
 func newBulkLinkTool(lookup serviceLookup) registry.Tool {
@@ -2478,13 +2478,13 @@ const (
 )
 
 type bulkOptionCreateInput struct {
-	Instance      string   `json:"instance"`
-	AttributeCode string   `json:"attribute_code"`
+	Instance      string   `json:"instance" jsonschema:"Configured instance id the result came from."`
+	AttributeCode string   `json:"attribute_code" jsonschema:"Attribute code, not its id or label."`
 	Labels        []string `json:"labels"`
 }
 
 type bulkOptionCreateOutput struct {
-	Result OptionBulkResult `json:"result"`
+	Result OptionBulkResult `json:"result" jsonschema:"The operation result."`
 }
 
 func newBulkOptionCreateTool(lookup serviceLookup) registry.Tool {
@@ -2555,14 +2555,14 @@ const (
 )
 
 type documentEmailInput struct {
-	Instance   string `json:"instance"`
-	DocumentID int    `json:"document_id"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	DocumentID int    `json:"document_id" jsonschema:"Document entity id that was emailed."`
 }
 
 type documentEmailOutput struct {
-	DocumentID int    `json:"document_id"`
-	Kind       string `json:"kind"`
-	Sent       bool   `json:"sent"`
+	DocumentID int    `json:"document_id" jsonschema:"Document entity id that was emailed."`
+	Kind       string `json:"kind" jsonschema:"Kind of the entry."`
+	Sent       bool   `json:"sent" jsonschema:"True when the store accepted the request to send."`
 }
 
 func newDocumentEmailTools(lookup serviceLookup) []registry.Tool {
@@ -2624,33 +2624,33 @@ const (
 )
 
 type inventorySourceCreateInput struct {
-	Instance   string  `json:"instance"`
-	SourceCode string  `json:"source_code"`
-	Name       string  `json:"name"`
-	Enabled    bool    `json:"enabled"`
-	CountryID  string  `json:"country_id"`
-	Region     string  `json:"region"`
-	City       string  `json:"city"`
-	Postcode   string  `json:"postcode"`
-	Latitude   float64 `json:"latitude"`
-	Longitude  float64 `json:"longitude"`
+	Instance   string  `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SourceCode string  `json:"source_code" jsonschema:"Inventory source code, for example default."`
+	Name       string  `json:"name" jsonschema:"Display name."`
+	Enabled    bool    `json:"enabled" jsonschema:"True when the entry is enabled."`
+	CountryID  string  `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	Region     string  `json:"region" jsonschema:"Region name."`
+	City       string  `json:"city" jsonschema:"City or locality."`
+	Postcode   string  `json:"postcode" jsonschema:"Postal code as the destination country writes it."`
+	Latitude   float64 `json:"latitude" jsonschema:"Latitude of the source."`
+	Longitude  float64 `json:"longitude" jsonschema:"Longitude of the source."`
 }
 
 type inventorySourceCreateOutput struct {
-	Source InventorySource `json:"source"`
+	Source InventorySource `json:"source" jsonschema:"Where the value came from."`
 }
 
 type stockSourceLinkInput struct {
-	Instance   string `json:"instance"`
-	StockID    int    `json:"stock_id"`
-	SourceCode string `json:"source_code"`
-	Position   int    `json:"position"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	StockID    int    `json:"stock_id" jsonschema:"Inventory stock id; the default stock is 1."`
+	SourceCode string `json:"source_code" jsonschema:"Inventory source code, for example default."`
+	Position   int    `json:"position" jsonschema:"Sort position among siblings."`
 }
 
 type stockSourceLinkOutput struct {
-	StockID    int    `json:"stock_id"`
-	SourceCode string `json:"source_code"`
-	Linked     bool   `json:"linked"`
+	StockID    int    `json:"stock_id" jsonschema:"Inventory stock id; the default stock is 1."`
+	SourceCode string `json:"source_code" jsonschema:"Inventory source code, for example default."`
+	Linked     bool   `json:"linked" jsonschema:"True when the child is now linked to the parent."`
 }
 
 func newInventorySourceCreateTool(lookup serviceLookup) registry.Tool {
@@ -2711,15 +2711,15 @@ const (
 )
 
 type stockSourceUnlinkInput struct {
-	Instance   string `json:"instance"`
-	StockID    int    `json:"stock_id"`
-	SourceCode string `json:"source_code"`
+	Instance   string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	StockID    int    `json:"stock_id" jsonschema:"Inventory stock id; the default stock is 1."`
+	SourceCode string `json:"source_code" jsonschema:"Inventory source code, for example default."`
 }
 
 type stockSourceUnlinkOutput struct {
-	StockID    int    `json:"stock_id"`
-	SourceCode string `json:"source_code"`
-	Unlinked   bool   `json:"unlinked"`
+	StockID    int    `json:"stock_id" jsonschema:"Inventory stock id; the default stock is 1."`
+	SourceCode string `json:"source_code" jsonschema:"Inventory source code, for example default."`
+	Unlinked   bool   `json:"unlinked" jsonschema:"True when the child was removed from the parent."`
 }
 
 func newStockSourceUnlinkTool(lookup serviceLookup) registry.Tool {
@@ -2762,19 +2762,19 @@ const (
 )
 
 type variationWire struct {
-	SKU        string            `json:"sku"`
-	Name       string            `json:"name"`
-	Attributes map[string]string `json:"attributes"`
+	SKU        string            `json:"sku" jsonschema:"Product SKU."`
+	Name       string            `json:"name" jsonschema:"Display name."`
+	Attributes map[string]string `json:"attributes" jsonschema:"Attributes of the requested attribute set."`
 }
 
 type createVariationsInput struct {
-	Instance  string          `json:"instance"`
-	ParentSKU string          `json:"parent_sku"`
+	Instance  string          `json:"instance" jsonschema:"Configured instance id the result came from."`
+	ParentSKU string          `json:"parent_sku" jsonschema:"SKU of the configurable parent product."`
 	Variants  []variationWire `json:"variants"`
 }
 
 type createVariationsOutput struct {
-	Result VariationResult `json:"result"`
+	Result VariationResult `json:"result" jsonschema:"The operation result."`
 }
 
 func newCreateVariationsTool(lookup serviceLookup) registry.Tool {
@@ -2823,21 +2823,21 @@ const (
 
 type configurableOptionWire struct {
 	AttributeID int    `json:"attribute_id"`
-	Label       string `json:"label"`
-	Position    int    `json:"position"`
-	Values      []int  `json:"values"`
+	Label       string `json:"label" jsonschema:"Label shown to the shopper."`
+	Position    int    `json:"position" jsonschema:"Sort position among siblings."`
+	Values      []int  `json:"values" jsonschema:"Selectable values of this option."`
 }
 
 type setConfigurableOptionsInput struct {
-	Instance string                   `json:"instance"`
-	SKU      string                   `json:"sku"`
-	Options  []configurableOptionWire `json:"options"`
+	Instance string                   `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string                   `json:"sku" jsonschema:"Product SKU."`
+	Options  []configurableOptionWire `json:"options" jsonschema:"Custom options of the product."`
 }
 
 type setConfigurableOptionsOutput struct {
-	SKU     string `json:"sku"`
-	Options int    `json:"options"`
-	Set     bool   `json:"set"`
+	SKU     string `json:"sku" jsonschema:"Product SKU."`
+	Options int    `json:"options" jsonschema:"Custom options of the product."`
+	Set     bool   `json:"set" jsonschema:"True when the values were written."`
 }
 
 func newSetConfigurableOptionsTool(lookup serviceLookup) registry.Tool {
@@ -2886,25 +2886,25 @@ const (
 )
 
 type customOptionValueWire struct {
-	Title     string  `json:"title"`
+	Title     string  `json:"title" jsonschema:"Display title for this entry."`
 	Price     float64 `json:"price"`
 	PriceType string  `json:"price_type"`
-	SKU       string  `json:"sku"`
-	SortOrder int     `json:"sort_order"`
+	SKU       string  `json:"sku" jsonschema:"Product SKU."`
+	SortOrder int     `json:"sort_order" jsonschema:"Sort position among siblings."`
 }
 
 type productOptionCreateInput struct {
-	Instance  string                  `json:"instance"`
-	SKU       string                  `json:"sku"`
-	Title     string                  `json:"title"`
-	Type      string                  `json:"type"`
-	IsRequire bool                    `json:"is_require"`
-	SortOrder int                     `json:"sort_order"`
-	Values    []customOptionValueWire `json:"values"`
+	Instance  string                  `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU       string                  `json:"sku" jsonschema:"Product SKU."`
+	Title     string                  `json:"title" jsonschema:"Display title for this entry."`
+	Type      string                  `json:"type" jsonschema:"Input control type."`
+	IsRequire bool                    `json:"is_require" jsonschema:"True when the shopper must choose this option."`
+	SortOrder int                     `json:"sort_order" jsonschema:"Sort position among siblings."`
+	Values    []customOptionValueWire `json:"values" jsonschema:"Selectable values of this option."`
 }
 
 type productOptionCreateOutput struct {
-	Option ProductOption `json:"option"`
+	Option ProductOption `json:"option" jsonschema:"The option that was created or read."`
 }
 
 func newProductOptionCreateTool(lookup serviceLookup) registry.Tool {
@@ -2965,30 +2965,30 @@ const (
 )
 
 type productOptionUpdateInput struct {
-	Instance  string                  `json:"instance"`
-	SKU       string                  `json:"sku"`
-	OptionID  int                     `json:"option_id"`
-	Title     string                  `json:"title"`
-	Type      string                  `json:"type"`
-	IsRequire bool                    `json:"is_require"`
-	SortOrder int                     `json:"sort_order"`
-	Values    []customOptionValueWire `json:"values"`
+	Instance  string                  `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU       string                  `json:"sku" jsonschema:"Product SKU."`
+	OptionID  int                     `json:"option_id" jsonschema:"Custom option id."`
+	Title     string                  `json:"title" jsonschema:"Display title for this entry."`
+	Type      string                  `json:"type" jsonschema:"Input control type."`
+	IsRequire bool                    `json:"is_require" jsonschema:"True when the shopper must choose this option."`
+	SortOrder int                     `json:"sort_order" jsonschema:"Sort position among siblings."`
+	Values    []customOptionValueWire `json:"values" jsonschema:"Selectable values of this option."`
 }
 
 type productOptionUpdateOutput struct {
-	Option ProductOption `json:"option"`
+	Option ProductOption `json:"option" jsonschema:"The option that was created or read."`
 }
 
 type productOptionDeleteInput struct {
-	Instance string `json:"instance"`
-	SKU      string `json:"sku"`
-	OptionID int    `json:"option_id"`
+	Instance string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
+	OptionID int    `json:"option_id" jsonschema:"Custom option id."`
 }
 
 type productOptionDeleteOutput struct {
-	SKU      string `json:"sku"`
-	OptionID int    `json:"option_id"`
-	Deleted  bool   `json:"deleted"`
+	SKU      string `json:"sku" jsonschema:"Product SKU."`
+	OptionID int    `json:"option_id" jsonschema:"Custom option id."`
+	Deleted  bool   `json:"deleted" jsonschema:"True when the entry was removed."`
 }
 
 func newProductOptionUpdateTool(lookup serviceLookup) registry.Tool {

@@ -56,22 +56,22 @@ var ErrNotCancelable = errors.New("jobs: task is not cancelable")
 
 // JobRecord is a read-only view of a persisted job.
 type JobRecord struct {
-	ID string `json:"id"`
+	ID string `json:"id" jsonschema:"Import batch id."`
 	// InstanceID is the tenant the job is attributed to. It is empty only for
 	// platform-scoped jobs.
-	InstanceID  string          `json:"instance_id,omitempty"`
-	Kind        string          `json:"kind"`
-	State       string          `json:"state"`
-	Attempts    int             `json:"attempts"`
-	MaxAttempts int             `json:"max_attempts"`
-	ErrorCode   string          `json:"error_code,omitempty"`
-	Result      string          `json:"result,omitempty"`
+	InstanceID  string          `json:"instance_id,omitempty" jsonschema:"Configured instance the import ran against."`
+	Kind        string          `json:"kind" jsonschema:"Kind of the entry."`
+	State       string          `json:"state" jsonschema:"queued, running, succeeded, partial, failed or cancelled."`
+	Attempts    int             `json:"attempts" jsonschema:"How many times the job has run."`
+	MaxAttempts int             `json:"max_attempts" jsonschema:"How many attempts the job is allowed."`
+	ErrorCode   string          `json:"error_code,omitempty" jsonschema:"Taxonomy code of the failure, when there is one."`
+	Result      string          `json:"result,omitempty" jsonschema:"The operation result."`
 	Payload     json.RawMessage `json:"-"`
-	CreatedAt   time.Time       `json:"created_at"`
-	FinishedAt  *time.Time      `json:"finished_at,omitempty"`
+	CreatedAt   time.Time       `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	FinishedAt  *time.Time      `json:"finished_at,omitempty" jsonschema:"When the job reached a terminal state."`
 	// CancelRequested is true while a running task has been asked to stop but has
 	// not yet reached a terminal state.
-	CancelRequested bool `json:"cancel_requested,omitempty"`
+	CancelRequested bool `json:"cancel_requested,omitempty" jsonschema:"True when a cancel was requested and the job has not stopped yet."`
 }
 
 // NoopPayload is a liveness task used to verify the queue end to end.
@@ -479,25 +479,25 @@ type ImportBatchResult struct {
 
 // ImportBatch is the persisted state of one asynchronous import.
 type ImportBatch struct {
-	ID         string               `json:"id"`
-	InstanceID string               `json:"instance_id"`
-	JobID      string               `json:"job_id,omitempty"`
-	Format     string               `json:"format"`
-	State      string               `json:"state"`
-	Total      int                  `json:"total"`
-	Processed  int                  `json:"processed"`
-	Created    int                  `json:"created"`
-	Updated    int                  `json:"updated"`
-	Skipped    int                  `json:"skipped"`
-	Failed     int                  `json:"failed"`
-	ErrorCode  string               `json:"error_code,omitempty"`
-	Failures   []ImportBatchFailure `json:"failures,omitempty"`
+	ID         string               `json:"id" jsonschema:"Magento entity id."`
+	InstanceID string               `json:"instance_id" jsonschema:"Configured instance the result came from."`
+	JobID      string               `json:"job_id,omitempty" jsonschema:"Import job id, used by import.status and import.batch."`
+	Format     string               `json:"format" jsonschema:"Payload encoding: csv or json."`
+	State      string               `json:"state" jsonschema:"Current state."`
+	Total      int                  `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Processed  int                  `json:"processed" jsonschema:"Rows processed so far."`
+	Created    int                  `json:"created" jsonschema:"Rows that created a product."`
+	Updated    int                  `json:"updated" jsonschema:"Rows that updated a product."`
+	Skipped    int                  `json:"skipped" jsonschema:"Rows skipped because the product existed."`
+	Failed     int                  `json:"failed" jsonschema:"Rows that failed."`
+	ErrorCode  string               `json:"error_code,omitempty" jsonschema:"Taxonomy code of the failure, when there is one."`
+	Failures   []ImportBatchFailure `json:"failures,omitempty" jsonschema:"Per-row failures, bounded by the report cap."`
 }
 
 // ImportBatchFailure is one failed row persisted for resume.
 type ImportBatchFailure struct {
-	RowNumber int    `json:"row_number"`
-	SKU       string `json:"sku"`
-	Action    string `json:"action"`
-	Error     string `json:"error"`
+	RowNumber int    `json:"row_number" jsonschema:"1-based row number in the import payload."`
+	SKU       string `json:"sku" jsonschema:"Product SKU."`
+	Action    string `json:"action" jsonschema:"create, update or skipped."`
+	Error     string `json:"error" jsonschema:"Why the row failed."`
 }

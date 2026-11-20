@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -103,6 +104,51 @@ func ValidateSchema(t *mcp.Tool) error {
 	}
 	if _, err := schema.Resolve(nil); err != nil {
 		return fmt.Errorf("tool %q input schema does not resolve: %w", t.Name, err)
+	}
+	if err := requireDescribedOutput(t.Name, t.OutputSchema); err != nil {
+		return err
+	}
+	return nil
+}
+
+// requireDescribedOutput rejects an output schema whose properties carry no
+// description.
+//
+// The output schema is the only thing an agent sees when it reads a result, so an
+// undocumented property is a field it has to guess at — and the guesses that matter
+// are flags like `replayed` or `outcome`, where a wrong reading changes what the
+// caller does next. This is checked at registration so a new output type cannot
+// ship undescribed.
+func requireDescribedOutput(name string, output any) error {
+	if output == nil {
+		return nil
+	}
+	raw, err := json.Marshal(output)
+	if err != nil {
+		return fmt.Errorf("tool %q output schema is not JSON: %w", name, err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("tool %q output schema is not a JSON object: %w", name, err)
+	}
+	return requireDescribedNode(name, doc, "root")
+}
+
+// requireDescribedNode walks an output schema and fails on the first property
+// without a description.
+func requireDescribedNode(name string, node map[string]any, path string) error {
+	props, _ := node["properties"].(map[string]any)
+	for key, value := range props {
+		child, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if description, _ := child["description"].(string); strings.TrimSpace(description) == "" {
+			return fmt.Errorf("tool %q output schema %s.%s has no description", name, path, key)
+		}
+		if err := requireDescribedNode(name, child, path+"."+key); err != nil {
+			return err
+		}
 	}
 	return nil
 }
