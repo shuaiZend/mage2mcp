@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `magento.orders.geography` sends the created_at lower and upper bounds in
+  separate filter groups. The production instance drops a group containing two
+  conditions on the same field, which made every window return the full order
+  collection. Page size is now 500 to cut the number of requests.
+
 ## [0.7.4] - 2026-11-20
 
 Patch release: geography truncation is reported accurately with the available

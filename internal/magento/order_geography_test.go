@@ -15,7 +15,12 @@ import (
 func TestOrderGeography(t *testing.T) {
 	var pages []string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		pages = append(pages, r.URL.Query().Get("searchCriteria[currentPage]"))
+		q := r.URL.Query()
+		if q.Get("searchCriteria[filter_groups][0][filters][0][condition_type]") != "gteq" ||
+			q.Get("searchCriteria[filter_groups][1][filters][0][condition_type]") != "lt" {
+			t.Errorf("filters not split into separate groups: %v", q)
+		}
+		pages = append(pages, q.Get("searchCriteria[currentPage]"))
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("searchCriteria[currentPage]") == "1" {
 			_, _ = w.Write([]byte(`{"total_count":3,"items":[
