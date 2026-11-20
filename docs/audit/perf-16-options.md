@@ -23,16 +23,21 @@ failed" would become nondeterministic, which is worse than slow.
 |---|---|---|---|
 | **A** | Leave it sequential; keep the fail-fast contract | None | A 50-child create stays at ~152 requests (~12 s at 80 ms RTT), inside the 60 s tool budget |
 | **B** | Parallelise children, change the error contract to carry a list of failures with their SKUs | New `failed_children` field, new compensation semantics, and every existing test of the partial path changes | Medium-high. The compensation story is the reason `orphan_skus` exists; making failures plural means the caller must reason about several orphans at once |
-| **C** | Parallelise only the **link** stage (children stay sequential) | One stage, no contract change: links are independent and a failed link already names its child | Low. Saves ~50 round-trips at the 50-child maximum |
+| **C** | Parallelise only the **link** stage (children stay sequential) | One stage | **Not actually low risk.** This option was recommended in an earlier revision on the reading that links are independent. Re-reading the code: the link stage also fails fast and reports one `failedLink`, and it follows the links with a verification read that the whole stage depends on. Parallelising it makes "which link failed" nondeterministic in exactly the same way as the children stage, for a smaller saving |
 | **D** | Use Magento's async bulk endpoints where available | Feature detection per store, a different result model (poll instead of respond), and the ledger's "one call, one operation" premise no longer holds | High. This is a redesign of the write path, not an optimisation |
 
 ## Recommendation
 
-**C now, D never without a separate design.** The link stage is where a bounded fan-out
-costs nothing: links are independent, the failure already names its child, and the
-compensation story does not change. Children creation keeps its fail-fast contract,
-because the alternative (B) makes the failure report less useful in exchange for
-latency on a path that already fits its budget.
+**A, unless the failure contract is on the table.** The earlier recommendation of C was
+wrong: the link stage has the same fail-fast shape as the children stage, so there is no
+stage where a bounded fan-out is free. Every option that parallelises anything inside
+this workflow (B, C) trades the determinism of "which SKU failed" for latency on a path
+the audit itself measured as fitting its budget ("fine, but linear and fragile"). D is a
+redesign of the write path.
+
+So the honest choice is between **A** — keep the contract, accept the latency — and
+**B** — pay the contract change to get the latency. There is no free option, and the
+earlier note claimed one existed.
 
 ## If you choose C
 
