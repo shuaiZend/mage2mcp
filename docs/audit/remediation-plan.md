@@ -282,7 +282,7 @@ These were present in the audit reports but had never been entered in this plan,
 
 | ID | Severity | Status | Detail | Evidence |
 |---|---|---|---|---|
-| PERF-15 | P3 | DEFER | `inventory.status_batch` issues one request per SKU; Magento exposes no batch status endpoint, so this needs a different query shape | limitations |
+| PERF-15 | P3 | FIXED | `inventory.status_batch` reads its SKUs with a bounded fan-out (8) instead of one sequential round-trip each; the client limiter remains the real cap, order follows the request, and a failing SKU keeps its own error row | `TestStockStatusBatchIsBoundedAndKeepsPerSKUErrors` |
 | PERF-16 | P3 | DEFER | Bulk write paths are N sequential round-trips; batching needs the async bulk endpoint | limitations |
 | PERF-17 | P3 | FIXED | Failed rows are written in chunks of 500 in one multi-row statement instead of one round-trip each; the batch history exists for the case where many rows fail | `TestFinishImportBatchWritesEveryFailure` |
 | PERF-18 | P3 | FIXED | The import status read no longer selects the `payload` TOAST column: it was scanned and discarded, so a status poll fetched up to 8 MiB it never used. Resume reads the payload from the job row | `TestImportBatchLifecycle` |

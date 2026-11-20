@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
@@ -101,6 +102,11 @@ func (s *Service) SourceItems(ctx context.Context, skus []string) ([]SourceItemR
 
 const maxStockStatusBatch = 25
 
+// maxStockStatusConcurrency bounds the in-flight reads of one batch call. The client
+// limiter is the real cap on concurrent requests; this keeps the goroutine count from
+// running far ahead of it.
+const maxStockStatusConcurrency = 8
+
 // StockStatusBatchItem is one SKU's stock result or its per-SKU error.
 type StockStatusBatchItem struct {
 	SKU    string       `json:"sku" jsonschema:"Product SKU."`
@@ -108,9 +114,10 @@ type StockStatusBatchItem struct {
 	Error  string       `json:"error,omitempty" jsonschema:"Why the row failed."`
 }
 
-// StockStatuses reads the stock status of up to 25 SKUs. Magento has no batch
-// endpoint for catalog inventory, so the calls are sequential and each SKU
-// reports its own error instead of failing the whole batch.
+// StockStatuses reads the stock status of up to 25 SKUs. Magento has no batch endpoint
+// for catalog inventory, so this is one request per SKU — issued with a bounded
+// fan-out rather than sequentially — and each SKU reports its own error instead of
+// failing the whole batch.
 func (s *Service) StockStatuses(ctx context.Context, skus []string) ([]StockStatusBatchItem, error) {
 	if s == nil || s.client == nil {
 		return nil, errs.New(errs.CodeInternal, "Magento inventory service is not configured")
@@ -122,7 +129,7 @@ func (s *Service) StockStatuses(ctx context.Context, skus []string) ([]StockStat
 		return nil, invalidf("at most %d skus are allowed per call", maxStockStatusBatch)
 	}
 	seen := make(map[string]struct{}, len(skus))
-	results := make([]StockStatusBatchItem, 0, len(skus))
+	unique := make([]string, 0, len(skus))
 	for _, sku := range skus {
 		if err := validateSKU(sku); err != nil {
 			return nil, err
@@ -131,13 +138,35 @@ func (s *Service) StockStatuses(ctx context.Context, skus []string) ([]StockStat
 			continue
 		}
 		seen[sku] = struct{}{}
-		status, err := s.StockStatus(ctx, sku)
-		if err != nil {
-			results = append(results, StockStatusBatchItem{SKU: sku, Error: importErrorMessage(err)})
-			continue
-		}
-		results = append(results, StockStatusBatchItem{SKU: sku, Status: status})
+		unique = append(unique, sku)
 	}
+	// Bounded fan-out: 25 sequential round-trips is 25 × RTT, while the client's own
+	// per-instance limiter already caps how many may be in flight. The bound here
+	// keeps the goroutine count from outrunning that semaphore, and the per-SKU error
+	// envelope is preserved because each result is written to its own index.
+	results := make([]StockStatusBatchItem, len(unique))
+	sem := make(chan struct{}, maxStockStatusConcurrency)
+	var wg sync.WaitGroup
+	for i, sku := range unique {
+		wg.Add(1)
+		go func(i int, sku string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results[i] = StockStatusBatchItem{SKU: sku, Error: "the request was canceled"}
+				return
+			}
+			defer func() { <-sem }()
+			status, err := s.StockStatus(ctx, sku)
+			if err != nil {
+				results[i] = StockStatusBatchItem{SKU: sku, Error: importErrorMessage(err)}
+				return
+			}
+			results[i] = StockStatusBatchItem{SKU: sku, Status: status}
+		}(i, sku)
+	}
+	wg.Wait()
 	return results, nil
 }
 

@@ -909,3 +909,63 @@ func TestExecuteImportUsesTheValidatedRows(t *testing.T) {
 		t.Fatalf("created = %d, want 50", result.Created)
 	}
 }
+
+// PERF-15: inventory.status_batch issued one sequential request per SKU, so 25 SKUs
+// cost 25 round-trips. It now fans out with a bound, while each SKU keeps its own
+// error row and the result order follows the request.
+func TestStockStatusBatchIsBoundedAndKeepsPerSKUErrors(t *testing.T) {
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		inFlight++
+		if inFlight > peak {
+			peak = inFlight
+		}
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "BOOM") {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"message":"upstream failed"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"qty":5,"is_in_stock":true}`)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	skus := make([]string, 0, 25)
+	for i := 0; i < 24; i++ {
+		skus = append(skus, fmt.Sprintf("SKU-%02d", i))
+	}
+	skus = append(skus, "BOOM")
+
+	results, err := svc.StockStatuses(context.Background(), skus)
+	if err != nil {
+		t.Fatalf("StockStatuses: %v", err)
+	}
+	if len(results) != len(skus) {
+		t.Fatalf("results = %d, want %d", len(results), len(skus))
+	}
+	// Order follows the request, so a caller can zip the answer with what it asked.
+	for i, sku := range skus {
+		if results[i].SKU != sku {
+			t.Fatalf("results[%d].SKU = %q, want %q", i, results[i].SKU, sku)
+		}
+	}
+	if results[len(results)-1].Error == "" {
+		t.Fatal("the failing SKU must carry its own error, not fail the batch")
+	}
+	if peak < 2 {
+		t.Fatalf("peak in-flight = %d, want the reads to overlap", peak)
+	}
+	if peak > maxStockStatusConcurrency {
+		t.Fatalf("peak in-flight = %d, want at most %d", peak, maxStockStatusConcurrency)
+	}
+}
