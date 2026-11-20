@@ -163,7 +163,7 @@ wiring is reverted.
 | MCP-05 | P2 | **FIXED** (`t19`) — declared timeout enforced as a deadline |
 | MCP-06 | P2 | **FIXED** (`t18`) — 55 write disclosures, test-enforced |
 | MCP-07 | P2 | **FIXED** — every required input property carries a description: 229 across the standalone schemas, plus product.create/update and configurable.create asserted at runtime. The four import tools the finding says lack `instance` already carried it; the remaining unannotated properties are optional |
-| MCP-08 | P2 | **PARTIAL** — every output property of every registered tool now carries a description, enforced at registration by `requireDescribedOutput`, and `inventory.sources` reports `total`/`truncated`. A common output envelope (instance, request id) is still absent |
+| MCP-08 | P2 | FIXED | Every output property carries a description, enforced at registration. The correlation the finding asked for rides in the protocol's `_meta` (`instance`, `tool`, `subject`, `request_id`) instead of a payload envelope, so no output schema changed; `inventory.sources` and the document lists report `total`/`truncated` | `TestToolResultsCarryCorrelationMeta` |
 | MCP-09 | P2 | **FIXED** (`t18`+`t19`) — one envelope shape, code once, no SQLSTATE leak |
 | MCP-10 | P3 | **FIXED** — the naming exceptions are recorded as a register in `docs/mcp-tools.md` with the reason each stays; renaming is a breaking change that needs a deprecation cycle, not a cleanup pass |
 | QA-01 | P2 | **FIXED** — `local-ci.sh` runs the suite with `-json` and fails on any skipped test, so the durability layer can no longer be skipped silently |

@@ -2010,3 +2010,72 @@ func TestServerInstructionsDeclareUpstreamContentUntrusted(t *testing.T) {
 		}
 	}
 }
+
+// MCP-08: a caller could not correlate a result with its log line, and the envelope
+// the finding imagined would have changed all 106 output schemas. The correlation now
+// rides in the protocol's _meta field instead.
+func TestToolResultsCarryCorrelationMeta(t *testing.T) {
+	// A registry whose tool is actually registered on the SDK server, so tools/call
+	// reaches the handler and the result path that attaches the metadata.
+	reg := registry.New()
+	if err := reg.Register(registry.Tool{
+		Name: "magento.product.get", Title: "Get product", Description: "Returns one product.",
+		Capability: "magento.product.read", Permission: registry.PermissionRead,
+		Timeout: 30 * time.Second, Annotations: mcp.ToolAnnotations{ReadOnlyHint: true},
+		Register: func(srv *mcp.Server) error {
+			mcp.AddTool(srv, &mcp.Tool{
+				Name: "magento.product.get", Description: "Returns one product.",
+				InputSchema:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+				OutputSchema: json.RawMessage(`{"type":"object","properties":{"sku":{"type":"string","description":"Product SKU."}},"additionalProperties":false}`),
+			},
+				func(context.Context, *mcp.CallToolRequest, map[string]any) (*mcp.CallToolResult, map[string]any, error) {
+					return nil, map[string]any{"sku": "A-1"}, nil
+				})
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	srv, err := NewMCP(Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ts := httptest.NewServer(Handler(srv, Options{
+		Registry: reg,
+		AuthMiddleware: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				id := &auth.Identity{Subject: "user-1", Class: auth.ClassHuman}
+				next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), id)))
+			})
+		},
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = session.Close() }()
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "magento.product.get", Arguments: map[string]any{"instance": "store-us", "sku": "A-1"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if result.Meta == nil {
+		t.Fatal("result carries no _meta, so it cannot be correlated with its log line")
+	}
+	if got, _ := result.Meta["instance"].(string); got != "store-us" {
+		t.Fatalf("_meta.instance = %v, want store-us", result.Meta["instance"])
+	}
+	if got, _ := result.Meta["tool"].(string); got != "magento.product.get" {
+		t.Fatalf("_meta.tool = %v", result.Meta["tool"])
+	}
+	if got, _ := result.Meta["subject"].(string); got != "user-1" {
+		t.Fatalf("_meta.subject = %v, want the verified identity", result.Meta["subject"])
+	}
+}
