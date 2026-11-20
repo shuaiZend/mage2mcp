@@ -632,32 +632,32 @@ func TestProductAndOrderOutputsCarryDescriptions(t *testing.T) {
 // schemas whose required fields were undocumented; these are the ones that caused
 // wrong values in practice.
 func TestNamedWriteSchemasDocumentTheirRequiredFields(t *testing.T) {
-	cases := []struct {
-		name   string
-		schema string
-		fields []string
-	}{
-		{"product.create", productCreateSchema, []string{"name", "attribute_set_id", "type_id", "price"}},
-		{"inventory.transfer", inventoryTransferSchema, []string{"from_source", "to_source", "quantity"}},
-		{"order.create address", addressSchema, []string{
-			"firstname", "lastname", "street", "city", "postcode", "country_id", "telephone"}},
+	cases := map[string]string{
+		"product.create":       productCreateSchema,
+		"product.update":       productUpdateSchema,
+		"configurable.create":  configurableCreateSchema,
+		"inventory.transfer":   inventoryTransferSchema,
+		"order.create address": addressSchema,
 	}
-	for _, tc := range cases {
+	for name, schema := range cases {
 		var decoded struct {
+			Required   []string `json:"required"`
 			Properties map[string]struct {
 				Description string `json:"description"`
 			} `json:"properties"`
 		}
-		if err := json.Unmarshal([]byte(tc.schema), &decoded); err != nil {
-			t.Fatalf("%s: decode schema: %v", tc.name, err)
+		if err := json.Unmarshal([]byte(schema), &decoded); err != nil {
+			t.Fatalf("%s: decode schema: %v", name, err)
 		}
-		for _, field := range tc.fields {
+		// Every required property, not a hand-picked sample: the sample is what
+		// let the rest drift.
+		for _, field := range decoded.Required {
 			prop, ok := decoded.Properties[field]
 			if !ok {
-				t.Fatalf("%s: %q is not in the schema", tc.name, field)
+				t.Fatalf("%s: required %q is not in the schema", name, field)
 			}
 			if strings.TrimSpace(prop.Description) == "" {
-				t.Errorf("%s: required property %q has no description", tc.name, field)
+				t.Errorf("%s: required property %q has no description", name, field)
 			}
 		}
 	}

@@ -162,7 +162,7 @@ wiring is reverted.
 | MCP-04 | P2 | **FIXED** (`t19`) — schemas compiled and closed at registration |
 | MCP-05 | P2 | **FIXED** (`t19`) — declared timeout enforced as a deadline |
 | MCP-06 | P2 | **FIXED** (`t18`) — 55 write disclosures, test-enforced |
-| MCP-07 | P2 | PARTIAL — undocumented required inputs are down from 104 to 60 across 42 schemas. Done: the write schemas the audit named (product.create, inventory.transfer, the order address), plus order.create, customer.create/addresses, product links, media, import.start, shipment lines, stock-source links and order comments. The four import tools the finding says lack `instance` already carry it |
+| MCP-07 | P2 | FIXED | Every required input property now carries a description — 229 across the schemas that parse standalone, plus product.create/update and configurable.create which are asserted at runtime. The four import tools the finding says lack `instance` already carried it. The remaining unannotated properties are optional ones |
 | MCP-08 | P2 | PARTIAL — `Product`, `Order` and the six money-path outputs (order create, invoice create/capture, credit memo, inventory transfer, configurable create) now describe every field, including the `replayed`, `reconciled` and `outcome` flags an agent must interpret before trusting a result; `inventory.sources` reports `total`/`truncated`. 140 of 177 output fields across the remaining 92 types are still undocumented, and there is no common envelope |
 | MCP-09 | P2 | **FIXED** (`t18`+`t19`) — one envelope shape, code once, no SQLSTATE leak |
 | MCP-10 | P3 | DEFER — naming register recorded |

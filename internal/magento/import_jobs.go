@@ -237,13 +237,13 @@ const (
 	}, "required": ["instance", "format", "data_base64"], "additionalProperties": false}`
 
 	importStatusSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
-		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `"}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import job id returned by import.start or import.execute."}
 	}, "required": ["instance", "job_id"], "additionalProperties": false}`
 
 	importCancelSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
-		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `"},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import job id returned by import.start or import.execute."},
 		"confirmation_id": {"type": "string", "maxLength": 128}
 	}, "required": ["instance", "job_id"], "additionalProperties": false}`
 )
@@ -255,8 +255,8 @@ const (
 	importResumeToolDescription = "Queues a new asynchronous import on the named instance containing only the failed rows of a previous job " +
 		"(from its bounded report). Only the caller that started the original job can resume it, and the new job runs on the same instance. Requires confirmation and a configured database queue; repeated resumes of the same job return the same new job."
 	importResumeSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
-		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `"},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import job id returned by import.start or import.execute."},
 		"confirmation_id": {"type": "string", "maxLength": 128}
 	}, "required": ["instance", "job_id"], "additionalProperties": false}`
 )
@@ -348,13 +348,13 @@ const (
 	importBatchGetToolDescription = "Returns one asynchronous import batch by id on the named instance with its counts and every failed row. Only the caller that started the owning job can read it. Read-only."
 
 	importBatchListSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
 		"limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
 	}, "required": ["instance"], "additionalProperties": false}`
 
 	importBatchGetSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
-		"batch_id": {"type": "string", "pattern": "` + jobIDPattern + `"}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"batch_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import batch id, which is the job id that produced it."}
 	}, "required": ["instance", "batch_id"], "additionalProperties": false}`
 )
 

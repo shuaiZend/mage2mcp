@@ -1709,8 +1709,8 @@ const (
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	productOptionsSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
-		"sku": {"type": "string", "pattern": "` + skuInputPattern + `"}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU."}
 	}, "required": ["instance", "sku"], "additionalProperties": false}`
 )
 
@@ -1753,8 +1753,8 @@ const (
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	mediaTypesSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
-		"attribute_set_name": {"type": "string", "minLength": 1, "maxLength": 255}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"attribute_set_name": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Attribute set name, for example Default. Media roles are defined per set."}
 	}, "required": ["instance", "attribute_set_name"], "additionalProperties": false}`
 )
 
@@ -1803,7 +1803,7 @@ const (
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	customerGroupsSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}
 	}, "required": ["instance"], "additionalProperties": false}`
 )
 
@@ -1872,7 +1872,7 @@ const (
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	orderGeographySchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
 		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD."},
 		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD."},
 		"max_orders": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 5000}
@@ -1932,7 +1932,7 @@ const (
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	salesAnalysisSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
 		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD."},
 		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD."},
 		"max_orders": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 10000},
@@ -1997,7 +1997,7 @@ const (
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	storeConfigsSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}
 	}, "required": ["instance"], "additionalProperties": false}`
 )
 
