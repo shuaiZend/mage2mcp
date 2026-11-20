@@ -54,3 +54,7 @@ docs/reports/
 
 # AgentTeams runtime state
 .agent-teams/
+
+# live functional-test artifacts (harness output, not source)
+/live
+/test/live/out/

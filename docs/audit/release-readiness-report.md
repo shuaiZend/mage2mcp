@@ -43,7 +43,7 @@ were confirmed: `SEC-01`, `SEC-02`, `SEC-03`, `SEC-05`, `MAG-01`, `MAG-04`,
 | P0 still open | **0** | |
 | P1 confirmed | 26 (after de-duplication) | |
 | P1 fixed and verified | 23 | |
-| P1 deferred with accepted risk | 3 | `SEC-04`, `MAG-23`, plus the documentation-level P1s, which are now fixed |
+| P1 deferred with accepted risk | 3 | `SEC-04`, `MAG-23` (now partially closed by a live run — see below), plus the documentation-level P1s, which are now fixed |
 | P2 confirmed | ~50 | 31 fixed, 19 deferred |
 | P3 confirmed | ~30 | 12 fixed, 18 deferred |
 
@@ -258,7 +258,11 @@ the first production captures as supervised.
 
 1. **No Magento integration test exists.** Every Magento behaviour is verified
    against the documented REST contract and a fake server. That is a real
-   verification, but it is not the same as a verified store. `MAG-23` is open.
+   verification, but it is not the same as a verified store. `MAG-23` was
+   partially closed after this release by a one-off live run: 101 tools against a
+   real store, recorded in `live-magento-test-report.md`, which found five defects
+   including a P1 in order placement (`live-magento-defects.md`). It is still not
+   in CI.
 2. **Order creation depends on an unverified field.** Exact reconciliation needs
    `quote_id` in the order search projection. If an instance omits it, the system
    degrades to UNKNOWN — safe, but not automatic.

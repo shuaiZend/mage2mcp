@@ -20,12 +20,29 @@ defect).
 These bound every claim in the release verdict. They are environmental, not
 choices.
 
-### 1.1 No live Magento instance
+### 1.1 Live Magento: one manual run, still not in CI
 
-No Magento 2.4.9 (or any version) instance was reachable. Every Magento
-behaviour is verified against the documented REST contract and against
-`httptest` fake servers (`CONTRACT` tests). **No test in this repository is
+No Magento instance was reachable during the audit itself, so every Magento
+behaviour in this release is verified against the documented REST contract and
+against `httptest` fake servers (`CONTRACT` tests). **No test in this repository is
 labelled `INTEGRATION` for Magento, and none may be.**
+
+**Update 2026-11-21.** A one-off live run against a real store was executed after
+the release: `https://demo-magento-2.auroracreation.com`, store view `pl`, 101
+tools, 123 cases. It is recorded in
+[`live-magento-test-report.md`](live-magento-test-report.md) and produced five
+confirmed defects in
+[`live-magento-defects.md`](live-magento-defects.md), including a P1 in order
+placement. Two consequences:
+
+- The catalogue and product/media write surfaces are now genuinely verified
+  against a real store, not only against a fake.
+- The finance chain (order → invoice → shipment → credit memo) is **known broken**
+  on a standard Magento 2 instance, because order placement uses `POST` where
+  Magento requires `PUT`.
+
+That run is manual and is not part of CI. It narrows the risk; it does not close
+it.
 
 Consequence: Magento 2.4.9 compatibility is **unverified**, not "verified". The
 gateway may still be wrong about a field name, an id type, an extension
