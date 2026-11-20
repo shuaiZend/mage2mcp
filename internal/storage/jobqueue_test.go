@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -71,4 +72,48 @@ func TestJobRetryBackoffGrowsWithAttempts(t *testing.T) {
 func runSuffix(t *testing.T) string {
 	t.Helper()
 	return strconv.FormatInt(time.Now().UnixNano(), 36)
+}
+
+// PERF-17: FinishImportBatch inserted one round-trip per failed row. The batch
+// history exists for imports where many rows fail, so the slow path was the one that
+// matters. Failures are now written in chunks, and the rows must be identical.
+func TestFinishImportBatchWritesEveryFailure(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+
+	jobID := enqueueTestJob(t, NewJobQueue(store), "import", 2)
+	id, err := store.CreateImportBatch(ctx, "store-us", jobID, "csv", []byte("sku,name\n"))
+	if err != nil {
+		t.Fatalf("CreateImportBatch: %v", err)
+	}
+	const rows = 1200 // spans more than one chunk
+	failures := make([]jobs.ImportBatchFailure, 0, rows)
+	for i := 1; i <= rows; i++ {
+		failures = append(failures, jobs.ImportBatchFailure{
+			RowNumber: i, SKU: fmt.Sprintf("SKU-%d", i), Action: "create", Error: "rejected",
+		})
+	}
+	result := &jobs.ImportBatchResult{Total: rows, Processed: rows, Failed: rows, Failures: failures}
+	if err := store.FinishImportBatch(ctx, id, result, "failed", "validation_failed"); err != nil {
+		t.Fatalf("FinishImportBatch: %v", err)
+	}
+	var stored int
+	if err := store.pool.QueryRow(ctx,
+		`SELECT count(*) FROM import_batch_failures WHERE batch_id = $1::uuid`, id).Scan(&stored); err != nil {
+		t.Fatalf("count failures: %v", err)
+	}
+	if stored != rows {
+		t.Fatalf("stored failures = %d, want %d", stored, rows)
+	}
+	// A re-run must upsert rather than duplicate.
+	if err := store.FinishImportBatch(ctx, id, result, "failed", "validation_failed"); err != nil {
+		t.Fatalf("second FinishImportBatch: %v", err)
+	}
+	if err := store.pool.QueryRow(ctx,
+		`SELECT count(*) FROM import_batch_failures WHERE batch_id = $1::uuid`, id).Scan(&stored); err != nil {
+		t.Fatalf("count failures: %v", err)
+	}
+	if stored != rows {
+		t.Fatalf("after re-run stored failures = %d, want %d (upsert, not duplicate)", stored, rows)
+	}
 }

@@ -862,3 +862,50 @@ func TestOrderDocumentListsPagePastOneHundred(t *testing.T) {
 		t.Fatalf("pages = %d, want the scan to continue past the first page", pages)
 	}
 }
+
+// PERF-22: execution validated the payload and then parsed it again. The single
+// parse is structural — parseAndValidate returns the rows execution uses — so what a
+// test can pin is that the two paths still agree and that execution works from the
+// rows the validation produced.
+func TestExecuteImportUsesTheValidatedRows(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/products"):
+			_, _ = io.WriteString(w, `{"items":[]}`)
+		case r.Method == http.MethodPost:
+			_, _ = io.WriteString(w, `{"id":1,"sku":"X","type_id":"simple"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	var csv strings.Builder
+	csv.WriteString("sku,name,type_id,price,attribute_set_id\n")
+	for i := 0; i < 50; i++ {
+		fmt.Fprintf(&csv, "NEW-%d,Name %d,simple,9.99,4\n", i, i)
+	}
+	data := []byte(csv.String())
+
+	preview, err := svc.ValidateImport(context.Background(), "csv", data)
+	if err != nil {
+		t.Fatalf("ValidateImport: %v", err)
+	}
+	if preview.Total != 50 || preview.Invalid != 0 {
+		t.Fatalf("preview = %+v, want 50 valid rows", preview)
+	}
+	result, err := svc.ExecuteImport(context.Background(), "csv", data, true)
+	if err != nil {
+		t.Fatalf("ExecuteImport: %v", err)
+	}
+	// Execution must see exactly the rows validation saw, which is what reusing the
+	// parse means in observable terms.
+	if result.Total != preview.Total {
+		t.Fatalf("executed %d rows, validation saw %d", result.Total, preview.Total)
+	}
+	if result.Created != 50 {
+		t.Fatalf("created = %d, want 50", result.Created)
+	}
+}

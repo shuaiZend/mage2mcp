@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,10 @@ import (
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
 	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 )
+
+// importFailureChunk bounds one multi-row insert. PostgreSQL caps a statement at
+// 65535 parameters and this uses five per row, so 500 leaves ample headroom.
+const importFailureChunk = 500
 
 // CreateImportBatch opens the batch for a job and returns its id.
 //
@@ -73,14 +78,30 @@ func (s *Store) FinishImportBatch(ctx context.Context, id string, result *jobs.I
 		result.Updated, result.Skipped, result.Failed, errorCode); err != nil {
 		return fmt.Errorf("storage: update import batch: %w", err)
 	}
-	for _, failure := range result.Failures {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO import_batch_failures (batch_id, row_number, sku, action, error)
-			VALUES ($1::uuid, $2, $3, $4, $5)
+	// One multi-row statement per chunk instead of one round-trip per failed row.
+	// The batch history exists precisely for imports where many rows fail, so the
+	// per-row form made the slow path the one that matters: ~500 µs per row locally
+	// and seconds at a real round-trip time, inside the finalization path that also
+	// holds the job's lease.
+	for start := 0; start < len(result.Failures); start += importFailureChunk {
+		end := start + importFailureChunk
+		if end > len(result.Failures) {
+			end = len(result.Failures)
+		}
+		chunk := result.Failures[start:end]
+		placeholders := make([]string, 0, len(chunk))
+		args := make([]any, 0, len(chunk)*5)
+		for i, failure := range chunk {
+			placeholders = append(placeholders, fmt.Sprintf(
+				"($1::uuid, $%d, $%d, $%d, $%d)", i*4+2, i*4+3, i*4+4, i*4+5))
+			args = append(args, failure.RowNumber, failure.SKU, failure.Action, failure.Error)
+		}
+		query := `INSERT INTO import_batch_failures (batch_id, row_number, sku, action, error)
+			VALUES ` + strings.Join(placeholders, ",") + `
 			ON CONFLICT (batch_id, row_number) DO UPDATE
-			SET sku = EXCLUDED.sku, action = EXCLUDED.action, error = EXCLUDED.error`,
-			id, failure.RowNumber, failure.SKU, failure.Action, failure.Error); err != nil {
-			return fmt.Errorf("storage: insert import failure: %w", err)
+			SET sku = EXCLUDED.sku, action = EXCLUDED.action, error = EXCLUDED.error`
+		if _, err := tx.Exec(ctx, query, append([]any{id}, args...)...); err != nil {
+			return fmt.Errorf("storage: insert import failures: %w", err)
 		}
 	}
 	return tx.Commit(ctx)

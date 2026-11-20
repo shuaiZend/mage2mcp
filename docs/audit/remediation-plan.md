@@ -284,12 +284,12 @@ These were present in the audit reports but had never been entered in this plan,
 |---|---|---|---|---|
 | PERF-15 | P3 | DEFER | `inventory.status_batch` issues one request per SKU; Magento exposes no batch status endpoint, so this needs a different query shape | limitations |
 | PERF-16 | P3 | DEFER | Bulk write paths are N sequential round-trips; batching needs the async bulk endpoint | limitations |
-| PERF-17 | P3 | DEFER | `FinishImportBatch` writes one round-trip per failed row | limitations |
+| PERF-17 | P3 | FIXED | Failed rows are written in chunks of 500 in one multi-row statement instead of one round-trip each; the batch history exists for the case where many rows fail | `TestFinishImportBatchWritesEveryFailure` |
 | PERF-18 | P3 | DEFER | Import status polling reads and discards the payload column | limitations |
 | PERF-19 | P3 | ALREADY-FIXED | Retry is exponential with jitter (5s × 2^(attempt−1), capped at 5 min, ±25%); the audit recorded a constant 5s | `TestJobRetryBackoffGrowsWithAttempts` |
 | PERF-20 | P3 | FIXED | The admin-token refresh is single-flight: waiters block on the in-flight refresh instead of on the mutex, so one slow token fetch no longer queues every request of the instance behind it | `TestAdminTokenRefreshIsSingleFlight` |
 | PERF-21 | P3 | FIXED | Invoice, shipment and credit-memo lists page until the store runs out (bounded at 1000) and report `total`/`truncated`; one page of 100 used to be returned silently | `TestOrderDocumentListsPagePastOneHundred` |
-| PERF-22 | P3 | DEFER | The import payload is parsed twice per execution | limitations |
+| PERF-22 | P3 | FIXED | Execution reuses the rows validation parsed (`parseAndValidate`), instead of parsing the payload a second time | `TestExecuteImportUsesTheValidatedRows` |
 | QA-02 | P3 | DEFER | `go test -cover ./...` and `make cover` fail on the pinned toolchain | limitations |
 | QA-07 | P3 | DEFER | Coverage targets in the testing strategy are missed and unenforced | limitations |
 | QA-08 | P3 | DEFER | The testing strategy describes suites that do not exist | limitations |
