@@ -40,7 +40,8 @@ changelog entry record it (see [Upgrade](operations/upgrade.md)).
 
 | Version | Status |
 |---|---|
-| `v0.7.2` | Supported pre-release |
+| `v0.7.3` | Supported pre-release |
+| `v0.7.2` | Superseded |
 | `v0.7.1` | Superseded |
 | `v0.7.0` | Superseded |
 | `v0.6.0` | Superseded |
