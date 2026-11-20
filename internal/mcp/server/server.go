@@ -37,6 +37,11 @@ type Options struct {
 	Registry       *registry.Registry
 	AuthMiddleware func(http.Handler) http.Handler
 	Metrics        http.Handler
+	// ReadyCheck, when set, is consulted by /readyz. A nil check means the process
+	// is ready as soon as it can serve MCP, which is correct only when no durable
+	// dependency is configured. With a database the check must ping it: a gateway
+	// whose store is down answers 200 and then fails every confirmed call (QA-06).
+	ReadyCheck func(ctx context.Context) error
 	// MetricsRequireAuth puts /metrics behind AuthMiddleware. Set it whenever the
 	// listener is reachable off-host: the endpoint exposes the tool inventory,
 	// per-tool call counts and build_info, which is reconnaissance for an
@@ -518,10 +523,19 @@ func Handler(srv *mcp.Server, opts Options) http.Handler {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		// Readiness means the process can serve MCP. A deployment with no
 		// business module enabled still serves platform.info, so it is ready;
 		// the tool count is reported for operators.
+		if opts.ReadyCheck != nil {
+			if err := opts.ReadyCheck(r.Context()); err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+					"status": "not ready", "reason": string(errs.CodeOf(err)),
+					"tools": opts.Registry.Len(),
+				})
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "tools": opts.Registry.Len()})
 	})
 	if opts.Metrics != nil {

@@ -166,6 +166,11 @@ wiring is reverted.
 | MCP-08 | P2 | PARTIAL — `inventory.sources` reports `total` and `truncated` so a capped list is visible (`TestInventorySourcesReportsTruncation`); the common output envelope and the property descriptions remain open |
 | MCP-09 | P2 | **FIXED** (`t18`+`t19`) — one envelope shape, code once, no SQLSTATE leak |
 | MCP-10 | P3 | DEFER — naming register recorded |
+| QA-01 | P2 | **FIXED** — `local-ci.sh` runs the suite with `-json` and fails on any skipped test, so the durability layer can no longer be skipped silently |
+| QA-03 | P2 | **FIXED** — `go test -count=2 ./internal/storage/` passes; the non-repeatable queries now order deterministically |
+| QA-04 | P2 | **FIXED** — `cmd/admin` has tests covering the usage contract, the ordering fix and the approval audit row |
+| QA-05 | P1 | **FIXED** — `authorizeFunc` is at 100% statement coverage and `TestShippedPolicyEnforcesScopeLadder` drives the production wiring (NewMCP + shipped policy + real tool call) |
+| QA-06 | P2 | **FIXED** — `/readyz` consults a configured `ReadyCheck` and answers 503 when the durable store is unreachable |
 | MCP-11 | P2 | **FIXED** (`t19`) — `order.summary` is a distinct deprecated alias |
 | MCP-12 | P2 | **FIXED** (`t18`) — server instructions/grouping |
 | MCP-13 | P3 | DEFER — capability metadata |

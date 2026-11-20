@@ -1919,3 +1919,62 @@ func TestMetricsStayOpenOnLoopback(t *testing.T) {
 		t.Fatalf("/metrics status = %d, want 200 without MetricsRequireAuth", resp.StatusCode)
 	}
 }
+
+// QA-06: readiness used to be unconditional, so a gateway whose durable store was
+// down answered 200 and then failed every confirmed call. A configured check must
+// be consulted; an unconfigured one keeps the in-memory deployment ready.
+func TestReadyzConsultsTheDependencyCheck(t *testing.T) {
+	srv, err := NewMCP(Options{Version: "test", Registry: mustRegistry(t)})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	failing := true
+	ts := httptest.NewServer(Handler(srv, Options{
+		Registry: mustRegistry(t),
+		ReadyCheck: func(context.Context) error {
+			if failing {
+				return errs.New(errs.CodeUpstreamUnavailable, "store is unreachable")
+			}
+			return nil
+		},
+	}))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/readyz")
+	if err != nil {
+		t.Fatalf("GET /readyz: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when the dependency check fails", resp.StatusCode)
+	}
+
+	failing = false
+	resp, err = http.Get(ts.URL + "/readyz")
+	if err != nil {
+		t.Fatalf("GET /readyz: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 once the dependency answers", resp.StatusCode)
+	}
+}
+
+// A deployment with no durable store has no dependency to consult and stays ready.
+func TestReadyzWithoutDependencyCheckIsReady(t *testing.T) {
+	srv, err := NewMCP(Options{Version: "test", Registry: mustRegistry(t)})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ts := httptest.NewServer(Handler(srv, Options{Registry: mustRegistry(t)}))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/readyz")
+	if err != nil {
+		t.Fatalf("GET /readyz: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 without a configured check", resp.StatusCode)
+	}
+}

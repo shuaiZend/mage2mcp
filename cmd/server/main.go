@@ -156,6 +156,11 @@ func run() error {
 		// unauthenticated caller, so it goes behind the same middleware as /mcp.
 		MetricsRequireAuth: !isLoopbackListen(cfg.Server.Listen),
 		MaxBodyBytes:       cfg.Server.MaxBodyBytes,
+		// QA-06: readiness must consult the durable store when one is configured.
+		// Without it a gateway whose database is down answers 200 and then fails
+		// every confirmed call, which is the opposite of what a readiness probe is
+		// for. A nil store means the deployment is in-memory and ready by definition.
+		ReadyCheck: readyCheckFor(store),
 	})
 
 	httpServer := &http.Server{
@@ -185,6 +190,14 @@ func run() error {
 	defer cancel()
 	logger.Info("shutting down", "grace", cfg.Server.ShutdownGrace.String())
 	return httpServer.Shutdown(shutdownCtx)
+}
+
+// readyCheckFor returns the readiness probe for the configured store.
+func readyCheckFor(store *storage.Store) func(ctx context.Context) error {
+	if store == nil {
+		return nil
+	}
+	return store.Ping
 }
 
 func buildAuth(cfg config.Config, logger *slog.Logger, devInsecure bool) (func(http.Handler) http.Handler, error) {
