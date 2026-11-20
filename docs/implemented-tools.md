@@ -91,6 +91,7 @@ Common behavior:
 | `magento.inventory.stock_source_unlink` | destructive + confirmation | 60s | Detaches a source from a stock; source items are kept |
 | `magento.inventory.stocks` | read | 30s | MSI inventory stocks |
 | `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
+| `magento.orders.geography` | read | 120s | Orders aggregated by shipping country (codes, counts, revenue; no PII) |
 | `magento.order.summary` | read | 30s | Daily order count, revenue, and quantity over a bounded window (same data as `sales.summary`) |
 | `magento.order.search` | read | 30s | Orders by status, state, increment id, creation window, store view, or customer id; items omitted |
 | `magento.order.status_history` | read | 30s | Status history with comment and notification flags |

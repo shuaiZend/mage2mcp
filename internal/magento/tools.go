@@ -110,7 +110,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newStockStatusBatchTool(lookup), newTierPricesTool(lookup),
 		newInventorySourcesTool(lookup), newInventoryStocksTool(lookup), newMediaGetTool(lookup),
 		newOrderSummaryTool(lookup), newProductOptionsTool(lookup), newMediaTypesTool(lookup),
-		newCustomerGroupsTool(lookup), newTaxClassesTool(lookup),
+		newCustomerGroupsTool(lookup), newTaxClassesTool(lookup), newOrderGeographyTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1787,6 +1787,64 @@ func newTaxClassesTool(lookup serviceLookup) registry.Tool {
 					return nil, taxClassesOutput{}, err
 				}
 				return nil, taxClassesOutput{Classes: classes}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	orderGeographyToolName  = "magento.orders.geography"
+	orderGeographyToolTitle = "Aggregate orders by shipping country"
+
+	orderGeographyToolDescription = "Aggregates orders created in a window by the country of their shipping address " +
+		"(GET /rest/{store_code}/V1/orders with a created_at filter), returning country codes, order counts, and revenue only. " +
+		"Address details and customer PII are never returned. Scans at most 10,000 orders and reports truncation. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	orderGeographySchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
+		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD."},
+		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD."},
+		"max_orders": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 5000}
+	}, "required": ["instance", "from", "to"], "additionalProperties": false}`
+)
+
+type orderGeographyInput struct {
+	Instance  string `json:"instance"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	MaxOrders int    `json:"max_orders"`
+}
+
+type orderGeographyOutput struct {
+	Geography OrderGeography `json:"geography"`
+}
+
+func newOrderGeographyTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(orderGeographyToolName, orderGeographyToolTitle, orderGeographyToolDescription)
+	t.Capability = "magento.order.read"
+	t.Timeout = 120 * time.Second
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(orderGeographyToolName, orderGeographyToolTitle, orderGeographyToolDescription, orderGeographySchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in orderGeographyInput) (*mcp.CallToolResult, orderGeographyOutput, error) {
+				from, err := parseSummaryTime(in.From, "from")
+				if err != nil {
+					return nil, orderGeographyOutput{}, err
+				}
+				to, err := parseSummaryTime(in.To, "to")
+				if err != nil {
+					return nil, orderGeographyOutput{}, err
+				}
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, orderGeographyOutput{}, err
+				}
+				geography, err := svc.OrderGeography(ctx, from, to, in.MaxOrders)
+				if err != nil {
+					return nil, orderGeographyOutput{}, err
+				}
+				return nil, orderGeographyOutput{Geography: *geography}, nil
 			})
 		return nil
 	}

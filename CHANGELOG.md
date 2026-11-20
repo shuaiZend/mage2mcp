@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `magento.orders.geography` (read): aggregates orders in a window by shipping
+  country with order counts and revenue. Only country codes and totals are
+  returned; address details and customer PII are never exposed.
+
 ## [0.7.2] - 2026-11-20
 
 Patch release: reference reads use the Magento search collections, fixing the
