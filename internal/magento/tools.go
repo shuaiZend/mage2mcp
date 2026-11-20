@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -166,9 +167,23 @@ var boolFalse = false
 func toolMetadata(name, title, description string) registry.Tool {
 	return registry.Tool{
 		Name: name, Title: title, Description: description,
-		Capability: capabilityProductRead, Permission: registry.PermissionRead, Timeout: toolTimeout,
+		Capability: capabilityFor(name, "read"), Permission: registry.PermissionRead, Timeout: toolTimeout,
 		Annotations: mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: openWorldFalse()},
 	}
+}
+
+// capabilityFor derives a capability from the tool's own namespace.
+//
+// The default used to be magento.product.read for every read tool, so order, sales,
+// tax and document tools all advertised a product capability. Nothing reads the
+// field for authorization, which is why it drifted unnoticed — but metadata that
+// contradicts the tool it describes is a trap for whoever wires it up next.
+func capabilityFor(tool, suffix string) string {
+	parts := strings.Split(tool, ".")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "magento." + suffix
+	}
+	return parts[0] + "." + parts[1] + "." + suffix
 }
 func mcpTool(name, title, description, schema string) *mcp.Tool {
 	return &mcp.Tool{

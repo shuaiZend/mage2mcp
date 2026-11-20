@@ -3,6 +3,7 @@
 package magento
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -262,8 +263,13 @@ func (s *Service) CreateAttributeOption(ctx context.Context, attributeCode, labe
 	if err != nil {
 		return nil, err
 	}
-	var value string
-	if err := json.Unmarshal(raw, &value); err == nil && value != "" {
+	// The new option id comes back in one of three shapes depending on the build:
+	// a JSON string, a bare number, or an object carrying label and value. A number
+	// used to fall through both string and object decoding, so the option was
+	// created and the caller was told the payload was unreadable — leaving it
+	// without the value_index it needs to build a configurable variant, and a retry
+	// created a second option.
+	if value, ok := decodeAttributeOptionID(raw); ok {
 		return &AttributeOption{Label: label, Value: value}, nil
 	}
 	var option AttributeOption
@@ -271,6 +277,25 @@ func (s *Service) CreateAttributeOption(ctx context.Context, attributeCode, labe
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable attribute-option payload").WithCause(err)
 	}
 	return &option, nil
+}
+
+// decodeAttributeOptionID reads a scalar option id as a string or a number.
+func decodeAttributeOptionID(raw []byte) (string, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return "", false
+	}
+	var text string
+	if err := json.Unmarshal(trimmed, &text); err == nil {
+		text = strings.TrimSpace(text)
+		return text, text != ""
+	}
+	var number json.Number
+	if err := json.Unmarshal(trimmed, &number); err == nil {
+		text = strings.TrimSpace(number.String())
+		return text, text != ""
+	}
+	return "", false
 }
 
 type attributeOptionBody struct {

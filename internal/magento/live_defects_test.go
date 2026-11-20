@@ -716,3 +716,48 @@ func TestMagentoToolsDeclareAClosedWorld(t *testing.T) {
 		t.Fatal("registered tool claims an open world")
 	}
 }
+
+// MAG-26: Magento returns the new attribute option id in one of three shapes
+// depending on the build — a JSON string, a bare number, or an object. A number used
+// to fail both the string and object decoders, so the option was created and the
+// caller was told the payload was unreadable, without the value_index it needs.
+func TestCreateAttributeOptionAcceptsEveryIDShape(t *testing.T) {
+	cases := map[string]string{
+		`"123"`:                          "123",
+		`123`:                            "123",
+		`{"label":"Blue","value":"123"}`: "123",
+	}
+	for body, want := range cases {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, body)
+		}))
+		option, err := testService(t, ts.URL).CreateAttributeOption(context.Background(), "color", "Blue")
+		ts.Close()
+		if err != nil {
+			t.Fatalf("body %s: %v", body, err)
+		}
+		if option.Value != want {
+			t.Fatalf("body %s: value = %q, want %q", body, option.Value, want)
+		}
+	}
+}
+
+// MCP-13: every read tool defaulted to the magento.product.read capability, so order,
+// sales, tax and document tools advertised a product capability. Nothing reads the
+// field for authorization, which is why it drifted — but metadata that contradicts
+// the tool is a trap for whoever wires it up next.
+func TestReadToolsDeriveTheirCapabilityFromTheNamespace(t *testing.T) {
+	cases := map[string]string{
+		"magento.product.get":   "magento.product.read",
+		"magento.order.get":     "magento.order.read",
+		"magento.sales.summary": "magento.sales.read",
+		"magento.tax.classes":   "magento.tax.read",
+		"magento.invoice.list":  "magento.invoice.read",
+	}
+	for tool, want := range cases {
+		if got := toolMetadata(tool, "t", "d").Capability; got != want {
+			t.Errorf("%s capability = %q, want %q", tool, got, want)
+		}
+	}
+}

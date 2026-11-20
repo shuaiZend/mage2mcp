@@ -114,7 +114,7 @@ wiring is reverted.
 | MAG-23 | P1 | FIXED | A `live` workflow starts the gateway against a real store and runs the read matrix; 12 recorded payloads are replayed in `verify` so real shapes stay under regression without an environment | `.github/workflows/live.yml` (verified on Actions run 44796533194 and locally against the demo store: 43 pass, 0 fail), `TestConformanceProductList`. Precondition: the live job needs `MAGENTO_ENDPOINT`/`MAGENTO_CREDENTIAL` secrets, and skips with a summary note without them |
 | MAG-24 | P3 | DOC | Configurable price relationship | `t34` |
 | MAG-25 | P3 | DOC | Capability matrix said sales read-only | `t33` |
-| MAG-26 | P3 | DEFER | Numeric attribute option id | limitations |
+| MAG-26 | P3 | FIXED | The attribute option id is decoded as a string, a bare number or an object; a numeric id used to fall through both decoders, leaving the caller without the value_index and a retry creating a second option | `TestCreateAttributeOptionAcceptsEveryIDShape` |
 
 ## 5. Reliability findings
 
@@ -173,7 +173,7 @@ wiring is reverted.
 | QA-06 | P2 | **FIXED** — `/readyz` consults a configured `ReadyCheck` and answers 503 when the durable store is unreachable |
 | MCP-11 | P2 | **FIXED** (`t19`) — `order.summary` is a distinct deprecated alias |
 | MCP-12 | P2 | **FIXED** (`t18`) — server instructions/grouping |
-| MCP-13 | P3 | DEFER — capability metadata |
+| MCP-13 | P3 | **FIXED** — a read tool's capability is derived from its own namespace, so order/sales/tax/document tools no longer advertise `magento.product.read` (`TestReadToolsDeriveTheirCapabilityFromTheNamespace`) |
 | MCP-14 | P3 | **FIXED** (`t18`) — generated inventory |
 | MCP-15 | P3 | PARTIAL — upstream error text no longer reaches the model (Magento and Cloudflare now use the server-only field; GA4 already answered with gateway text), and the threat model says so. No provenance envelope exists; that stays recorded as residual R-1 |
 | MCP-16 | P3 | **FIXED** — `openWorldHint` is explicitly false on every Magento tool; a nil value read as true by the specification, so clients were told these tools might reach the open web (`TestMagentoToolsDeclareAClosedWorld`) |
