@@ -70,7 +70,7 @@ omitting them leaves the assignments untouched.
 
 | Tool | Fields | Notes |
 |---|---|---|
-| `magento.inventory.assign` | `items[]`: `sku`, `source_code`, `quantity` (>=0), `status` (0/1) | 1-100 items; quantity replaces, it does not add. |
+| `magento.inventory.assign` | `items[]`: `sku`, `source_code`, `quantity` (>=0), optional `status` (0/1, default 1) | 1-100 items; quantity replaces, it does not add. |
 | `magento.inventory.unassign` | `items[]`: `sku`, `source_code` | 1-100 pairs; duplicate pairs rejected. |
 | `magento.inventory.transfer` | `sku`, `from_source`, `to_source`, `quantity` (>0) | Reads both rows, refuses an insufficient source, then upserts both in one batch; not transactional. |
 

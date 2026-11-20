@@ -25,6 +25,7 @@ type CategoryCreateInput struct {
 	IsActive      bool   `json:"is_active"`
 	Position      int    `json:"position"`
 	IncludeInMenu bool   `json:"include_in_menu"`
+	URLKey        string `json:"url_key,omitempty"`
 }
 
 // CategoryUpdateInput is a partial category update; nil fields are untouched.
@@ -44,7 +45,19 @@ func (s *Service) CreateCategory(ctx context.Context, in CategoryCreateInput) (*
 	if err := validateCategoryFields(in.ParentID, in.Name, in.Position); err != nil {
 		return nil, err
 	}
-	body := categoryCreateBody{Category: categoryCreatePayload(in)}
+	if in.URLKey != "" {
+		if len(in.URLKey) > 255 || strings.ContainsFunc(in.URLKey, unicode.IsControl) {
+			return nil, invalidf("url_key must be at most 255 bytes without control characters")
+		}
+	}
+	payload := categoryCreatePayload{
+		ParentID: in.ParentID, Name: in.Name, IsActive: in.IsActive,
+		Position: in.Position, IncludeInMenu: in.IncludeInMenu,
+	}
+	if in.URLKey != "" {
+		payload.CustomAttributes = []categoryCustomAttribute{{AttributeCode: "url_key", Value: in.URLKey}}
+	}
+	body := categoryCreateBody{Category: payload}
 	raw, err := s.client.do(ctx, http.MethodPost, "/categories", nil, body)
 	if err != nil {
 		return nil, err
@@ -115,11 +128,17 @@ type categoryCreateBody struct {
 }
 
 type categoryCreatePayload struct {
-	ParentID      int    `json:"parent_id"`
-	Name          string `json:"name"`
-	IsActive      bool   `json:"is_active"`
-	Position      int    `json:"position,omitempty"`
-	IncludeInMenu bool   `json:"include_in_menu"`
+	ParentID         int                       `json:"parent_id"`
+	Name             string                    `json:"name"`
+	IsActive         bool                      `json:"is_active"`
+	Position         int                       `json:"position,omitempty"`
+	IncludeInMenu    bool                      `json:"include_in_menu"`
+	CustomAttributes []categoryCustomAttribute `json:"custom_attributes,omitempty"`
+}
+
+type categoryCustomAttribute struct {
+	AttributeCode string `json:"attribute_code"`
+	Value         string `json:"value"`
 }
 
 type categoryUpdateBody struct {

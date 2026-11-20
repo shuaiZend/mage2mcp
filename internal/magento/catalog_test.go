@@ -239,3 +239,19 @@ func TestBulkCreateAttributeOptionsValidation(t *testing.T) {
 		t.Fatalf("ceiling err = %v", err)
 	}
 }
+
+func TestCreateAttributeOptionScalarResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`"216"`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	option, err := svc.CreateAttributeOption(context.Background(), "color", "MCP Teal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if option.Value != "216" || option.Label != "MCP Teal" {
+		t.Fatalf("option = %+v", option)
+	}
+}

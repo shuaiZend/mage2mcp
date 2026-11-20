@@ -101,7 +101,7 @@ const (
 	productUpdateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `, "category_ids": {"type": "array", "maxItems": 500, "items": {"type": "integer", "minimum": 1}, "description": "Replaces the product's category assignments when provided; an empty array clears them."}, "website_ids": {"type": "array", "maxItems": 50, "items": {"type": "integer", "minimum": 1}, "description": "Replaces the product's website assignments when provided."}}, "required": ["instance", "sku"], "additionalProperties": false}`
 	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `, ` + seoProps + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
 	configurableAddChildSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "child_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}}, "required": ["instance", "parent_sku", "child_sku"], "additionalProperties": false}`
-	inventoryAssignSchema      = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "source_code", "quantity", "status"], "properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "source_code": {"type": "string", "pattern": "` + sourceCodeInputPattern + `"}, "quantity": {"type": "integer", "minimum": 0}, "status": {"type": "integer", "enum": [0, 1], "description": "1 in stock, 0 out of stock."}}}}}, "required": ["instance", "items"], "additionalProperties": false}`
+	inventoryAssignSchema      = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "source_code", "quantity"], "properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "source_code": {"type": "string", "pattern": "` + sourceCodeInputPattern + `"}, "quantity": {"type": "integer", "minimum": 0}, "status": {"type": "integer", "enum": [0, 1], "default": 1, "description": "1 in stock (default), 0 out of stock."}}}}}, "required": ["instance", "items"], "additionalProperties": false}`
 )
 
 type productCreateInput struct {
@@ -225,7 +225,7 @@ type sourceItemInput struct {
 	SKU        string `json:"sku"`
 	SourceCode string `json:"source_code"`
 	Quantity   int    `json:"quantity"`
-	Status     int    `json:"status"`
+	Status     *int   `json:"status"`
 }
 
 type productWriteOutput struct {
@@ -506,7 +506,13 @@ func newInventoryAssignTool(lookup serviceLookup) registry.Tool {
 			func(ctx context.Context, _ *mcp.CallToolRequest, in inventoryAssignInput) (*mcp.CallToolResult, inventoryAssignOutput, error) {
 				items := make([]SourceItem, 0, len(in.Items))
 				for _, item := range in.Items {
-					items = append(items, SourceItem(item))
+					status := 1
+					if item.Status != nil {
+						status = *item.Status
+					}
+					items = append(items, SourceItem{
+						SKU: item.SKU, SourceCode: item.SourceCode, Quantity: item.Quantity, Status: status,
+					})
 				}
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1069,6 +1075,7 @@ const (
 	categoryCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"parent_id": {"type": "integer", "minimum": 1, "description": "Parent category id; 2 is Magento's default root."},
 		"name": {"type": "string", "minLength": 1, "maxLength": 255},
+		"url_key": {"type": "string", "maxLength": 255, "description": "Optional URL key; Magento derives one from the name when omitted."},
 		"is_active": {"type": "boolean", "default": true},
 		"position": {"type": "integer", "minimum": 0, "maximum": 10000},
 		"include_in_menu": {"type": "boolean", "default": true}
@@ -1093,6 +1100,7 @@ type categoryCreateInput struct {
 	Instance      string `json:"instance"`
 	ParentID      int    `json:"parent_id"`
 	Name          string `json:"name"`
+	URLKey        string `json:"url_key"`
 	IsActive      *bool  `json:"is_active"`
 	Position      int    `json:"position"`
 	IncludeInMenu *bool  `json:"include_in_menu"`
@@ -1145,7 +1153,7 @@ func newCategoryCreateTool(lookup serviceLookup) registry.Tool {
 					includeInMenu = *in.IncludeInMenu
 				}
 				category, err := svc.CreateCategory(ctx, CategoryCreateInput{
-					ParentID: in.ParentID, Name: in.Name, IsActive: isActive,
+					ParentID: in.ParentID, Name: in.Name, IsActive: isActive, URLKey: in.URLKey,
 					Position: in.Position, IncludeInMenu: includeInMenu,
 				})
 				if err != nil {

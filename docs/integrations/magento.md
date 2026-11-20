@@ -179,6 +179,16 @@ Routes per [ConfigurableProduct webapi.xml](https://github.com/magento/magento2/
 
 ### 3.4 Categories and media
 
+#### Authentication: bearer first
+
+Magento 2.4.7 (and some hosted builds) reject OAuth 1.0a with
+`Signature method HMAC-SHA1 is not supported`. Use a bearer token from
+`POST /rest/V1/integration/admin/token` (admin credentials) or a pre-issued
+integration token, and configure `credential: bearer:<token>`. The gateway
+surfaces Magento's message in `details.upstream_message`; automatic admin-token
+acquisition/refresh is not implemented (it would require storing admin
+credentials).
+
 #### Deployment variance
 
 Endpoint availability differs between Magento builds and hosting setups. The

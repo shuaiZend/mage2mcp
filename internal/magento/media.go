@@ -103,6 +103,25 @@ func (s *Service) UploadMedia(ctx context.Context, sku string, in MediaUploadInp
 	}
 	var created MediaEntry
 	if len(raw) > 0 {
+		// Magento returns the new entry id as a JSON string; older builds return
+		// the full entry. Accept both and resolve the gallery entry when needed.
+		var idText string
+		if err := json.Unmarshal(raw, &idText); err == nil && idText != "" {
+			id, convErr := strconv.Atoi(idText)
+			if convErr != nil {
+				return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media id").WithCause(convErr)
+			}
+			created = MediaEntry{ID: id, MediaType: "image", Label: in.Label, Position: in.Position, Types: in.Types}
+			if entries, listErr := s.ProductMedia(ctx, sku); listErr == nil {
+				for _, entry := range entries {
+					if entry.ID == id {
+						created = entry
+						break
+					}
+				}
+			}
+			return &created, nil
+		}
 		if err := json.Unmarshal(raw, &created); err != nil {
 			return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media payload").WithCause(err)
 		}
@@ -228,16 +247,40 @@ func (s *Service) UpdateMedia(ctx context.Context, sku string, entryID int, in M
 			seen[mediaType] = true
 		}
 	}
-	entry := mediaUpdateEntry{ID: entryID, Label: in.Label, Position: in.Position, Types: in.Types, Disabled: in.Disabled}
+	current, err := s.GetMedia(ctx, sku, entryID)
+	if err != nil {
+		return nil, err
+	}
+	entry := mediaUpdateEntry{
+		ID: entryID, MediaType: current.MediaType, File: current.File,
+		Label: in.Label, Position: in.Position, Types: in.Types, Disabled: in.Disabled,
+	}
 	body := mediaUpdateBody{Entry: entry}
 	raw, err := s.client.do(ctx, http.MethodPut, "/products/"+url.PathEscape(sku)+"/media/"+strconv.Itoa(entryID), nil, body)
 	if err != nil {
 		return nil, err
 	}
-	var updated MediaEntry
+	updated := *current
+	if in.Label != nil {
+		updated.Label = *in.Label
+	}
+	if in.Position != nil {
+		updated.Position = *in.Position
+	}
+	if in.Types != nil {
+		updated.Types = in.Types
+	}
+	if in.Disabled != nil {
+		updated.Disabled = *in.Disabled
+	}
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &updated); err != nil {
-			return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media payload").WithCause(err)
+		var acknowledged bool
+		if err := json.Unmarshal(raw, &acknowledged); err != nil {
+			var entry MediaEntry
+			if err := json.Unmarshal(raw, &entry); err != nil {
+				return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media payload").WithCause(err)
+			}
+			updated = entry
 		}
 	}
 	return &updated, nil
@@ -248,11 +291,13 @@ type mediaUpdateBody struct {
 }
 
 type mediaUpdateEntry struct {
-	ID       int      `json:"id"`
-	Label    *string  `json:"label,omitempty"`
-	Position *int     `json:"position,omitempty"`
-	Types    []string `json:"types,omitempty"`
-	Disabled *bool    `json:"disabled,omitempty"`
+	ID        int      `json:"id"`
+	MediaType string   `json:"media_type"`
+	File      string   `json:"file"`
+	Label     *string  `json:"label,omitempty"`
+	Position  *int     `json:"position,omitempty"`
+	Types     []string `json:"types,omitempty"`
+	Disabled  *bool    `json:"disabled,omitempty"`
 }
 
 // GetMedia returns one gallery entry with GET /products/{sku}/media/{id}.

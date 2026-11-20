@@ -340,7 +340,7 @@ func (s *Service) CreateCustomerAddress(ctx context.Context, customerID int, in 
 	}}
 	raw, err := s.client.do(ctx, http.MethodPost, "/customers/"+strconv.Itoa(customerID)+"/addresses", nil, body)
 	if err != nil {
-		return nil, err
+		return nil, addressRouteError(err, "creation")
 	}
 	return decodeCustomerAddress(raw)
 }
@@ -354,7 +354,10 @@ func (s *Service) DeleteCustomerAddress(ctx context.Context, addressID int) erro
 		return invalidf("address_id must be a positive integer")
 	}
 	_, err := s.client.do(ctx, http.MethodDelete, "/addresses/"+strconv.Itoa(addressID), nil, nil)
-	return err
+	if err != nil {
+		return addressRouteError(err, "deletion")
+	}
+	return nil
 }
 
 type customerAddressBody struct {
@@ -485,7 +488,19 @@ func (s *Service) UpdateCustomerAddress(ctx context.Context, customerID, address
 	raw, err := s.client.do(ctx, http.MethodPut,
 		"/customers/"+strconv.Itoa(customerID)+"/addresses/"+strconv.Itoa(addressID), nil, body)
 	if err != nil {
-		return nil, err
+		return nil, addressRouteError(err, "update")
 	}
 	return decodeCustomerAddress(raw)
+}
+
+// addressRouteError turns a missing customer-address route into an actionable
+// capability error instead of a generic 404.
+func addressRouteError(err error, action string) error {
+	if errs.CodeOf(err) != errs.CodeNotFound {
+		return err
+	}
+	return errs.New(errs.CodeUnsupportedCapability,
+		"this Magento instance does not expose customer address "+action+
+			"; update the customer with an addresses array or use the admin UI").
+		WithDetail("upstream_status", "404")
 }

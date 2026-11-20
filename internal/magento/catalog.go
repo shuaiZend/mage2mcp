@@ -262,6 +262,10 @@ func (s *Service) CreateAttributeOption(ctx context.Context, attributeCode, labe
 	if err != nil {
 		return nil, err
 	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil && value != "" {
+		return &AttributeOption{Label: label, Value: value}, nil
+	}
 	var option AttributeOption
 	if err := json.Unmarshal(raw, &option); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable attribute-option payload").WithCause(err)

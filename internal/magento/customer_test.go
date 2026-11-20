@@ -331,3 +331,18 @@ func TestUpdateCustomerAddressValidation(t *testing.T) {
 		t.Fatalf("street err = %v", err)
 	}
 }
+
+func TestCreateCustomerAddressUnsupportedRoute(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	_, err := svc.CreateCustomerAddress(context.Background(), 7, CustomerAddressInput{
+		Firstname: "Ada", Lastname: "Lovelace", Street: []string{"1 Way"},
+		City: "London", Postcode: "N1", CountryID: "GB", Telephone: "123",
+	})
+	if errs.CodeOf(err) != errs.CodeUnsupportedCapability {
+		t.Fatalf("err = %v", err)
+	}
+}

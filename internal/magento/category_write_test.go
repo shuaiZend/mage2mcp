@@ -146,3 +146,25 @@ func TestDeleteCategory(t *testing.T) {
 		t.Fatalf("validation err = %v", err)
 	}
 }
+
+func TestCreateCategoryURLKey(t *testing.T) {
+	var body categoryCreateBody
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":9,"name":"Demo","is_active":true,"position":1,"level":2,"include_in_menu":true}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	if _, err := svc.CreateCategory(context.Background(), CategoryCreateInput{
+		ParentID: 2, Name: "Demo", IsActive: true, Position: 1, IncludeInMenu: true, URLKey: "demo-custom",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Category.CustomAttributes) != 1 ||
+		body.Category.CustomAttributes[0].AttributeCode != "url_key" ||
+		body.Category.CustomAttributes[0].Value != "demo-custom" {
+		t.Fatalf("custom attributes = %+v", body.Category.CustomAttributes)
+	}
+}

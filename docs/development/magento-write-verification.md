@@ -56,3 +56,20 @@
 Fix W1–W6 and W9 first (correctness and misleading failures), then W7/W8
 (credential/store discovery), then W10–W12. W1/W2 are the most dangerous because
 they report failure after a successful write.
+
+## Fix status (v0.9.0)
+
+| ID | Status | Evidence |
+|---|---|---|
+| W1 | fixed | `media.upload` accepts the scalar entry id, resolves the gallery entry, and returns it; demo upload + update re-verified |
+| W2 | fixed | `attributes.options.create` accepts the scalar option id and returns `{label, value}`; demo returned `217` |
+| W3 | fixed | `media.update` reads the current entry and sends `media_type`/`file`; demo update succeeded |
+| W4 | fixed | upstream 400/422 messages are included as `details.upstream_message` (sanitized, ≤300 chars); import rows include it |
+| W5 | improved | missing place-order routes now return `unsupported_capability` with stage/cart id and a best-effort cart cleanup; the demo does not expose cart deletion either, so cleanup reports `failed: not_found` |
+| W6 | improved | missing customer-address routes now return `unsupported_capability` with guidance instead of a bare 404 |
+| W7 | documented | the demo rejects OAuth 1.0a (`HMAC-SHA1` unsupported); bearer tokens from the admin token endpoint work. The gateway surfaces Magento's message; automatic token acquisition is not implemented |
+| W8 | improved | 400 errors include `store_code` and a hint to verify it; upstream messages are surfaced |
+| W9 | fixed | `category.create` accepts `url_key` and sends it through `custom_attributes`; demo create succeeded |
+| W10 | fixed | `category.tree` now returns the list under `categories` (breaking output rename, pre-1.0) |
+| W11 | fixed | `inventory.assign` defaults `status` to 1 when omitted |
+| W12 | fixed | import of a minimal CSV now succeeds; upstream validation messages are surfaced when a row fails |
