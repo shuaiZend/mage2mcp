@@ -13,7 +13,7 @@ import (
 )
 
 func TestAnalyzeSales(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"total_count":2,"items":[
 			{"entity_id":1,"created_at":"2026-11-19 10:00:00","status":"processing","grand_total":100,"subtotal":90,
