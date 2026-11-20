@@ -138,3 +138,18 @@ func TestUpdateAndDeleteProductOption(t *testing.T) {
 		t.Fatalf("delete id err = %v", err)
 	}
 }
+
+func TestProductUnmarshalCategories(t *testing.T) {
+	var product Product
+	raw := []byte(`{"id":1,"sku":"SKU-1","name":"Widget","type_id":"simple","price":9.99,"attribute_set_id":4,
+		"extension_attributes":{"category_links":[{"category_id":"10","position":0},{"category_id":11,"position":1}],"website_ids":[1]}}`)
+	if err := json.Unmarshal(raw, &product); err != nil {
+		t.Fatal(err)
+	}
+	if len(product.CategoryIDs) != 2 || product.CategoryIDs[0] != 10 || product.CategoryIDs[1] != 11 {
+		t.Fatalf("category ids = %v", product.CategoryIDs)
+	}
+	if len(product.WebsiteIDs) != 1 || product.WebsiteIDs[0] != 1 {
+		t.Fatalf("website ids = %v", product.WebsiteIDs)
+	}
+}

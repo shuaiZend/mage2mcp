@@ -36,6 +36,8 @@ Common behavior:
 | `magento.category.get` | read | 30s | One category by id |
 | `magento.category.tree` | read | 30s | Category subtree under a root, flattened depth-first (depth 1-5) |
 | `magento.category.products` | read | 30s | Products assigned to a category, paginated |
+| `magento.store.configs` | read | 30s | Store views with locale, currencies, timezone, base URL |
+| `magento.categories.flat` | read | 30s | Category id/parent/name/level/path rows for SKU mapping |
 | `magento.customer.groups` | read | 30s | Customer groups (id, code, tax class) for customer writes |
 | `magento.customer.get` | read | 30s | One customer with a PII-safe projection (no email, name, or addresses) |
 | `magento.customer.search` | read | 30s | Exact-email customer lookup; response omits email, name, and addresses |
@@ -101,7 +103,7 @@ Common behavior:
 | `magento.shipment.get` | read | 30s | One shipment by id |
 | `magento.creditmemo.list` | read | 30s | Credit memos of one order |
 | `magento.creditmemo.get` | read | 30s | One credit memo by id |
-| `magento.sales.analysis` | read | 120s | Business summary: KPIs, daily trend, status/payment/store mix, country, top SKUs (aggregates only) |
+| `magento.sales.analysis` | read | 120s | Business summary: KPIs, repeat/new customers, coupons, refunds by SKU, daily/weekday/hour trend, status/payment/store/currency/shipping mix, AOV bands, country, top SKUs, shipment latency |
 | `magento.sales.summary` | read | 30s | Per-day order count, grand-total revenue, and item quantity over a bounded window (max 1000 orders, truncation reported) |
 | `magento.product.create` | write + confirmation | 60s | Simple/virtual/downloadable/bundle create with EAV attributes plus description, short_description, url_key, meta_title, meta_keywords, meta_description (SEO guidance in the schema) |
 | `magento.product.update` | write + confirmation | 60s | Merge update of provided fields, including SEO/content fields and category/website reassignment |
