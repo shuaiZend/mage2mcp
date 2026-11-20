@@ -262,3 +262,27 @@ NOT READY, and none of them is true as of this document:
 
 If any of those becomes true later, this document must be updated before the next
 release. A limitation is only honest while it is stated.
+
+## Final state of the remediation
+
+Every finding in the audit reports is entered in
+[`remediation-plan.md`](remediation-plan.md) with a status. At the close of the
+remediation:
+
+| Status | Count |
+|---|---|
+| Closed (fixed, verified, already fixed, or recorded as documentation) | 113 |
+| Partial | 1 (`PERF-16`) |
+| Open P0, P1 or P2 | **0** |
+
+The one partial item is a performance optimisation, not a behavioural defect.
+`PERF-16`'s bulk update and bulk attribute-option paths now fan out under a bound; the
+configurable children path is deliberately left sequential because it fails fast on the
+first child error and reports that one SKU. Running children concurrently would make
+"which child failed" nondeterministic and require the result contract to carry a list of
+failures — a contract change rather than a defect fix, and one that would complicate the
+compensation story that `orphan_skus` and `completed_stages` exist to support.
+
+Everything that could change an outcome for a caller was fixed and verified, most of it
+against a real store (see the live test report). What remains is throughput work on a
+path that is already correct.
