@@ -125,15 +125,27 @@ func (s *Service) CreateProductOption(ctx context.Context, sku string, in Custom
 			}
 			return nil, e
 		}
+		// The fallback write reported success. Never fabricate the option from the
+		// request: read it back and, if it is not there, say so. A synthetic
+		// success would tell the caller an option exists when the product does
+		// not list it.
 		options, listErr := s.ProductOptions(ctx, sku)
-		if listErr == nil {
-			for i := range options {
-				if options[i].Title == in.Title {
-					return &options[i], nil
-				}
+		if listErr != nil {
+			return nil, errs.New(errs.CodeUpstreamUnavailable,
+				"Magento accepted the custom-option write but the product options could not be read back; verify the product before retrying").
+				WithDetail("sku", sku).
+				WithDetail("option_title", in.Title).
+				WithCause(listErr)
+		}
+		for i := range options {
+			if options[i].Title == in.Title {
+				return &options[i], nil
 			}
 		}
-		return &ProductOption{Title: in.Title, Type: in.Type, IsRequire: in.IsRequire, SortOrder: in.SortOrder}, nil
+		return nil, errs.New(errs.CodeConflict,
+			"Magento accepted the custom-option write but the product does not list the option; verify the product before retrying").
+			WithDetail("sku", sku).
+			WithDetail("option_title", in.Title)
 	}
 	var option ProductOption
 	if err := json.Unmarshal(raw, &option); err != nil {

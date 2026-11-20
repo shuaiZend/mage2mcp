@@ -103,14 +103,13 @@ func (s *Service) UploadMedia(ctx context.Context, sku string, in MediaUploadInp
 	}
 	var created MediaEntry
 	if len(raw) > 0 {
-		// Magento returns the new entry id as a JSON string; older builds return
-		// the full entry. Accept both and resolve the gallery entry when needed.
-		var idText string
-		if err := json.Unmarshal(raw, &idText); err == nil && idText != "" {
-			id, convErr := strconv.Atoi(idText)
-			if convErr != nil {
-				return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media id").WithCause(convErr)
-			}
+		id, scalar, err := decodeMediaEntryID(raw)
+		if err != nil {
+			return nil, err
+		}
+		if scalar {
+			// Resolve the gallery entry so the caller sees the stored file,
+			// label, position, and roles rather than an echo of the request.
 			created = MediaEntry{ID: id, MediaType: "image", Label: in.Label, Position: in.Position, Types: in.Types}
 			if entries, listErr := s.ProductMedia(ctx, sku); listErr == nil {
 				for _, entry := range entries {
@@ -128,6 +127,37 @@ func (s *Service) UploadMedia(ctx context.Context, sku string, in MediaUploadInp
 	}
 	_ = content
 	return &created, nil
+}
+
+// decodeMediaEntryID extracts the new gallery entry id from a
+// POST /products/{sku}/media response. Magento returns it as a JSON integer
+// (ProductAttributeMediaGalleryManagementInterface::create(): int); some builds
+// and proxies return it as a JSON string, so both scalar shapes are accepted.
+// scalar is false when the body is not a scalar, in which case the caller
+// decodes the full media entry instead.
+func decodeMediaEntryID(raw []byte) (id int, scalar bool, err error) {
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err == nil {
+		return mediaEntryIDFromText(number.String())
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil && strings.TrimSpace(text) != "" {
+		return mediaEntryIDFromText(text)
+	}
+	return 0, false, nil
+}
+
+// mediaEntryIDFromText converts a scalar media id to a positive integer.
+func mediaEntryIDFromText(text string) (int, bool, error) {
+	id, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil || id <= 0 {
+		e := errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media id")
+		if err != nil {
+			e = e.WithCause(err)
+		}
+		return 0, false, e
+	}
+	return id, true, nil
 }
 
 type mediaUploadBody struct {

@@ -5,12 +5,15 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
 
 const (
@@ -48,11 +51,26 @@ type ShipmentCreateInput struct {
 // CreditmemoCreateInput is one credit memo creation request.
 type CreditmemoCreateInput struct {
 	OrderID            int            `json:"order_id"`
+	InvoiceID          int            `json:"invoice_id,omitempty"`
 	Items              []DocumentLine `json:"items"`
 	AdjustmentPositive float64        `json:"adjustment_positive,omitempty"`
 	AdjustmentNegative float64        `json:"adjustment_negative,omitempty"`
 	Comment            string         `json:"comment,omitempty"`
 	Notify             bool           `json:"notify"`
+
+	// IdempotencyKey makes the call replayable: repeating it with the same
+	// arguments returns the recorded credit memo instead of refunding twice.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// Instance is the configured instance id recorded in the operation ledger.
+	Instance string `json:"instance,omitempty"`
+}
+
+// CreditmemoCreateResult is the recorded outcome of a credit memo creation.
+type CreditmemoCreateResult struct {
+	Creditmemo  Creditmemo `json:"creditmemo"`
+	InvoiceID   int        `json:"invoice_id"`
+	OperationID string     `json:"operation_id,omitempty"`
+	Replayed    bool       `json:"replayed,omitempty"`
 }
 
 // CreateShipment ships order items with POST /shipments.
@@ -88,11 +106,72 @@ func (s *Service) CreateShipment(ctx context.Context, in ShipmentCreateInput) (*
 }
 
 // CreateCreditmemo refunds order items with POST /creditmemos.
-func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput) (*Creditmemo, error) {
+//
+// Before the call it reads the order and its invoices and validates, locally:
+//   - the invoice linkage (an explicit invoice_id, or the order's single invoice;
+//     several invoices require an explicit id, none is a validation error);
+//   - the refundable quantity per order item (qty_invoiced - qty_refunded), so an
+//     over-refund is rejected without any upstream write.
+//
+// The credit memo is recorded in the operation ledger with the authorised line
+// amount in integer minor units. An ambiguous outcome (timeout, transport
+// failure, 5xx) is recorded as unknown and returned as a non-retryable
+// operation_unknown: a retry could refund twice.
+func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput) (*CreditmemoCreateResult, error) {
 	if err := s.requireOrderService(); err != nil {
 		return nil, err
 	}
 	if err := validateCreditmemoCreate(in); err != nil {
+		return nil, err
+	}
+	if in.IdempotencyKey != "" && len(in.IdempotencyKey) > 256 {
+		return nil, invalidf("idempotency_key must be at most 256 characters")
+	}
+	state, err := s.orderRefundState(ctx, in.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	invoiceID, err := s.refundInvoiceID(ctx, in.OrderID, in.InvoiceID)
+	if err != nil {
+		return nil, err
+	}
+	amount, err := authorisedAmount(documentLinesToInvoiceLines(in.Items), state.Items, state.Currency)
+	if err != nil {
+		return nil, err
+	}
+	ops, err := configuredOperations()
+	if err != nil {
+		return nil, err
+	}
+	// The ledger is consulted before the refundable-quantity check: a repeat of a
+	// successful refund must replay the recorded credit memo, not be rejected as
+	// an over-refund because the quantity is now spent.
+	run, begun, err := ops.Begin(ctx, OperationRequest{
+		Tool: "magento.creditmemo.create", Instance: s.operationInstanceID(in.Instance),
+		Subject: callerSubject(ctx), IdempotencyKey: in.IdempotencyKey,
+		EntityType: storage.EntityCreditmemo, EntityID: strconv.Itoa(invoiceID),
+		Amount: &amount,
+		Args: creditmemoArgs{
+			OrderID: in.OrderID, InvoiceID: invoiceID, Items: in.Items,
+			AdjustmentPositive: in.AdjustmentPositive, AdjustmentNegative: in.AdjustmentNegative,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if begun != nil && begun.Decision == storage.DecisionReplay {
+		var recorded CreditmemoCreateResult
+		if err := Replay(begun, &recorded); err != nil {
+			return nil, err
+		}
+		recorded.Replayed = true
+		return &recorded, nil
+	}
+	// Pre-flight on a fresh attempt: reject an over-refund locally, before any
+	// refund request. The ledger row is closed as failed so a repeat with the same
+	// key returns this rejection instead of executing again.
+	if err := state.checkRefundable(in.Items); err != nil {
+		_ = run.Fail(ctx, string(errs.CodeOf(err)))
 		return nil, err
 	}
 	items := make([]invoiceItemBody, 0, len(in.Items))
@@ -100,20 +179,152 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 		items = append(items, invoiceItemBody(line))
 	}
 	body := creditmemoCreateBody{Entity: creditmemoEntityBody{
-		OrderID: in.OrderID, Items: items,
+		OrderID: in.OrderID, InvoiceID: invoiceID, Items: items,
 		AdjustmentPositive: in.AdjustmentPositive, AdjustmentNegative: in.AdjustmentNegative,
 		Comment: documentComment{Comment: in.Comment, IsVisibleOnFront: false},
 		Notify:  in.Notify,
 	}}
-	raw, err := s.client.do(ctx, http.MethodPost, "/creditmemos", nil, body)
-	if err != nil {
-		return nil, err
+	raw, postErr := s.client.do(ctx, http.MethodPost, "/creditmemos", nil, body)
+	switch classifyOperationError(postErr) {
+	case operationNotApplied:
+		_ = run.Fail(ctx, string(errs.CodeOf(postErr)))
+		return nil, postErr
+	case operationAmbiguous:
+		_ = run.Unknown(ctx, string(errs.CodeOf(postErr)))
+		return nil, operationUnknownError(run.ID(), "credit memo creation", string(errs.CodeOf(postErr)))
 	}
 	var creditmemo Creditmemo
 	if err := json.Unmarshal(raw, &creditmemo); err != nil {
-		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable creditmemo payload").WithCause(err)
+		_ = run.Unknown(ctx, string(errs.CodeUpstreamUnavailable))
+		return nil, operationUnknownError(run.ID(), "credit memo creation", string(errs.CodeUpstreamUnavailable))
 	}
-	return &creditmemo, nil
+	result := &CreditmemoCreateResult{Creditmemo: creditmemo, InvoiceID: invoiceID, OperationID: run.ID()}
+	ref := "creditmemo:" + creditmemo.IncrementID
+	if creditmemo.IncrementID == "" {
+		ref = "creditmemo:" + strconv.Itoa(creditmemo.EntityID)
+	}
+	if err := run.Succeed(ctx, ref, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// creditmemoArgs is the canonical argument set hashed for replay detection.
+type creditmemoArgs struct {
+	OrderID            int            `json:"order_id"`
+	InvoiceID          int            `json:"invoice_id"`
+	Items              []DocumentLine `json:"items"`
+	AdjustmentPositive float64        `json:"adjustment_positive"`
+	AdjustmentNegative float64        `json:"adjustment_negative"`
+}
+
+// orderRefundState is the part of an order a refund decision needs.
+type orderRefundState struct {
+	EntityID   int               `json:"entity_id"`
+	Currency   string            `json:"order_currency_code"`
+	GrandTotal float64           `json:"grand_total"`
+	Items      []OrderItem       `json:"items"`
+	Refund     []orderRefundItem `json:"-"`
+}
+
+// orderRefundItem carries the invoiced and refunded quantities of one line.
+type orderRefundItem struct {
+	ItemID      int     `json:"item_id"`
+	QtyInvoiced float64 `json:"qty_invoiced"`
+	QtyRefunded float64 `json:"qty_refunded"`
+}
+
+// orderRefundState reads the order and decodes the invoiced/refunded quantities
+// per line item.
+func (s *Service) orderRefundState(ctx context.Context, orderID int) (*orderRefundState, error) {
+	raw, err := s.client.do(ctx, http.MethodGet, "/orders/"+strconv.Itoa(orderID), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var wire struct {
+		EntityID   int     `json:"entity_id"`
+		Currency   string  `json:"order_currency_code"`
+		GrandTotal float64 `json:"grand_total"`
+		Items      []struct {
+			ItemID      int     `json:"item_id"`
+			SKU         string  `json:"sku"`
+			Price       float64 `json:"price"`
+			RowTotal    float64 `json:"row_total"`
+			QtyInvoiced float64 `json:"qty_invoiced"`
+			QtyRefunded float64 `json:"qty_refunded"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order payload").WithCause(err)
+	}
+	state := &orderRefundState{EntityID: wire.EntityID, Currency: wire.Currency, GrandTotal: wire.GrandTotal}
+	state.Items = make([]OrderItem, 0, len(wire.Items))
+	state.Refund = make([]orderRefundItem, 0, len(wire.Items))
+	for _, item := range wire.Items {
+		state.Items = append(state.Items, OrderItem{
+			ItemID: item.ItemID, SKU: item.SKU, Price: item.Price, RowTotal: item.RowTotal,
+			QtyOrdered: item.QtyInvoiced,
+		})
+		state.Refund = append(state.Refund, orderRefundItem{
+			ItemID: item.ItemID, QtyInvoiced: item.QtyInvoiced, QtyRefunded: item.QtyRefunded,
+		})
+	}
+	return state, nil
+}
+
+// checkRefundable rejects a request whose quantity exceeds what is still
+// refundable, before any upstream write.
+func (s *orderRefundState) checkRefundable(lines []DocumentLine) error {
+	refundable := make(map[int]float64, len(s.Refund))
+	for _, item := range s.Refund {
+		refundable[item.ItemID] = item.QtyInvoiced - item.QtyRefunded
+	}
+	for _, line := range lines {
+		available, ok := refundable[line.OrderItemID]
+		if !ok {
+			return invalidf("order item %d is not part of the order", line.OrderItemID)
+		}
+		if line.Qty > available+1e-9 {
+			return invalidf("order item %d has %g refundable units, cannot refund %g",
+				line.OrderItemID, math.Max(0, available), line.Qty)
+		}
+	}
+	return nil
+}
+
+// refundInvoiceID resolves the invoice a credit memo is linked to: the explicit
+// id when given, otherwise the order's single invoice. Several invoices need an
+// explicit id; none is a validation error.
+func (s *Service) refundInvoiceID(ctx context.Context, orderID, requested int) (int, error) {
+	invoices, err := s.OrderInvoices(ctx, orderID)
+	if err != nil {
+		return 0, err
+	}
+	if requested > 0 {
+		for _, invoice := range invoices {
+			if invoice.EntityID == requested {
+				return requested, nil
+			}
+		}
+		return 0, invalidf("invoice %d does not belong to order %d", requested, orderID)
+	}
+	switch len(invoices) {
+	case 0:
+		return 0, invalidf("order %d has no invoice, so there is nothing to refund", orderID)
+	case 1:
+		return invoices[0].EntityID, nil
+	default:
+		return 0, invalidf("order %d has %d invoices; pass invoice_id to choose the one to refund", orderID, len(invoices))
+	}
+}
+
+// documentLinesToInvoiceLines adapts the refund lines to the shared amount helper.
+func documentLinesToInvoiceLines(lines []DocumentLine) []InvoiceLine {
+	out := make([]InvoiceLine, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, InvoiceLine(line))
+	}
+	return out
 }
 
 type documentComment struct {
@@ -145,6 +356,7 @@ type creditmemoCreateBody struct {
 
 type creditmemoEntityBody struct {
 	OrderID            int               `json:"order_id"`
+	InvoiceID          int               `json:"invoice_id,omitempty"`
 	Items              []invoiceItemBody `json:"items"`
 	AdjustmentPositive float64           `json:"adjustment_positive,omitempty"`
 	AdjustmentNegative float64           `json:"adjustment_negative,omitempty"`

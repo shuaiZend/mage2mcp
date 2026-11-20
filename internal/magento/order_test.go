@@ -5,9 +5,11 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -198,7 +200,7 @@ func TestOrderSummaryTool(t *testing.T) {
 	if err := Register(reg, svc); err != nil {
 		t.Fatal(err)
 	}
-	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg})
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg, Confirm: magentoConfirmService(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,5 +229,92 @@ func TestOrderSummaryTool(t *testing.T) {
 	raw, _ := json.Marshal(result.StructuredContent)
 	if !strings.Contains(string(raw), `"orders":1`) && !strings.Contains(string(raw), `"Orders":1`) {
 		t.Fatalf("summary payload = %s", raw)
+	}
+}
+
+// ordersPageHandler serves a synthetic order window of `total` orders, paged the
+// way Magento pages: pageSize items per currentPage, with total_count repeated on
+// every response.
+func ordersPageHandler(total int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("searchCriteria[currentPage]"))
+		if page == 0 {
+			page = 1
+		}
+		size, _ := strconv.Atoi(r.URL.Query().Get("searchCriteria[pageSize]"))
+		if size == 0 {
+			size = defaultOrderLimit
+		}
+		from := (page - 1) * size
+		to := from + size
+		if to > total {
+			to = total
+		}
+		items := make([]string, 0, size)
+		for i := from; i < to; i++ {
+			items = append(items, fmt.Sprintf(
+				`{"entity_id":%d,"created_at":"2026-11-%02d 10:00:00","grand_total":10,"total_qty_ordered":1,"order_currency_code":"USD"}`,
+				i+1, 1+i%28))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"items":[%s],"total_count":%d}`, strings.Join(items, ","), total)
+	}
+}
+
+// TestSalesSummaryTruncationIsNotSticky covers the audit finding that a complete
+// 924-order scan reported truncated=true: the flag latched on the first page
+// because total_count exceeded the page size.
+func TestSalesSummaryTruncationIsNotSticky(t *testing.T) {
+	const total = 924
+	ts := httptest.NewServer(ordersPageHandler(total))
+	defer ts.Close()
+
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	summary, err := testService(t, ts.URL).SalesSummary(context.Background(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ScannedOrders != total {
+		t.Fatalf("scanned_orders = %d, want %d", summary.ScannedOrders, total)
+	}
+	if summary.TotalAvailable != total {
+		t.Fatalf("total_available = %d, want %d", summary.TotalAvailable, total)
+	}
+	if summary.ExcludedOrders != 0 {
+		t.Fatalf("excluded_orders = %d, want 0", summary.ExcludedOrders)
+	}
+	if summary.Truncated {
+		t.Fatalf("truncated = true for a complete %d-order scan: %+v", total, summary)
+	}
+	if summary.TotalRevenue != float64(total)*10 {
+		t.Fatalf("total_revenue = %v, want %v", summary.TotalRevenue, float64(total)*10)
+	}
+}
+
+// TestSalesSummaryReportsExcludedOrders proves the flag is set only when orders
+// were actually excluded, and that the number excluded is reported.
+func TestSalesSummaryReportsExcludedOrders(t *testing.T) {
+	const total = 20000
+	ts := httptest.NewServer(ordersPageHandler(total))
+	defer ts.Close()
+
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	summary, err := testService(t, ts.URL).SalesSummary(context.Background(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ScannedOrders != maxSummaryOrders {
+		t.Fatalf("scanned_orders = %d, want the cap %d", summary.ScannedOrders, maxSummaryOrders)
+	}
+	if summary.TotalAvailable != total {
+		t.Fatalf("total_available = %d, want %d", summary.TotalAvailable, total)
+	}
+	if want := total - maxSummaryOrders; summary.ExcludedOrders != want {
+		t.Fatalf("excluded_orders = %d, want %d", summary.ExcludedOrders, want)
+	}
+	if !summary.Truncated {
+		t.Fatal("truncated = false although orders were excluded")
 	}
 }

@@ -9,8 +9,16 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 )
+
+// DecisionPending is the decision value an intent row carries: the call was
+// attempted, but no authorization decision has been made yet. Outcome rows carry
+// the real decision (allow / deny / error). Using a distinct value means a
+// phase-blind query for allowed calls cannot return a call that was denied.
+const DecisionPending = "pending"
 
 // AuditRecorder persists audit events in PostgreSQL.
 type AuditRecorder struct {
@@ -36,6 +44,36 @@ func (r *AuditRecorder) Record(ctx context.Context, e audit.Event) error {
 	}
 	subjectHash := sha256.Sum256([]byte(e.Subject))
 	_, err := r.store.pool.Exec(ctx, `
+		INSERT INTO audit_events
+			(event_id, occurred_at, subject_hash, identity_class, tool, instance_id,
+			 scope, decision, phase, state, error_code, request_id)
+		VALUES
+			(COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, NULLIF($4,''),
+			 $5, NULLIF($6,''), NULLIF($7,''), $8, $9, $10, NULLIF($11,''), NULLIF($12,''))`,
+		e.EventID, occurredAt, subjectHash[:], e.IdentityClass, e.Tool, e.Instance,
+		e.Scope, e.Decision, e.Phase, e.State, e.ErrorCode, e.RequestID)
+	if err != nil {
+		return fmt.Errorf("storage: insert audit event: %w", err)
+	}
+	return nil
+}
+
+// RecordInTx appends one event inside an existing transaction, so an outcome can
+// be committed atomically with the operation-ledger transition that produced it.
+// A crash can then never leave an intent whose outcome was silently lost.
+func (r *AuditRecorder) RecordInTx(ctx context.Context, tx pgx.Tx, e audit.Event) error {
+	if tx == nil {
+		return fmt.Errorf("storage: audit transaction is required")
+	}
+	if e.Subject == "" || e.Tool == "" || e.Decision == "" || e.Phase == "" {
+		return fmt.Errorf("storage: audit event is missing required fields")
+	}
+	occurredAt := e.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+	subjectHash := sha256.Sum256([]byte(e.Subject))
+	_, err := tx.Exec(ctx, `
 		INSERT INTO audit_events
 			(event_id, occurred_at, subject_hash, identity_class, tool, instance_id,
 			 scope, decision, phase, state, error_code, request_id)

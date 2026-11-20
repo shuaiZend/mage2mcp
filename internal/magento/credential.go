@@ -41,6 +41,9 @@ type InstanceSettings struct {
 	Endpoint   string
 	StoreCode  string
 	Credential string
+	// Limits bounds this instance's outbound requests. The zero value means
+	// DefaultLimits: an unconfigured deployment is still protected.
+	Limits Limits
 }
 
 // NewResolverFromSettings builds one service per configured store and returns a
@@ -52,7 +55,11 @@ func NewResolverFromSettings(settings []InstanceSettings) (*Resolver, error) {
 		if err != nil {
 			return nil, fmt.Errorf("magento %s: %w", inst.ID, err)
 		}
-		cfg := ClientConfig{BaseURL: inst.Endpoint, StoreCode: inst.StoreCode, Signer: signer}
+		// The caller decides the budget; a zero Limits means unlimited. The
+		// configuration layer supplies DefaultLimits when an instance does not
+		// mention limits, so "not configured" and "explicitly unlimited" stay
+		// distinguishable here.
+		cfg := ClientConfig{BaseURL: inst.Endpoint, StoreCode: inst.StoreCode, Signer: signer, Limits: inst.Limits}
 		if admin, ok := signer.(*AdminTokenSigner); ok {
 			// The admin form mints its token lazily, so it needs the instance
 			// it belongs to and the client that retries once on a 401.

@@ -1,0 +1,90 @@
+# mage2mcp production configuration template.
+#
+# Copy to config.yaml on the host (or mount it over
+# /etc/mage2mcp/config.yaml in the container) and provide the environment
+# variables below. The gateway refuses to start when authentication is enabled
+# and issuer, audience, or jwks_url is empty, so this file does not validate
+# until those values exist. That is deliberate: a production gateway must not
+# start with authentication half-configured.
+#
+# Required for authentication (the gateway refuses to start without these):
+#   export MAGE2MCP_AUTH_ISSUER="https://<team>.cloudflareaccess.com"
+#   export MAGE2MCP_AUTH_AUDIENCE="<Access application AUD tag>"
+#   export MAGE2MCP_AUTH_JWKS_URL="https://<team>.cloudflareaccess.com/cdn-cgi/access/certs"
+#
+# Required for durable audit/confirmations/jobs and the async import tools:
+#   export MAGE2MCP_DATABASE_URL="postgres://user:password@host:5432/mage2mcp?sslmode=require"
+#
+# Optional:
+#   export MAGE2MCP_LISTEN="0.0.0.0:8080"     # container only; bind the host port to loopback
+#   export MAGE2MCP_LOG_LEVEL="info"
+#   export MAGE2MCP_TOOLS_WRITES="false"
+#
+# Never set MAGE2MCP_AUTH_ENABLED=false or MAGE2MCP_DEV_INSECURE=true in
+# production. See docs/configuration.md for every key and environment variable.
+server:
+  listen: "0.0.0.0:8080"
+  shutdown_grace: 10s
+  # 16 MiB: sized for a maximum-size import (8 MiB decoded -> 11,184,812 bytes
+  # base64 plus the JSON envelope). Lower it only if you do not import; with
+  # tools.writes enabled a value below 12 MiB fails startup validation.
+  max_body_bytes: 16777216
+
+auth:
+  enabled: true
+  issuer: "${MAGE2MCP_AUTH_ISSUER}"
+  audience: "${MAGE2MCP_AUTH_AUDIENCE}"
+  jwks_url: "${MAGE2MCP_AUTH_JWKS_URL}"
+
+log:
+  level: "info"
+  format: "json"
+
+tools:
+  writes: false
+
+database:
+  url: "${MAGE2MCP_DATABASE_URL}"
+  max_conns: 10
+
+# Enable the data sources this deployment serves. Every enabled module needs at
+# least one instance; instance ids are globally unique across modules.
+datasources:
+  magento:
+    enabled: false
+    # instances:
+    #   - id: "store-us"
+    #     endpoint: "https://shop.example.com"
+    #     store_code: "default"
+    #     credential: "${MAGENTO_US_CREDENTIAL}"
+    #     # Optional outbound budget for this instance. Omit the block to keep the
+    #     # module default (50 rps, burst 100, 8 concurrent). An explicit
+    #     # all-zero block means unlimited.
+    #     limits:
+    #       requests_per_second: 50
+    #       burst: 100
+    #       max_concurrent: 8   # bearer:<token>, oauth1:..., or admin:<user>:<password>
+  cloudflare:
+    enabled: false
+    # instances:
+    #   - id: "zone-us"
+    #     account_id: "${CLOUDFLARE_ACCOUNT_ID}"
+    #     zone_id: "${CLOUDFLARE_ZONE_ID}"
+    #     credential: "${CLOUDFLARE_API_TOKEN}"
+  ga4:
+    enabled: false
+    # instances:
+    #   - id: "giztop"
+    #     property_id: "123456789"
+    #     credential: "${GA4_SERVICE_ACCOUNT}"      # service-account JSON or a static development token
+
+# Unified analytics bindings are optional. A binding requires Magento,
+# Cloudflare and GA4 to be enabled, exactly one Cloudflare instance, and exactly
+# one GA4 instance. Magento may have several instances. Uncomment only when the
+# data sources above are enabled and each has exactly one instance.
+#
+# bindings:
+#   - id: "store-us-analytics"
+#     magento: "store-us"
+#     cloudflare: "zone-us"
+#     ga4: "giztop"

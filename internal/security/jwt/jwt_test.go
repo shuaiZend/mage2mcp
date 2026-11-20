@@ -554,3 +554,103 @@ func TestVerifyDoesNotLogToken(t *testing.T) {
 		t.Fatal("raw token leaked into logs")
 	}
 }
+
+// TestMiddlewareVerifiesAssertionThroughTheSameVerifier proves the Cloudflare
+// Access assertion path uses this verifier and nothing weaker: a signed
+// assertion authenticates, while an expired, wrong-audience, or forged one is
+// rejected with the verifier's own stable reason.
+func TestMiddlewareVerifiesAssertionThroughTheSameVerifier(t *testing.T) {
+	f := newFixture(t)
+	v := f.verifier(t)
+
+	serve := func(t *testing.T, raw string) (*httptest.ResponseRecorder, string) {
+		t.Helper()
+		var subject string
+		h := auth.Middleware(v, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if id, ok := auth.IdentityFromContext(r.Context()); ok {
+				subject = id.Subject
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		if raw != "" {
+			req.Header.Set(auth.AssertionHeader, raw)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec, subject
+	}
+	rejectionReason := func(t *testing.T, rec *httptest.ResponseRecorder) string {
+		t.Helper()
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+		}
+		return body["reason"]
+	}
+
+	// A valid assertion authenticates.
+	rec, subject := serve(t, f.sign(t, f.claims()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid assertion: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	if subject != "user-123" {
+		t.Fatalf("valid assertion: subject = %q, want user-123", subject)
+	}
+
+	// Expired assertion: rejected with the verifier's reason.
+	expired := f.claims()
+	expired["exp"] = float64(time.Now().Add(-2 * time.Minute).Unix())
+	expired["iat"] = float64(time.Now().Add(-10 * time.Minute).Unix())
+	rec, _ = serve(t, f.sign(t, expired))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expired assertion: status %d, want 401", rec.Code)
+	}
+	if got := rejectionReason(t, rec); got != reasonExpired {
+		t.Fatalf("expired assertion: reason = %q, want %q", got, reasonExpired)
+	}
+
+	// Wrong audience: rejected by the same audience check the bearer path uses.
+	wrongAudience := f.claims()
+	wrongAudience["aud"] = "some-other-application"
+	rec, _ = serve(t, f.sign(t, wrongAudience))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong-audience assertion: status %d, want 401", rec.Code)
+	}
+	if got := rejectionReason(t, rec); got != reasonBadAudience {
+		t.Fatalf("wrong-audience assertion: reason = %q, want %q", got, reasonBadAudience)
+	}
+
+	// Forged signature under the real kid: rejected by the same signature check.
+	otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	forged := f.signWith(t, jwtlib.SigningMethodRS256, otherKey, f.rsaKid, f.claims())
+	rec, _ = serve(t, forged)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("forged assertion: status %d, want 401", rec.Code)
+	}
+	if got := rejectionReason(t, rec); got != reasonBadSignature {
+		t.Fatalf("forged assertion: reason = %q, want %q", got, reasonBadSignature)
+	}
+}
+
+// TestVerifyRolesComeFromTheClaim pins the SEC-09 trust boundary: roles are the
+// verified token claim, passed through verbatim. The verifier does not know the
+// policy and does not normalise or filter the values, so authorization must be
+// default-deny (proved in internal/security/rbac).
+func TestVerifyRolesComeFromTheClaim(t *testing.T) {
+	f := newFixture(t)
+	v := f.verifier(t)
+
+	claims := f.claims()
+	claims["roles"] = []string{"superuser", "viewer "}
+	id, err := v.Verify(context.Background(), f.sign(t, claims))
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(id.Roles) != 2 || id.Roles[0] != "superuser" || id.Roles[1] != "viewer " {
+		t.Fatalf("roles were rewritten by the verifier: %q", id.Roles)
+	}
+}

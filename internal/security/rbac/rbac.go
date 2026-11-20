@@ -47,6 +47,12 @@ var scopeRank = map[string]int{
 }
 
 // Policy is an immutable set of grants safe for concurrent use.
+//
+// The identity's roles are the IdP's verified claim (see internal/security/jwt):
+// this package does not map subjects to roles, so the IdP is the role authority.
+// An unknown role is simply a role with no grants, which is why default deny
+// covers both an identity with no roles and one claiming a role the policy has
+// never heard of.
 type Policy struct {
 	byRole map[string][]Grant
 }
@@ -70,8 +76,33 @@ func New(grants []Grant) (*Policy, error) {
 	return p, nil
 }
 
+// DefaultPolicy returns the shipped role ladder.
+//
+// The ladder is expressed as one grant per role, each at the role's highest
+// scope: a grant covers every lower rung (admin > destructive > write > read),
+// so `viewer` and `analyst` can never reach a write, and an `operator` write
+// grant can never reach a destructive call. Destructive and admin operations
+// therefore require a role whose grant was deliberately placed at that rung;
+// no read-only role is given a wildcard that permits a write.
+//
+// The role names match the seeded roles table (viewer, analyst, operator,
+// admin) and the matrix in docs/security/threat-model.md §6.2.
+func DefaultPolicy() (*Policy, error) {
+	return New([]Grant{
+		{Role: "viewer", Tool: "*", Scope: ScopeRead, Effect: EffectAllow},
+		{Role: "analyst", Tool: "*", Scope: ScopeRead, Effect: EffectAllow},
+		{Role: "operator", Tool: "*", Scope: ScopeWrite, Effect: EffectAllow},
+		{Role: "admin", Tool: "*", Scope: ScopeAdmin, Effect: EffectAllow},
+	})
+}
+
 // Authorize returns nil when the identity may call the tool on the instance at
 // the required scope. Every other outcome is a permission_denied error.
+//
+// A role that matches no grant contributes nothing; roles are additive across
+// the identity's roles, and an explicit deny on any matching grant wins over
+// every allow. Claiming an unknown or privileged-sounding role name therefore
+// cannot widen access — only a grant in this policy can.
 func (p *Policy) Authorize(id *auth.Identity, tool, instance, requiredScope string) error {
 	if p == nil || id == nil {
 		return denied("no policy or identity")

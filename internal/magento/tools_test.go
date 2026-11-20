@@ -132,7 +132,7 @@ func toolResultText(t *testing.T, res *mcp.CallToolResult) string {
 
 func TestToolsThroughInMemoryTransport(t *testing.T) {
 	reg, fake := newRegisteredTools(t)
-	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg})
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg, Confirm: magentoConfirmService(t)})
 	if err != nil {
 		t.Fatalf("NewMCP: %v", err)
 	}

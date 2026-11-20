@@ -12,6 +12,7 @@ import (
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
+	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 )
 
 // ImportJobPayload is the job payload for an asynchronous import.
@@ -28,17 +29,32 @@ type ImportJobPayload struct {
 }
 
 // ImportQueue is the queue surface the import tools need.
+//
+// Every read or cancel is scoped to the caller's instance and subject: a job
+// belonging to another tenant or another caller must be reported as not_found,
+// never as permission_denied, so the response cannot confirm that a job exists.
 type ImportQueue interface {
 	Enqueue(ctx context.Context, t jobs.Task) (string, error)
-	Cancel(ctx context.Context, id string) error
-	GetJob(ctx context.Context, id string) (*jobs.JobRecord, error)
+	Cancel(ctx context.Context, id, instanceID, subject string) error
+	GetJob(ctx context.Context, id, instanceID, subject string) (*jobs.JobRecord, error)
 }
 
-// ImportBatchReader looks up the persisted batch for a job.
+// ImportBatchReader looks up the persisted batch for a job, scoped to the
+// caller's instance and subject in the same way as ImportQueue.
 type ImportBatchReader interface {
-	GetImportBatchByJob(ctx context.Context, jobID string) (*jobs.ImportBatch, error)
-	GetImportBatch(ctx context.Context, id string) (*jobs.ImportBatch, error)
+	GetImportBatchByJob(ctx context.Context, jobID, instanceID, subject string) (*jobs.ImportBatch, error)
+	GetImportBatch(ctx context.Context, id, instanceID, subject string) (*jobs.ImportBatch, error)
 	ListImportBatches(ctx context.Context, instanceID string, limit int) ([]jobs.ImportBatch, error)
+}
+
+// callerSubject returns the verified subject the job operations are attributed
+// to. In production the auth middleware guarantees an identity; "anonymous" is
+// reachable only when authentication is disabled for loopback development.
+func callerSubject(ctx context.Context) string {
+	if id, ok := auth.IdentityFromContext(ctx); ok && id.Subject != "" {
+		return id.Subject
+	}
+	return "anonymous"
 }
 
 // RegisterImportJobs registers the asynchronous import tools. It requires a
@@ -55,11 +71,11 @@ func RegisterImportJobs(reg *registry.Registry, resolver *Resolver, queue Import
 	}
 	for _, tool := range []registry.Tool{
 		newImportStartTool(resolver, queue),
-		newImportStatusTool(queue),
-		newImportCancelTool(queue),
-		newImportResumeTool(queue, batches),
+		newImportStatusTool(resolver, queue),
+		newImportCancelTool(resolver, queue),
+		newImportResumeTool(resolver, queue, batches),
 		newImportBatchListTool(resolver, batches),
-		newImportBatchGetTool(batches),
+		newImportBatchGetTool(resolver, batches),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -95,7 +111,8 @@ type importStartOutput struct {
 }
 
 type importStatusInput struct {
-	JobID string `json:"job_id"`
+	Instance string `json:"instance"`
+	JobID    string `json:"job_id"`
 }
 
 type importStatusOutput struct {
@@ -103,7 +120,8 @@ type importStatusOutput struct {
 }
 
 type importCancelInput struct {
-	JobID string `json:"job_id"`
+	Instance string `json:"instance"`
+	JobID    string `json:"job_id"`
 }
 
 type importCancelOutput struct {
@@ -135,7 +153,7 @@ func newImportStartTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 				}
 				jobID, err := queue.Enqueue(ctx, jobs.Task{
 					Kind: jobs.TypeMagentoImport, Queue: jobs.QueueImport,
-					InstanceID: in.Instance, IdempotencyKey: in.IdempotencyKey,
+					InstanceID: in.Instance, Subject: callerSubject(ctx), IdempotencyKey: in.IdempotencyKey,
 					// Retries only cover failures before or during execution (for
 					// example an upstream outage); per-row failures are reported,
 					// not retried. Re-running a batch is safe because creates skip
@@ -152,13 +170,16 @@ func newImportStartTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 	return t
 }
 
-func newImportStatusTool(queue ImportQueue) registry.Tool {
+func newImportStatusTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 	t := toolMetadata(importStatusToolName, importStatusToolTitle, importStatusToolDescription)
 	t.Capability = "magento.import.read"
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(importStatusToolName, importStatusToolTitle, importStatusToolDescription, importStatusSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importStatusInput) (*mcp.CallToolResult, importStatusOutput, error) {
-				record, err := queue.GetJob(ctx, in.JobID)
+				if _, err := resolver.Resolve(in.Instance); err != nil {
+					return nil, importStatusOutput{}, err
+				}
+				record, err := queue.GetJob(ctx, in.JobID, in.Instance, callerSubject(ctx))
 				if err != nil {
 					return nil, importStatusOutput{}, err
 				}
@@ -169,12 +190,15 @@ func newImportStatusTool(queue ImportQueue) registry.Tool {
 	return t
 }
 
-func newImportCancelTool(queue ImportQueue) registry.Tool {
+func newImportCancelTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 	t := writeToolMetadata(importCancelToolName, importCancelToolTitle, importCancelToolDescription, "magento.import.write")
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpWriteTool(importCancelToolName, importCancelToolTitle, importCancelToolDescription, importCancelSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importCancelInput) (*mcp.CallToolResult, importCancelOutput, error) {
-				if err := queue.Cancel(ctx, in.JobID); err != nil {
+				if _, err := resolver.Resolve(in.Instance); err != nil {
+					return nil, importCancelOutput{}, err
+				}
+				if err := queue.Cancel(ctx, in.JobID, in.Instance, callerSubject(ctx)); err != nil {
 					return nil, importCancelOutput{}, err
 				}
 				return nil, importCancelOutput{JobID: in.JobID, Canceled: true}, nil
@@ -193,13 +217,16 @@ const (
 	importCancelToolTitle = "Cancel an asynchronous import"
 
 	importStartToolDescription = "Queues a bounded CSV/JSON product import for the worker " +
-		"(at most 8 MiB and 5000 rows) after structural validation. Returns a job id; poll import.status for progress and the partial-success report. " +
+		"(at most 8 MiB decoded and 5000 rows, and small enough that its base64 form fits the server body limit, 16 MiB by default) after structural validation. Returns a job id; poll import.status for progress and the partial-success report. " +
 		"Write operation: requires confirmation and a configured database queue."
-	importStatusToolDescription = "Reads the state, attempts, error code, and result summary of an asynchronous import job. Read-only."
-	importCancelToolDescription = "Cancels a queued or running asynchronous import job. Requires confirmation."
+	importStatusToolDescription = "Reads the state, attempts, error code, and result summary of an asynchronous import job on the named instance. Only the caller that started the job can read it. Read-only."
+	importCancelToolDescription = "Cancels a queued or running asynchronous import job on the named instance. Only the caller that started the job can cancel it. Requires confirmation."
 
 	jobIDPattern = `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
 
+	// importStartSchema bounds data_base64 to base64.EncodedLen(maxImportBytes)
+	// (11184812 = 4*ceil(8 MiB/3)) so the schema, the decoder, and the HTTP body
+	// cap agree; TestImportLimitsAgreeAcrossPackages fails if they drift.
 	importStartSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
 		"format": {"type": "string", "enum": ["csv", "json"]},
@@ -210,29 +237,33 @@ const (
 	}, "required": ["instance", "format", "data_base64"], "additionalProperties": false}`
 
 	importStatusSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
 		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `"}
-	}, "required": ["job_id"], "additionalProperties": false}`
+	}, "required": ["instance", "job_id"], "additionalProperties": false}`
 
 	importCancelSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
 		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `"},
 		"confirmation_id": {"type": "string", "maxLength": 128}
-	}, "required": ["job_id"], "additionalProperties": false}`
+	}, "required": ["instance", "job_id"], "additionalProperties": false}`
 )
 
 const (
 	importResumeToolName  = "magento.import.resume"
 	importResumeToolTitle = "Resume failed import rows"
 
-	importResumeToolDescription = "Queues a new asynchronous import containing only the failed rows of a previous job " +
-		"(from its bounded report). Requires confirmation and a configured database queue; repeated resumes of the same job return the same new job."
+	importResumeToolDescription = "Queues a new asynchronous import on the named instance containing only the failed rows of a previous job " +
+		"(from its bounded report). Only the caller that started the original job can resume it, and the new job runs on the same instance. Requires confirmation and a configured database queue; repeated resumes of the same job return the same new job."
 	importResumeSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
 		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `"},
 		"confirmation_id": {"type": "string", "maxLength": 128}
-	}, "required": ["job_id"], "additionalProperties": false}`
+	}, "required": ["instance", "job_id"], "additionalProperties": false}`
 )
 
 type importResumeInput struct {
-	JobID string `json:"job_id"`
+	Instance string `json:"instance"`
+	JobID    string `json:"job_id"`
 }
 
 type importResumeOutput struct {
@@ -240,12 +271,16 @@ type importResumeOutput struct {
 	Rows  int    `json:"rows"`
 }
 
-func newImportResumeTool(queue ImportQueue, batches ImportBatchReader) registry.Tool {
+func newImportResumeTool(resolver *Resolver, queue ImportQueue, batches ImportBatchReader) registry.Tool {
 	t := writeToolMetadata(importResumeToolName, importResumeToolTitle, importResumeToolDescription, "magento.import.write")
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpWriteTool(importResumeToolName, importResumeToolTitle, importResumeToolDescription, importResumeSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importResumeInput) (*mcp.CallToolResult, importResumeOutput, error) {
-				record, err := queue.GetJob(ctx, in.JobID)
+				if _, err := resolver.Resolve(in.Instance); err != nil {
+					return nil, importResumeOutput{}, err
+				}
+				subject := callerSubject(ctx)
+				record, err := queue.GetJob(ctx, in.JobID, in.Instance, subject)
 				if err != nil {
 					return nil, importResumeOutput{}, err
 				}
@@ -253,9 +288,16 @@ func newImportResumeTool(queue ImportQueue, batches ImportBatchReader) registry.
 				if err := json.Unmarshal(record.Payload, &payload); err != nil {
 					return nil, importResumeOutput{}, errs.New(errs.CodeInvalidArgument, "job is not an import job")
 				}
+				// The job row's instance already matched the request, so a payload
+				// naming a different instance is corrupt; resuming it would write to
+				// a tenant the caller never named.
+				if payload.Instance != "" && payload.Instance != in.Instance {
+					return nil, importResumeOutput{}, errs.New(errs.CodeNotFound, "job not found")
+				}
+				payload.Instance = in.Instance
 				rows := make([]int, 0)
 				if batches != nil {
-					if batch, err := batches.GetImportBatchByJob(ctx, in.JobID); err == nil && batch != nil {
+					if batch, err := batches.GetImportBatchByJob(ctx, in.JobID, in.Instance, subject); err == nil && batch != nil {
 						for _, failure := range batch.Failures {
 							rows = append(rows, failure.RowNumber)
 						}
@@ -282,8 +324,9 @@ func newImportResumeTool(queue ImportQueue, batches ImportBatchReader) registry.
 				}
 				jobID, err := queue.Enqueue(ctx, jobs.Task{
 					Kind: jobs.TypeMagentoImport, Queue: jobs.QueueImport,
-					InstanceID: payload.Instance, IdempotencyKey: "resume:" + in.JobID,
-					Payload: raw, MaxAttempts: 2,
+					InstanceID: in.Instance, Subject: subject,
+					IdempotencyKey: "resume:" + in.JobID,
+					Payload:        raw, MaxAttempts: 2,
 				})
 				if err != nil {
 					return nil, importResumeOutput{}, err
@@ -302,7 +345,7 @@ const (
 		"(newest first, at most 100) with state, counts, and error code. Read-only."
 	importBatchGetToolName        = "magento.import.batch"
 	importBatchGetToolTitle       = "Get an import batch"
-	importBatchGetToolDescription = "Returns one asynchronous import batch by id with its counts and every failed row. Read-only."
+	importBatchGetToolDescription = "Returns one asynchronous import batch by id on the named instance with its counts and every failed row. Only the caller that started the owning job can read it. Read-only."
 
 	importBatchListSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
@@ -310,8 +353,9 @@ const (
 	}, "required": ["instance"], "additionalProperties": false}`
 
 	importBatchGetSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
 		"batch_id": {"type": "string", "pattern": "` + jobIDPattern + `"}
-	}, "required": ["batch_id"], "additionalProperties": false}`
+	}, "required": ["instance", "batch_id"], "additionalProperties": false}`
 )
 
 type importBatchListInput struct {
@@ -324,7 +368,8 @@ type importBatchListOutput struct {
 }
 
 type importBatchGetInput struct {
-	BatchID string `json:"batch_id"`
+	Instance string `json:"instance"`
+	BatchID  string `json:"batch_id"`
 }
 
 type importBatchGetOutput struct {
@@ -354,16 +399,19 @@ func newImportBatchListTool(resolver *Resolver, batches ImportBatchReader) regis
 	return t
 }
 
-func newImportBatchGetTool(batches ImportBatchReader) registry.Tool {
+func newImportBatchGetTool(resolver *Resolver, batches ImportBatchReader) registry.Tool {
 	t := toolMetadata(importBatchGetToolName, importBatchGetToolTitle, importBatchGetToolDescription)
 	t.Capability = "magento.import.read"
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(importBatchGetToolName, importBatchGetToolTitle, importBatchGetToolDescription, importBatchGetSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importBatchGetInput) (*mcp.CallToolResult, importBatchGetOutput, error) {
+				if _, err := resolver.Resolve(in.Instance); err != nil {
+					return nil, importBatchGetOutput{}, err
+				}
 				if batches == nil {
 					return nil, importBatchGetOutput{}, errs.New(errs.CodeInternal, "import batch store is not configured")
 				}
-				batch, err := batches.GetImportBatch(ctx, in.BatchID)
+				batch, err := batches.GetImportBatch(ctx, in.BatchID, in.Instance, callerSubject(ctx))
 				if err != nil {
 					return nil, importBatchGetOutput{}, err
 				}

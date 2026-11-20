@@ -20,7 +20,9 @@ import (
 const redacted = "[REDACTED]"
 
 // secretKeyFragments are matched, case-insensitively, as substrings of an
-// attribute key. A key containing any fragment is redacted.
+// attribute key. A key containing any fragment is redacted. This list must stay
+// identical to internal/security/confirm's copy: an approval summary and a log
+// line must agree on what counts as a credential-bearing key.
 var secretKeyFragments = []string{
 	"token",
 	"secret",
@@ -30,6 +32,11 @@ var secretKeyFragments = []string{
 	"api_key",
 	"apikey",
 	"credential",
+	"private",
+	"pwd",
+	"session",
+	"jwt",
+	"bearer",
 }
 
 // NewLogger returns a slog.Logger writing JSON (format "json") or text

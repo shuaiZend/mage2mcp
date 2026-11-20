@@ -33,8 +33,12 @@ const (
 	CodeConfirmationRequired  Code = "confirmation_required"
 	CodeInternal              Code = "internal"
 
-	CodeIllegalTransition           Code = "illegal_transition"
-	CodeIdempotencyKeyReuse         Code = "idempotency_key_reuse"
+	CodeIllegalTransition   Code = "illegal_transition"
+	CodeIdempotencyKeyReuse Code = "idempotency_key_reuse"
+	// CodeOperationUnknown means the mutation may or may not have been applied
+	// upstream. It is never a licence to retry: the caller must poll the operation
+	// until reconciliation resolves it. See the operation ledger.
+	CodeOperationUnknown            Code = "operation_unknown"
 	CodeArtifactExpired             Code = "artifact_expired"
 	CodeConfirmationMismatch        Code = "confirmation_param_mismatch"
 	CodeConfirmationUsed            Code = "confirmation_used"
@@ -58,7 +62,7 @@ var valid = map[Code]struct{}{
 	CodePermissionDenied: {}, CodeNotFound: {}, CodeConflict: {}, CodeRateLimited: {},
 	CodeUpstreamTimeout: {}, CodeUpstreamUnavailable: {}, CodeUnsupportedCapability: {},
 	CodeConfirmationRequired: {}, CodeInternal: {}, CodeIllegalTransition: {},
-	CodeIdempotencyKeyReuse: {}, CodeArtifactExpired: {}, CodeConfirmationMismatch: {},
+	CodeIdempotencyKeyReuse: {}, CodeOperationUnknown: {}, CodeArtifactExpired: {}, CodeConfirmationMismatch: {},
 	CodeConfirmationUsed: {}, CodeConfirmationExpired: {}, CodeEcommerceNotTracked: {},
 	CodeRequiresLogpush: {}, CodeInsufficientData: {}, CodeMappingIncomplete: {},
 	CodeCurrencyMismatch: {}, CodeIncompleteWindow: {}, CodeUnsupportedFormat: {},

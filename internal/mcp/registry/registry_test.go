@@ -114,3 +114,49 @@ func TestInputValidator(t *testing.T) {
 		t.Fatal("invalid schema accepted")
 	}
 }
+
+// TestWritesDisabledRejectsNonReadTools pins the registration-time write gate:
+// a module that forgets its own check cannot register a write tool.
+func TestWritesDisabledRejectsNonReadTools(t *testing.T) {
+	r := New()
+	r.SetWritesEnabled(false)
+	read := validTool()
+	read.Name = "magento.product.get"
+	if err := r.Register(read); err != nil {
+		t.Fatalf("read tool rejected with writes disabled: %v", err)
+	}
+	for _, permission := range []string{PermissionWrite, PermissionDestructive, PermissionAdmin} {
+		tool := validTool()
+		tool.Name = "magento.product." + permission
+		tool.Permission = permission
+		tool.Annotations = mcp.ToolAnnotations{ReadOnlyHint: false}
+		if permission == PermissionDestructive {
+			destructive := true
+			tool.RequiresConfirmation = true
+			tool.Annotations.DestructiveHint = &destructive
+		}
+		if err := r.Register(tool); err == nil {
+			t.Errorf("%s tool registered with writes disabled", permission)
+		}
+	}
+	if r.HasWrites() {
+		t.Fatal("HasWrites true with only a read tool")
+	}
+}
+
+// TestPlatformInfoIsAValidRegistryName pins the two-segment platform exception.
+func TestPlatformInfoIsAValidRegistryName(t *testing.T) {
+	tool := validTool()
+	tool.Name = "platform.info"
+	tool.Capability = "platform.info.read"
+	if err := Validate(tool); err != nil {
+		t.Fatalf("platform.info rejected: %v", err)
+	}
+	for _, bad := range []string{"platform", "platform.", "platform.Info", "platform.info.extra"} {
+		tool := validTool()
+		tool.Name = bad
+		if err := Validate(tool); err == nil {
+			t.Errorf("name %q accepted, want rejection", bad)
+		}
+	}
+}

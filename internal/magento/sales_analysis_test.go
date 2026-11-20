@@ -4,8 +4,12 @@ package magento
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -135,5 +139,133 @@ func TestAnalyzeSalesDrilldown(t *testing.T) {
 	}
 	if a.ByStore[0].Key != "Default Store View" {
 		t.Fatalf("store key = %q", a.ByStore[0].Key)
+	}
+}
+
+// analysisOrderPage renders one page of synthetic orders for the /orders
+// endpoint. created_at is inside November 2026 so the window is realistic.
+func analysisOrderPage(firstEntityID, count int) string {
+	items := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		entityID := firstEntityID + i
+		items = append(items, fmt.Sprintf(
+			`{"entity_id":%d,"created_at":"2026-11-%02d 10:00:00","status":"processing","grand_total":10,`+
+				`"subtotal":9,"discount_amount":0,"shipping_amount":1,"tax_amount":0,"total_qty_ordered":1,`+
+				`"order_currency_code":"USD","store_name":"Main","customer_is_guest":0,"payment":{"method":"checkmo"},`+
+				`"items":[{"sku":"SKU-%d","name":"Item","product_type":"simple","qty_ordered":1,"row_total":9}]}`,
+			entityID, 1+entityID%28, entityID%50))
+	}
+	return strings.Join(items, ",")
+}
+
+// TestAnalyzeSalesPagingIsExplicit covers the offset-paging caveat: the response
+// must state how the window was scanned, and the query must impose a total order
+// so pages cannot repeat or skip an order that shares a created_at second.
+func TestAnalyzeSalesPagingIsExplicit(t *testing.T) {
+	const total = 924
+	var mu sync.Mutex
+	var secondarySorts []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/rest/default/V1/orders" {
+			_, _ = w.Write([]byte(`{"items":[],"total_count":0}`))
+			return
+		}
+		mu.Lock()
+		secondarySorts = append(secondarySorts, r.URL.Query().Get("searchCriteria[sortOrders][1][field]"))
+		mu.Unlock()
+		page, _ := strconv.Atoi(r.URL.Query().Get("searchCriteria[currentPage]"))
+		if page == 0 {
+			page = 1
+		}
+		from := (page - 1) * analysisPageSize
+		count := analysisPageSize
+		if from+count > total {
+			count = total - from
+		}
+		if count < 0 {
+			count = 0
+		}
+		_, _ = fmt.Fprintf(w, `{"total_count":%d,"items":[%s]}`, total, analysisOrderPage(from+1, count))
+	}))
+	defer ts.Close()
+
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	analysis, err := testService(t, ts.URL).AnalyzeSales(context.Background(), from, to, 20000, "UTC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.Orders != total || analysis.TotalAvailable != total {
+		t.Fatalf("orders = %d total_available = %d, want %d", analysis.Orders, analysis.TotalAvailable, total)
+	}
+	if analysis.ExcludedOrders != 0 || analysis.Truncated {
+		t.Fatalf("excluded = %d truncated = %v, want a complete scan", analysis.ExcludedOrders, analysis.Truncated)
+	}
+	if analysis.Paging.Method != analysisPagingMethod {
+		t.Fatalf("paging.method = %q, want %q", analysis.Paging.Method, analysisPagingMethod)
+	}
+	if analysis.Paging.SnapshotConsistent {
+		t.Fatal("offset paging must not claim snapshot consistency")
+	}
+	if analysis.Paging.OrderBy != analysisPagingOrder {
+		t.Fatalf("paging.order_by = %q, want %q", analysis.Paging.OrderBy, analysisPagingOrder)
+	}
+	if analysis.Paging.Caveat == "" {
+		t.Fatal("paging.caveat is empty: a caller cannot judge completeness")
+	}
+	if analysis.Paging.DuplicatesSkipped != 0 {
+		t.Fatalf("duplicates_skipped = %d, want 0", analysis.Paging.DuplicatesSkipped)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(secondarySorts) < 2 {
+		t.Fatalf("order pages requested = %d, want at least 2", len(secondarySorts))
+	}
+	for i, field := range secondarySorts {
+		if field != "entity_id" {
+			t.Fatalf("page %d secondary sort = %q, want entity_id", i+1, field)
+		}
+	}
+}
+
+// TestAnalyzeSalesDropsDuplicateOrders proves a page boundary that repeats
+// orders cannot double-count revenue, and that the repeat is reported.
+func TestAnalyzeSalesDropsDuplicateOrders(t *testing.T) {
+	const perPage = analysisPageSize
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/rest/default/V1/orders" {
+			_, _ = w.Write([]byte(`{"items":[],"total_count":0}`))
+			return
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("searchCriteria[currentPage]"))
+		switch page {
+		case 1, 2:
+			// Page 2 repeats page 1 exactly: the shifted-boundary case.
+			_, _ = fmt.Fprintf(w, `{"total_count":%d,"items":[%s]}`, perPage, analysisOrderPage(1, perPage))
+		default:
+			_, _ = fmt.Fprintf(w, `{"total_count":%d,"items":[]}`, perPage)
+		}
+	}))
+	defer ts.Close()
+
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	analysis, err := testService(t, ts.URL).AnalyzeSales(context.Background(), from, to, 20000, "UTC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.Orders != perPage {
+		t.Fatalf("orders = %d, want %d (the duplicate page must not be counted)", analysis.Orders, perPage)
+	}
+	if want := float64(perPage) * 10; analysis.Revenue != want {
+		t.Fatalf("revenue = %v, want %v (no double counting)", analysis.Revenue, want)
+	}
+	if analysis.Paging.DuplicatesSkipped != perPage {
+		t.Fatalf("duplicates_skipped = %d, want %d", analysis.Paging.DuplicatesSkipped, perPage)
+	}
+	if analysis.Truncated || analysis.ExcludedOrders != 0 {
+		t.Fatalf("excluded = %d truncated = %v, want a complete scan", analysis.ExcludedOrders, analysis.Truncated)
 	}
 }

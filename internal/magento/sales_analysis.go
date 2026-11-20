@@ -23,7 +23,30 @@ const (
 	topCouponLimit        = 10
 	topRefundSKULimit     = 10
 	shipmentLookaheadDays = 7
+
+	// Paging is described to the caller, not hidden: the scan uses Magento's
+	// currentPage (SQL OFFSET) paging, which is not a database snapshot.
+	analysisPagingMethod = "offset"
+	analysisPagingOrder  = "created_at asc, entity_id asc"
+	analysisPagingCaveat = "offset paging is not snapshot-consistent: an order inserted or deleted while the scan runs can shift a page boundary; duplicate entity ids are dropped and any shortfall is reported in excluded_orders"
 )
+
+// PagingInfo states how an order window was scanned so a caller can judge
+// completeness without guessing.
+type PagingInfo struct {
+	// Method is the paging mechanism ("offset").
+	Method string `json:"method"`
+	// OrderBy is the sort key the scan requested.
+	OrderBy string `json:"order_by"`
+	// SnapshotConsistent reports whether the scan observed a fixed snapshot.
+	// It is false for offset paging.
+	SnapshotConsistent bool `json:"snapshot_consistent"`
+	// DuplicatesSkipped counts orders returned on more than one page and
+	// dropped, so an unstable page boundary cannot double-count revenue.
+	DuplicatesSkipped int `json:"duplicates_skipped"`
+	// Caveat explains how a caller must read the completeness fields.
+	Caveat string `json:"caveat,omitempty"`
+}
 
 // DimensionStat is one grouped measure (status, country, payment, store).
 type DimensionStat struct {
@@ -93,13 +116,19 @@ type SKUStat struct {
 }
 
 // SalesAnalysis is a PII-free business summary of an order window.
+//
+// Orders is the number of orders aggregated, TotalAvailable is what Magento
+// reported for the window, and ExcludedOrders is the difference. Paging states
+// how the window was scanned and whether the result can be treated as complete.
 type SalesAnalysis struct {
 	From            string          `json:"from"`
 	To              string          `json:"to"`
 	Timezone        string          `json:"timezone"`
 	Orders          int             `json:"orders"`
 	TotalAvailable  int             `json:"total_available"`
+	ExcludedOrders  int             `json:"excluded_orders"`
 	Truncated       bool            `json:"truncated"`
+	Paging          PagingInfo      `json:"paging"`
 	Revenue         float64         `json:"revenue"`
 	Subtotal        float64         `json:"subtotal"`
 	Discount        float64         `json:"discount"`
@@ -223,6 +252,8 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 	coupons := map[string]*CouponStat{}
 	customers := map[int]*customerAgg{}
 	orderTimes := map[int]time.Time{}
+	seenOrders := make(map[int]struct{}, 1024)
+	duplicatesSkipped := 0
 	var orderValues []float64
 	var couponRevenue, nonCouponRevenue float64
 	var couponCount, nonCouponCount int
@@ -249,6 +280,16 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 			if result.Orders >= maxOrders {
 				result.Truncated = true
 				break
+			}
+			// Offset paging can hand the same order out twice when a page
+			// boundary shifts mid-scan. Drop it so revenue is never double
+			// counted, and record that it happened.
+			if order.EntityID > 0 {
+				if _, duplicate := seenOrders[order.EntityID]; duplicate {
+					duplicatesSkipped++
+					continue
+				}
+				seenOrders[order.EntityID] = struct{}{}
 			}
 			result.Orders++
 			result.Revenue += order.GrandTotal
@@ -354,6 +395,19 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 		}
 	}
 	result.Truncated = result.Truncated || result.TotalAvailable > result.Orders
+	if result.TotalAvailable < result.Orders {
+		// A page boundary moved backwards (an order was deleted mid-scan):
+		// report what was seen rather than a negative remainder.
+		result.TotalAvailable = result.Orders
+	}
+	result.ExcludedOrders = result.TotalAvailable - result.Orders
+	result.Paging = PagingInfo{
+		Method:             analysisPagingMethod,
+		OrderBy:            analysisPagingOrder,
+		SnapshotConsistent: false,
+		DuplicatesSkipped:  duplicatesSkipped,
+		Caveat:             analysisPagingCaveat,
+	}
 	if result.Orders > 0 {
 		result.AOV = result.Revenue / float64(result.Orders)
 	}
@@ -458,6 +512,12 @@ func analysisQuery(from, to time.Time, page int) url.Values {
 	query.Set("searchCriteria[filter_groups][1][filters][0][condition_type]", "lt")
 	query.Set("searchCriteria[sortOrders][0][field]", "created_at")
 	query.Set("searchCriteria[sortOrders][0][direction]", "asc")
+	// created_at is not unique (many orders share a second), so OFFSET paging
+	// over it alone is not a total order: rows could repeat or vanish across
+	// pages even without concurrent writes. entity_id makes the order
+	// deterministic.
+	query.Set("searchCriteria[sortOrders][1][field]", "entity_id")
+	query.Set("searchCriteria[sortOrders][1][direction]", "asc")
 	return query
 }
 

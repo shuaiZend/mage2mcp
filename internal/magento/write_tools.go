@@ -5,6 +5,7 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -52,12 +53,12 @@ const (
 		"Only supplied fields are sent, so Magento's merge semantics preserve omitted attributes; " +
 		"at least one of name, price, status, visibility, or attributes is required." +
 		instanceResolutionNote
-	configurableCreateToolDescription = "Creates a configurable product in the configured Magento 2 REST catalog using the integration credential. " +
-		"The parent price is derived from its children, and the parent stock status is set after linking; verify the storefront option selector. " +
-		"each child simple product is created (POST /rest/{store_code}/V1/products), then the parent with type_id=configurable " +
-		"and configurable_product_options, then one child link per child (POST /rest/{store_code}/V1/configurable-products/{sku}/child). " +
-		"This is a write operation and it is NOT atomic: a failure leaves every completed write in place and reports " +
-		"stage and completed_skus in the error details, so the caller must run compensation." +
+	configurableCreateToolDescription = "Creates a configurable product in the configured Magento 2 REST catalog as a staged workflow: " +
+		"precheck, children, parent, links (verified by read-back), stock. The result always carries the execution record: operation_id, " +
+		"outcome completed|partial, stages, completed_stages, failed_stage, orphan_skus. A partial run leaves completed writes in place and " +
+		"reports unlinked children as orphan_skus, which must be reconciled. Resume with the returned operation_id: existing children and " +
+		"parent are reused and missing links repaired, so a resumed run is idempotent and writes no duplicate SKU; a fresh run is not " +
+		"idempotent and refuses a pre-existing SKU. Requires human confirmation." +
 		instanceResolutionNote
 	configurableAddChildToolDescription = "Links an existing simple product to a configurable parent in the configured Magento 2 REST catalog " +
 		"(POST /rest/{store_code}/V1/configurable-products/{sku}/child) using the integration credential. " +
@@ -71,38 +72,40 @@ const (
 		"At most 100 items are accepted per call. MSI source items alone do not update a configurable parent's legacy stock status; verify the parent is salable after assigning child stock." +
 		instanceResolutionNote
 
-	instanceProp         = `"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}`
-	confirmationProp     = `"confirmation_id": {"type": "string", "maxLength": 128, "description": "Approval id from a confirmation_required response; resend the same arguments with this id to execute."}`
-	skuProp              = `"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}`
-	nameProp             = `"name": {"type": "string", "minLength": 1, "maxLength": 255}`
-	setProp              = `"attribute_set_id": {"type": "integer", "minimum": 1}`
-	typeIDProp           = `"type_id": {"type": "string", "enum": ["simple", "virtual", "downloadable", "bundle"]}`
-	priceProp            = `"price": {"type": "string", "pattern": "` + priceInputPattern + `", "description": "Decimal price string, up to 4 fraction digits."}`
-	statusProp           = `"status": {"type": "integer", "enum": [1, 2]}`
-	visibilityProp       = `"visibility": {"type": "integer", "enum": [1, 2, 3, 4]}`
-	websiteIDsProp       = `"website_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "maxItems": 50}`
-	categoryIDsProp      = `"category_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 500}`
-	attributesProp       = `"attributes": {"type": "object", "additionalProperties": {"type": "string", "maxLength": 255}, "description": "Custom EAV attributes keyed by attribute code."}`
-	childAttributesProp  = `"attributes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "maxLength": 255}}`
-	quantityProp         = `"quantity": {"type": "integer", "minimum": 0, "description": "Optional default-source quantity assigned after the product exists."}`
-	descriptionProp      = `"description": {"type": "string", "maxLength": 65535, "description": "Full product description (HTML allowed). For SEO, write at least 300 characters of unique, keyword-relevant copy; do not duplicate other products."}`
-	shortDescriptionProp = `"short_description": {"type": "string", "maxLength": 2048, "description": "Short summary shown in listings; a 1-2 sentence benefit statement works best."}`
-	urlKeyProp           = `"url_key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,254}$", "description": "SEO URL slug: lowercase letters, digits, and hyphens; include the main keyword, omit stop words."}`
-	metaTitleProp        = `"meta_title": {"type": "string", "maxLength": 255, "description": "SEO title tag. 30-60 characters is the useful range for search results; front-load the keyword and brand."}`
-	metaKeywordsProp     = `"meta_keywords": {"type": "string", "maxLength": 255, "description": "Optional comma-separated keywords; low ranking value, keep it short and relevant."}`
-	metaDescriptionProp  = `"meta_description": {"type": "string", "maxLength": 255, "description": "SEO meta description. 120-160 characters is the useful range; state the benefit and include a call to action."}`
-	seoProps             = descriptionProp + `, ` + shortDescriptionProp + `, ` + urlKeyProp + `, ` + metaTitleProp + `, ` + metaKeywordsProp + `, ` + metaDescriptionProp
-	weightProp           = `"weight": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Product weight for shipping (decimal, up to 4 fraction digits)."}`
-	specialPriceProp     = `"special_price": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Promotional price; pair it with special_from_date/special_to_date."}`
-	specialFromProp      = `"special_from_date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Special price start date, YYYY-MM-DD."}`
-	specialToProps       = `"special_to_date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Special price end date, YYYY-MM-DD; must not precede special_from_date."}`
-	costProp             = `"cost": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Cost of goods, used for margin reporting."}`
-	taxClassProp         = `"tax_class_id": {"type": "integer", "minimum": 0, "description": "Magento tax class id; 0 leaves the default."}`
-	pricingProps         = weightProp + `, ` + specialPriceProp + `, ` + specialFromProp + `, ` + specialToProps + `, ` + costProp + `, ` + taxClassProp
+	instanceProp                = `"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}`
+	confirmationProp            = `"confirmation_id": {"type": "string", "maxLength": 128, "description": "Approval id from a confirmation_required response; resend the same arguments with this id to execute."}`
+	idempotencyKeyProp          = `"idempotency_key": {"type": "string", "maxLength": 256, "description": "Optional replay key. Repeating it with the same arguments returns the recorded outcome without a second upstream mutation; reusing it with different arguments is rejected as idempotency_key_reuse. Without a key one is derived from the arguments. The key is not caller-scoped, so treat it as a secret: use an unguessable value (a UUID), never a predictable one."}`
+	configurableOperationIDProp = `"operation_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$", "description": "Optional resume handle. Pass the operation_id returned by a partial configurable.create to resume it: children and a parent that already exist are reused instead of re-created, missing links are repaired, and no duplicate SKU is written. Omit it for a fresh create, which refuses a pre-existing SKU."}`
+	skuProp                     = `"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}`
+	nameProp                    = `"name": {"type": "string", "minLength": 1, "maxLength": 255}`
+	setProp                     = `"attribute_set_id": {"type": "integer", "minimum": 1}`
+	typeIDProp                  = `"type_id": {"type": "string", "enum": ["simple", "virtual", "downloadable", "bundle"]}`
+	priceProp                   = `"price": {"type": "string", "pattern": "` + priceInputPattern + `", "description": "Decimal price string, up to 4 fraction digits."}`
+	statusProp                  = `"status": {"type": "integer", "enum": [1, 2]}`
+	visibilityProp              = `"visibility": {"type": "integer", "enum": [1, 2, 3, 4]}`
+	websiteIDsProp              = `"website_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "maxItems": 50}`
+	categoryIDsProp             = `"category_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 500}`
+	attributesProp              = `"attributes": {"type": "object", "additionalProperties": {"type": "string", "maxLength": 255}, "description": "Custom EAV attributes keyed by attribute code."}`
+	childAttributesProp         = `"attributes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "maxLength": 255}}`
+	quantityProp                = `"quantity": {"type": "integer", "minimum": 0, "description": "Optional default-source quantity assigned after the product exists."}`
+	descriptionProp             = `"description": {"type": "string", "maxLength": 65535, "description": "Full product description (HTML allowed). For SEO, write at least 300 characters of unique, keyword-relevant copy; do not duplicate other products."}`
+	shortDescriptionProp        = `"short_description": {"type": "string", "maxLength": 2048, "description": "Short summary shown in listings; a 1-2 sentence benefit statement works best."}`
+	urlKeyProp                  = `"url_key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,254}$", "description": "SEO URL slug: lowercase letters, digits, and hyphens; include the main keyword, omit stop words."}`
+	metaTitleProp               = `"meta_title": {"type": "string", "maxLength": 255, "description": "SEO title tag. 30-60 characters is the useful range for search results; front-load the keyword and brand."}`
+	metaKeywordsProp            = `"meta_keywords": {"type": "string", "maxLength": 255, "description": "Optional comma-separated keywords; low ranking value, keep it short and relevant."}`
+	metaDescriptionProp         = `"meta_description": {"type": "string", "maxLength": 255, "description": "SEO meta description. 120-160 characters is the useful range; state the benefit and include a call to action."}`
+	seoProps                    = descriptionProp + `, ` + shortDescriptionProp + `, ` + urlKeyProp + `, ` + metaTitleProp + `, ` + metaKeywordsProp + `, ` + metaDescriptionProp
+	weightProp                  = `"weight": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Product weight for shipping (decimal, up to 4 fraction digits)."}`
+	specialPriceProp            = `"special_price": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Promotional price; pair it with special_from_date/special_to_date."}`
+	specialFromProp             = `"special_from_date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Special price start date, YYYY-MM-DD."}`
+	specialToProps              = `"special_to_date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Special price end date, YYYY-MM-DD; must not precede special_from_date."}`
+	costProp                    = `"cost": {"type": "string", "pattern": "^\\d{1,12}(\\.\\d{1,4})?$", "description": "Cost of goods, used for margin reporting."}`
+	taxClassProp                = `"tax_class_id": {"type": "integer", "minimum": 0, "description": "Magento tax class id; 0 leaves the default."}`
+	pricingProps                = weightProp + `, ` + specialPriceProp + `, ` + specialFromProp + `, ` + specialToProps + `, ` + costProp + `, ` + taxClassProp
 
 	productCreateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + typeIDProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + quantityProp + `, ` + seoProps + `, ` + pricingProps + `}, "required": ["instance", "sku", "name", "attribute_set_id", "type_id", "price"], "additionalProperties": false}`
 	productUpdateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `, "category_ids": {"type": "array", "maxItems": 500, "items": {"type": "integer", "minimum": 1}, "description": "Replaces the product's category assignments when provided; an empty array clears them."}, "website_ids": {"type": "array", "maxItems": 50, "items": {"type": "integer", "minimum": 1}, "description": "Replaces the product's website assignments when provided."}}, "required": ["instance", "sku"], "additionalProperties": false}`
-	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, "name": {"type": "string", "maxLength": 255}, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `, ` + seoProps + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
+	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + configurableOperationIDProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, "name": {"type": "string", "maxLength": 255}, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `, ` + seoProps + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
 	configurableAddChildSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "child_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}}, "required": ["instance", "parent_sku", "child_sku"], "additionalProperties": false}`
 	inventoryAssignSchema      = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "source_code", "quantity"], "properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "source_code": {"type": "string", "pattern": "` + sourceCodeInputPattern + `"}, "quantity": {"type": "integer", "minimum": 0}, "status": {"type": "integer", "enum": [0, 1], "default": 1, "description": "1 in stock (default), 0 out of stock."}}}}}, "required": ["instance", "items"], "additionalProperties": false}`
 )
@@ -209,6 +212,7 @@ type childProductInput struct {
 
 type configurableCreateInput struct {
 	Instance          string                  `json:"instance"`
+	OperationID       string                  `json:"operation_id"`
 	Parent            productCreateInput      `json:"parent"`
 	VariantAttributes []variantAttributeInput `json:"variant_attributes"`
 	Children          []childProductInput     `json:"children"`
@@ -240,6 +244,20 @@ type configurableCreateOutput struct {
 	Parent        Product   `json:"parent"`
 	Children      []Product `json:"children"`
 	ParentInStock bool      `json:"parent_in_stock"`
+	// ParentStockSource states how parent_in_stock was derived (the observed
+	// child source items, or "unobserved: <code>" when the read failed). Without
+	// it an unobserved stock read is indistinguishable from an observed
+	// out-of-stock at the agent boundary.
+	ParentStockSource string `json:"parent_stock_source,omitempty"`
+
+	// Execution record: an agent can tell a completed create from a partial one
+	// and act on the failure without another read.
+	OperationID     string              `json:"operation_id,omitempty"`
+	Outcome         ConfigurableOutcome `json:"outcome,omitempty"`
+	Stages          []ConfigurableStage `json:"stages,omitempty"`
+	CompletedStages []string            `json:"completed_stages,omitempty"`
+	FailedStage     string              `json:"failed_stage,omitempty"`
+	OrphanSKUs      []string            `json:"orphan_skus,omitempty"`
 }
 
 type configurableAddChildOutput struct {
@@ -372,9 +390,100 @@ func writeToolSchemas() map[string]string {
 	}
 }
 
+// writeDisclosure is the machine-checked side-effect/idempotency statement
+// appended to every write tool description. Keeping it in one table (rather
+// than hand-editing 55 descriptions) is what makes the rule enforceable:
+// TestWriteToolDescriptionsDiscloseSideEffects enumerates the registry and
+// fails when a write tool is missing an entry or the rendered text omits
+// "Mutates:", an idempotency statement, or confirmation.
+type writeDisclosure struct {
+	mutates     string
+	idempotency string
+}
+
+var writeDisclosures = map[string]writeDisclosure{
+	"magento.attributes.options.bulk_create": {mutates: "the EAV attribute option set for one attribute code", idempotency: "not fully idempotent; duplicate labels are skipped, but earlier options are not rolled back"},
+	"magento.attributes.options.create":      {mutates: "the EAV attribute option set for one attribute code", idempotency: "not idempotent; a retry can create a duplicate option value"},
+	"magento.attributes.options.delete":      {mutates: "the EAV attribute option set for one attribute code", idempotency: "not idempotent; a retry on a deleted option returns not_found"},
+	"magento.category.assign_product":        {mutates: "the product-to-category assignment", idempotency: "idempotent; assigning the same product twice leaves the assignment in place"},
+	"magento.category.create":                {mutates: "the Magento category tree", idempotency: "not idempotent; a retry can create a duplicate category or URL key conflict"},
+	"magento.category.delete":                {mutates: "the category subtree and its product assignments", idempotency: "not idempotent; a retry on a deleted category returns not_found"},
+	"magento.category.update":                {mutates: "the category record", idempotency: "idempotent; repeating the same field values leaves the category unchanged"},
+	"magento.configurable.add_child":         {mutates: "the configurable parent's child links", idempotency: "not idempotent; Magento rejects a duplicate link"},
+	"magento.configurable.create":            {mutates: "the configurable parent, its simple children, and their links", idempotency: "resumable: pass the operation_id from a partial run to reuse existing children and repair missing links without duplicating a SKU"},
+	"magento.configurable.create_variations": {mutates: "the configurable parent's simple children and links", idempotency: "idempotent per SKU; existing SKUs are skipped"},
+	"magento.configurable.remove_child":      {mutates: "the configurable parent's child links", idempotency: "not idempotent; a retry on an unlinked child returns not_found"},
+	"magento.configurable.set_options":       {mutates: "the configurable parent's variant options", idempotency: "not idempotent; options are appended and earlier options are not rolled back"},
+	"magento.configurable.update":            {mutates: "the configurable product record", idempotency: "idempotent; repeating the same field values leaves the product unchanged"},
+	"magento.creditmemo.create":              {mutates: "the order's credit memo/refund record", idempotency: "idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded credit memo, and an ambiguous outcome is recorded as unknown and never retried"},
+	"magento.creditmemo.email":               {mutates: "the credit memo email state", idempotency: "not idempotent; a retry can send a duplicate email"},
+	"magento.customer.addresses.create":      {mutates: "the customer's address list", idempotency: "not idempotent; a retry can create a duplicate address"},
+	"magento.customer.addresses.delete":      {mutates: "the customer's address list", idempotency: "not idempotent; a retry on a deleted address returns not_found"},
+	"magento.customer.addresses.update":      {mutates: "the customer address record", idempotency: "idempotent; repeating the same field values leaves the address unchanged"},
+	"magento.customer.create":                {mutates: "the Magento customer record", idempotency: "not idempotent; a retry can create a duplicate customer or email conflict"},
+	"magento.customer.update":                {mutates: "the Magento customer record", idempotency: "idempotent; repeating the same field values leaves the customer unchanged"},
+	"magento.import.cancel":                  {mutates: "the asynchronous import job state", idempotency: "not idempotent; a retry after the job reaches a terminal state returns illegal_transition"},
+	"magento.import.execute":                 {mutates: "the product catalog through a bounded import", idempotency: "not idempotent; a retry can re-apply rows and earlier writes are not rolled back"},
+	"magento.import.resume":                  {mutates: "the asynchronous import queue and the source job's failed rows", idempotency: "idempotent per source job; repeated resumes return the same new job"},
+	"magento.import.start":                   {mutates: "the asynchronous import queue", idempotency: "not idempotent unless idempotency_key is supplied; a repeated key returns the original job id"},
+	"magento.inventory.assign":               {mutates: "MSI source quantities and assignments", idempotency: "not idempotent as an agent action; quantity replaces the existing value but the batch response has no per-item outcome"},
+	"magento.inventory.source_create":        {mutates: "the MSI source inventory", idempotency: "not idempotent; a retry can create a duplicate source or conflict"},
+	"magento.inventory.stock_source_link":    {mutates: "the MSI stock-to-source links", idempotency: "not idempotent; a retry may be rejected as a duplicate link"},
+	"magento.inventory.stock_source_unlink":  {mutates: "the MSI stock-to-source links", idempotency: "not idempotent; a retry on an unlinked source returns not_found"},
+	"magento.inventory.transfer":             {mutates: "MSI source quantities on two sources", idempotency: "not idempotent; the read-modify-write is not transactional and a retry can move quantity twice"},
+	"magento.inventory.unassign":             {mutates: "MSI source assignments", idempotency: "not idempotent; a retry may report a different unassigned count"},
+	"magento.invoice.capture":                {mutates: "the invoice payment state and the customer's payment method", idempotency: "idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded capture, and an ambiguous outcome is recorded as unknown and never retried"},
+	"magento.invoice.create":                 {mutates: "the order's invoice record", idempotency: "idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded invoice, and an ambiguous outcome is recorded as unknown and never retried"},
+	"magento.invoice.email":                  {mutates: "the invoice email state", idempotency: "not idempotent; a retry can send a duplicate email"},
+	"magento.order.cancel":                   {mutates: "the sales order state", idempotency: "idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded cancellation, and an ambiguous outcome is reconciled against the order state"},
+	"magento.order.comment":                  {mutates: "the order status history", idempotency: "not idempotent; a retry appends a duplicate comment"},
+	"magento.order.create":                   {mutates: "the sales order and the customer's payment method", idempotency: "idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded order, and an ambiguous placement is reconciled before it is recorded"},
+	"magento.order.email":                    {mutates: "the order email state", idempotency: "not idempotent; a retry can send a duplicate email"},
+	"magento.order.hold":                     {mutates: "the sales order state", idempotency: "not idempotent; a retry on a held order is rejected"},
+	"magento.order.unhold":                   {mutates: "the sales order state", idempotency: "not idempotent; a retry on a released order is rejected"},
+	"magento.product.create":                 {mutates: "the Magento product catalog and, when quantity is supplied, default-source inventory", idempotency: "not idempotent; a retry can create a duplicate SKU"},
+	"magento.product.delete":                 {mutates: "the product record and its links and reviews", idempotency: "not idempotent; a retry on a deleted SKU returns not_found"},
+	"magento.product.links.add":              {mutates: "product relations", idempotency: "not idempotent; Magento rejects a duplicate link"},
+	"magento.product.links.bulk":             {mutates: "product relations for up to 50 targets", idempotency: "not idempotent; partial success means a retry can duplicate already-applied links"},
+	"magento.product.links.remove":           {mutates: "product relations", idempotency: "not idempotent; a retry on a removed link returns not_found"},
+	"magento.product.media.delete":           {mutates: "the product media gallery", idempotency: "not idempotent; a retry on a deleted media id returns not_found"},
+	"magento.product.media.update":           {mutates: "the product media gallery entry", idempotency: "idempotent; repeating the same fields leaves the entry unchanged"},
+	"magento.product.media.upload":           {mutates: "the product media gallery and the stored file", idempotency: "not idempotent; a retry can add a duplicate image"},
+	"magento.product.options.create":         {mutates: "the product custom-option set", idempotency: "not idempotent; a retry can create a duplicate option"},
+	"magento.product.options.delete":         {mutates: "the product custom-option set", idempotency: "not idempotent; a retry on a deleted option returns not_found"},
+	"magento.product.options.update":         {mutates: "the product custom-option set", idempotency: "idempotent; repeating the same fields leaves the option unchanged"},
+	"magento.product.tier_prices.set":        {mutates: "the product tier-price set", idempotency: "idempotent; the call replaces the SKU's tier set, so repeating the same payload leaves the same tiers"},
+	"magento.product.update":                 {mutates: "the product record and its EAV attributes", idempotency: "idempotent for identical field values; a read-modify-write retry can overwrite a concurrent change"},
+	"magento.products.bulk_update":           {mutates: "up to 50 product records", idempotency: "not idempotent; partial success means a retry re-applies already-updated SKUs"},
+	"magento.shipment.create":                {mutates: "the order's shipment record and tracking numbers", idempotency: "not idempotent; a retry can create a duplicate shipment"},
+	"magento.shipment.email":                 {mutates: "the shipment email state", idempotency: "not idempotent; a retry can send a duplicate email"},
+}
+
+// discloseWrite appends the standard write contract to a description. The
+// suffix is derived from writeDisclosures, so a new write tool without an
+// entry fails the contract test rather than shipping an undocumented write.
+func discloseWrite(name, description string) string {
+	disclosure, ok := writeDisclosures[name]
+	if !ok {
+		return description
+	}
+	lower := strings.ToLower(description)
+	if !strings.Contains(lower, "write operation") {
+		description = "Magento write operation: " + description
+	}
+	suffix := " Mutates: " + disclosure.mutates + "."
+	if !strings.Contains(lower, "idempotent") {
+		suffix += " Idempotency: " + disclosure.idempotency + "."
+	}
+	if !strings.Contains(lower, "confirmation") {
+		suffix += " Requires human confirmation."
+	}
+	return description + suffix
+}
+
 func writeToolMetadata(name, title, description, capability string) registry.Tool {
 	return registry.Tool{
-		Name: name, Title: title, Description: description,
+		Name: name, Title: title, Description: discloseWrite(name, description),
 		Capability: capability, Permission: registry.PermissionWrite, Timeout: writeToolTimeout,
 		RequiresConfirmation: true,
 		Annotations: mcp.ToolAnnotations{
@@ -385,7 +494,7 @@ func writeToolMetadata(name, title, description, capability string) registry.Too
 
 func mcpWriteTool(name, title, description, schema string) *mcp.Tool {
 	return &mcp.Tool{
-		Name: name, Title: title, Description: description,
+		Name: name, Title: title, Description: discloseWrite(name, description),
 		InputSchema: json.RawMessage(schema),
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveHint(),
@@ -460,15 +569,44 @@ func newConfigurableCreateTool(lookup serviceLookup) registry.Tool {
 				}
 				result, err := svc.CreateConfigurable(ctx, in.toServiceInput())
 				if err != nil {
+					if result != nil && result.Outcome == ConfigurablePartial {
+						// A partial run is a tool error, but the execution record is
+						// the actionable part: return it alongside the uniform error
+						// envelope so the agent sees the failed stage and the orphans.
+						out := configurableOutputFrom(result)
+						envelope := toolerr.Envelope(err)
+						envelope["result"] = out
+						if raw, marshalErr := json.Marshal(envelope); marshalErr == nil {
+							return &mcp.CallToolResult{
+								IsError:           true,
+								StructuredContent: json.RawMessage(raw),
+								Content:           []mcp.Content{&mcp.TextContent{Text: string(raw)}},
+							}, out, nil
+						}
+					}
 					return nil, configurableCreateOutput{}, err
 				}
-				return nil, configurableCreateOutput{
-					Parent: result.Parent, Children: result.Children, ParentInStock: result.ParentInStock,
-				}, nil
+				return nil, configurableOutputFrom(result), nil
 			})
 		return nil
 	}
 	return t
+}
+
+// configurableOutputFrom forwards the service execution record to the MCP
+// payload, so an agent can tell a completed create from a partial one and act on
+// the failed stage and the orphans without another read.
+func configurableOutputFrom(result *ConfigurableProduct) configurableCreateOutput {
+	if result == nil {
+		return configurableCreateOutput{}
+	}
+	return configurableCreateOutput{
+		Parent: result.Parent, Children: result.Children,
+		ParentInStock: result.ParentInStock, ParentStockSource: result.ParentStockSource,
+		OperationID: result.OperationID, Outcome: result.Outcome, Stages: result.Stages,
+		CompletedStages: result.CompletedStages, FailedStage: result.FailedStage,
+		OrphanSKUs: result.OrphanSKUs,
+	}
 }
 
 func (in configurableCreateInput) toServiceInput() CreateConfigurableInput {
@@ -484,7 +622,10 @@ func (in configurableCreateInput) toServiceInput() CreateConfigurableInput {
 	for _, child := range in.Children {
 		children = append(children, ChildProduct(child))
 	}
-	return CreateConfigurableInput{Parent: in.Parent.toCreateInput(), Variants: variants, Children: children}
+	return CreateConfigurableInput{
+		Parent: in.Parent.toCreateInput(), Variants: variants, Children: children,
+		OperationID: in.OperationID,
+	}
 }
 
 func newConfigurableAddChildTool(lookup serviceLookup) registry.Tool {
@@ -615,7 +756,7 @@ type productDeleteOutput struct {
 
 func destructiveToolMetadata(name, title, description, capability string) registry.Tool {
 	return registry.Tool{
-		Name: name, Title: title, Description: description,
+		Name: name, Title: title, Description: discloseWrite(name, description),
 		Capability: capability, Permission: registry.PermissionDestructive, Timeout: writeToolTimeout,
 		RequiresConfirmation: true,
 		Annotations: mcp.ToolAnnotations{
@@ -633,7 +774,7 @@ func newProductDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(productDeleteToolName, productDeleteToolTitle, productDeleteDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, &mcp.Tool{
-			Name: productDeleteToolName, Title: productDeleteToolTitle, Description: productDeleteDescription,
+			Name: productDeleteToolName, Title: productDeleteToolTitle, Description: discloseWrite(productDeleteToolName, productDeleteDescription),
 			InputSchema: json.RawMessage(productDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in productDeleteInput) (*mcp.CallToolResult, productDeleteOutput, error) {
@@ -800,11 +941,14 @@ func newMediaUploadTool(lookup serviceLookup) registry.Tool {
 const (
 	invoiceCreateToolName    = "magento.invoice.create"
 	invoiceCreateToolTitle   = "Create Magento invoice"
-	invoiceCreateDescription = "Magento write operation: creates an invoice for an order " +
-		"(POST /rest/{store_code}/V1/invoices) on the resolved instance. capture defaults to false and does not charge " +
-		"the payment method; set it to true only when the charge is intended. Requires human confirmation."
+	invoiceCreateDescription = "Magento write operation: invoices an order through the workflow route " +
+		"(POST /rest/{store_code}/V1/order/{orderId}/invoice) on the resolved instance, which is the route that honours capture. " +
+		"capture=false records an open invoice and charges nothing; capture=true captures the payment and the returned " +
+		"invoice state proves whether it did. Idempotent when idempotency_key is supplied: a repeat with the same arguments " +
+		"replays the recorded invoice. An ambiguous outcome is recorded as unknown and must be polled, never retried. " +
+		"Requires human confirmation."
 
-	invoiceCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+	invoiceCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + idempotencyKeyProp + `,
 		"order_id": {"type": "integer", "minimum": 1, "description": "Magento order entity id."},
 		"capture": {"type": "boolean", "default": false, "description": "Capture the payment; false only records the invoice."},
 		"items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object",
@@ -815,17 +959,21 @@ const (
 )
 
 type invoiceCreateInput struct {
-	Instance string `json:"instance"`
-	OrderID  int    `json:"order_id"`
-	Capture  bool   `json:"capture"`
-	Items    []struct {
+	Instance       string `json:"instance"`
+	OrderID        int    `json:"order_id"`
+	Capture        bool   `json:"capture"`
+	IdempotencyKey string `json:"idempotency_key"`
+	Items          []struct {
 		OrderItemID int     `json:"order_item_id"`
 		Qty         float64 `json:"qty"`
 	} `json:"items"`
 }
 
 type invoiceCreateOutput struct {
-	Invoice Invoice `json:"invoice"`
+	Invoice     Invoice `json:"invoice"`
+	Captured    bool    `json:"captured"`
+	OperationID string  `json:"operation_id,omitempty"`
+	Replayed    bool    `json:"replayed,omitempty"`
 }
 
 func newInvoiceCreateTool(lookup serviceLookup) registry.Tool {
@@ -841,11 +989,17 @@ func newInvoiceCreateTool(lookup serviceLookup) registry.Tool {
 				for _, item := range in.Items {
 					items = append(items, InvoiceLine{OrderItemID: item.OrderItemID, Qty: item.Qty})
 				}
-				invoice, err := svc.CreateInvoice(ctx, InvoiceCreateInput{OrderID: in.OrderID, Capture: in.Capture, Items: items})
+				result, err := svc.CreateInvoice(ctx, InvoiceCreateInput{
+					OrderID: in.OrderID, Capture: in.Capture, Items: items,
+					IdempotencyKey: in.IdempotencyKey, Instance: in.Instance,
+				})
 				if err != nil {
 					return nil, invoiceCreateOutput{}, err
 				}
-				return nil, invoiceCreateOutput{Invoice: *invoice}, nil
+				return nil, invoiceCreateOutput{
+					Invoice: result.Invoice, Captured: result.Captured,
+					OperationID: result.OperationID, Replayed: result.Replayed,
+				}, nil
 			})
 		return nil
 	}
@@ -860,9 +1014,11 @@ const (
 		"Requires human confirmation."
 	creditmemoCreateToolName    = "magento.creditmemo.create"
 	creditmemoCreateToolTitle   = "Create Magento credit memo"
-	creditmemoCreateDescription = "Magento write operation: creates a credit memo (refund record) for an order " +
-		"(POST /rest/{store_code}/V1/creditmemos) on the resolved instance with 1-100 order-item lines and optional adjustments. " +
-		"Requires human confirmation; actual payment refunds depend on the payment method."
+	creditmemoCreateDescription = "Magento write operation: creates a credit memo (POST /rest/{store_code}/V1/creditmemos) with 1-100 order-item lines and " +
+		"optional adjustments on the resolved instance. The order and its invoices are read first: the memo is linked to an invoice and a quantity above " +
+		"qty_invoiced - qty_refunded is rejected before any refund request. Idempotent when idempotency_key is supplied: a repeat " +
+		"with the same arguments replays the recorded credit memo. An ambiguous outcome is recorded as unknown and must be polled, " +
+		"never retried. Requires human confirmation."
 
 	documentLinesProp = `"items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object",
 		"additionalProperties": false, "required": ["order_item_id", "qty"],
@@ -881,8 +1037,9 @@ const (
 		"notify": {"type": "boolean", "default": false}
 	}, "required": ["instance", "order_id", "items"], "additionalProperties": false}`
 
-	creditmemoCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+	creditmemoCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + idempotencyKeyProp + `,
 		"order_id": {"type": "integer", "minimum": 1},
+		"invoice_id": {"type": "integer", "minimum": 1, "description": "Invoice to refund. Required when the order has several invoices; resolved automatically when it has exactly one."},
 		` + documentLinesProp + `,
 		"adjustment_positive": {"type": "number", "minimum": 0},
 		"adjustment_negative": {"type": "number", "minimum": 0},
@@ -907,6 +1064,8 @@ type shipmentCreateOutput struct {
 type creditmemoCreateInput struct {
 	Instance           string        `json:"instance"`
 	OrderID            int           `json:"order_id"`
+	InvoiceID          int           `json:"invoice_id"`
+	IdempotencyKey     string        `json:"idempotency_key"`
 	Items              []InvoiceLine `json:"items"`
 	AdjustmentPositive float64       `json:"adjustment_positive"`
 	AdjustmentNegative float64       `json:"adjustment_negative"`
@@ -915,7 +1074,10 @@ type creditmemoCreateInput struct {
 }
 
 type creditmemoCreateOutput struct {
-	Creditmemo Creditmemo `json:"creditmemo"`
+	Creditmemo  Creditmemo `json:"creditmemo"`
+	InvoiceID   int        `json:"invoice_id"`
+	OperationID string     `json:"operation_id,omitempty"`
+	Replayed    bool       `json:"replayed,omitempty"`
 }
 
 func newShipmentCreateTool(lookup serviceLookup) registry.Tool {
@@ -958,15 +1120,19 @@ func newCreditmemoCreateTool(lookup serviceLookup) registry.Tool {
 				for _, item := range in.Items {
 					lines = append(lines, DocumentLine(item))
 				}
-				creditmemo, err := svc.CreateCreditmemo(ctx, CreditmemoCreateInput{
-					OrderID: in.OrderID, Items: lines,
+				result, err := svc.CreateCreditmemo(ctx, CreditmemoCreateInput{
+					OrderID: in.OrderID, InvoiceID: in.InvoiceID, Items: lines,
 					AdjustmentPositive: in.AdjustmentPositive, AdjustmentNegative: in.AdjustmentNegative,
 					Comment: in.Comment, Notify: in.Notify,
+					IdempotencyKey: in.IdempotencyKey, Instance: in.Instance,
 				})
 				if err != nil {
 					return nil, creditmemoCreateOutput{}, err
 				}
-				return nil, creditmemoCreateOutput{Creditmemo: *creditmemo}, nil
+				return nil, creditmemoCreateOutput{
+					Creditmemo: result.Creditmemo, InvoiceID: result.InvoiceID,
+					OperationID: result.OperationID, Replayed: result.Replayed,
+				}, nil
 			})
 		return nil
 	}
@@ -1298,16 +1464,19 @@ const (
 	invoiceCaptureToolName    = "magento.invoice.capture"
 	invoiceCaptureToolTitle   = "Capture a Magento invoice"
 	invoiceCaptureDescription = "Magento write operation: captures the payment for an existing invoice " +
-		"(POST /rest/{store_code}/V1/invoices/{id}/capture) on the resolved instance. " +
-		"This charges the payment method and moves money; refunds are a separate credit memo. Requires human confirmation."
+		"(POST /rest/{store_code}/V1/invoices/{id}/capture) on the resolved instance. The invoice is read first: an already-paid or canceled invoice is a " +
+		"conflict and no capture request is sent. Idempotent when idempotency_key is supplied: a repeat with the same arguments " +
+		"replays the recorded capture. An ambiguous outcome is recorded as unknown and must be polled, never retried. " +
+		"Requires human confirmation."
+
+	invoiceCaptureSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + idempotencyKeyProp + `,
+		"invoice_id": {"type": "integer", "minimum": 1}
+	}, "required": ["instance", "invoice_id"], "additionalProperties": false}`
+
 	orderEmailToolName    = "magento.order.email"
 	orderEmailToolTitle   = "Send a Magento order email"
 	orderEmailDescription = "Magento write operation: sends the order confirmation email " +
 		"(POST /rest/{store_code}/V1/orders/{id}/emails) on the resolved instance. Requires human confirmation."
-
-	invoiceCaptureSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
-		"invoice_id": {"type": "integer", "minimum": 1}
-	}, "required": ["instance", "invoice_id"], "additionalProperties": false}`
 
 	orderEmailSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"order_id": {"type": "integer", "minimum": 1}
@@ -1315,13 +1484,16 @@ const (
 )
 
 type invoiceCaptureInput struct {
-	Instance  string `json:"instance"`
-	InvoiceID int    `json:"invoice_id"`
+	Instance       string `json:"instance"`
+	InvoiceID      int    `json:"invoice_id"`
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 type invoiceCaptureOutput struct {
-	InvoiceID int  `json:"invoice_id"`
-	Captured  bool `json:"captured"`
+	InvoiceID   int    `json:"invoice_id"`
+	Captured    bool   `json:"captured"`
+	OperationID string `json:"operation_id,omitempty"`
+	Replayed    bool   `json:"replayed,omitempty"`
 }
 
 type orderEmailInput struct {
@@ -1343,10 +1515,16 @@ func newInvoiceCaptureTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, invoiceCaptureOutput{}, err
 				}
-				if err := svc.CaptureInvoice(ctx, in.InvoiceID); err != nil {
+				result, err := svc.CaptureInvoice(ctx, CaptureInvoiceInput{
+					InvoiceID: in.InvoiceID, IdempotencyKey: in.IdempotencyKey, Instance: in.Instance,
+				})
+				if err != nil {
 					return nil, invoiceCaptureOutput{}, err
 				}
-				return nil, invoiceCaptureOutput{InvoiceID: in.InvoiceID, Captured: true}, nil
+				return nil, invoiceCaptureOutput{
+					InvoiceID: result.InvoiceID, Captured: result.Captured,
+					OperationID: result.OperationID, Replayed: result.Replayed,
+				}, nil
 			})
 		return nil
 	}
@@ -1399,7 +1577,7 @@ func newMediaDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(mediaDeleteToolName, mediaDeleteToolTitle, mediaDeleteDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, &mcp.Tool{
-			Name: mediaDeleteToolName, Title: mediaDeleteToolTitle, Description: mediaDeleteDescription,
+			Name: mediaDeleteToolName, Title: mediaDeleteToolTitle, Description: discloseWrite(mediaDeleteToolName, mediaDeleteDescription),
 			InputSchema: json.RawMessage(mediaDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in mediaDeleteInput) (*mcp.CallToolResult, mediaDeleteOutput, error) {
@@ -1420,10 +1598,11 @@ func newMediaDeleteTool(lookup serviceLookup) registry.Tool {
 const (
 	orderCreateToolName    = "magento.order.create"
 	orderCreateToolTitle   = "Create a Magento order"
-	orderCreateDescription = "Magento write operation: places an order for an existing customer through the admin cart flow " +
-		"(cart, items, shipping information, then POST /rest/{store_code}/V1/carts/{cartId}/order) on the resolved instance. " +
-		"Totals are computed by Magento and never supplied by the caller. Requires human confirmation; " +
-		"prerequisites: the customer exists, the payment method is enabled, and the shipping method is available for the address."
+	orderCreateDescription = "Magento write operation: places an order through the admin cart flow (cart, items, shipping information, then " +
+		"POST /rest/{store_code}/V1/carts/{cartId}/order) on the resolved instance. Totals are computed by Magento, never by the caller. " +
+		"Idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded order. An ambiguous " +
+		"placement is reconciled by reading the customer's recent orders back; an inconclusive read returns operation_unknown " +
+		"and must be polled, never retried. Requires human confirmation."
 
 	addressSchema = `{"type": "object", "additionalProperties": false,
 		"required": ["firstname", "lastname", "street", "city", "postcode", "country_id", "telephone"],
@@ -1438,9 +1617,9 @@ const (
 			"region": {"type": "string", "maxLength": 255}
 		}}`
 
-	orderCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+	orderCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + idempotencyKeyProp + `,
 		"customer_id": {"type": "integer", "minimum": 1},
-		"store_id": {"type": "integer", "minimum": 0},
+		"store_id": {"type": "integer", "minimum": 0, "description": "Not supported: the store is selected by the instance's store_code, and a non-zero value is rejected with unsupported_capability rather than silently ignored."},
 		"items": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object",
 			"additionalProperties": false, "required": ["sku", "qty"],
 			"properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
@@ -1469,6 +1648,7 @@ type orderCreateInput struct {
 	Instance            string           `json:"instance"`
 	CustomerID          int              `json:"customer_id"`
 	StoreID             int              `json:"store_id"`
+	IdempotencyKey      string           `json:"idempotency_key"`
 	Items               []OrderItemInput `json:"items"`
 	BillingAddress      orderAddressWire `json:"billing_address"`
 	ShippingAddress     orderAddressWire `json:"shipping_address"`
@@ -1478,7 +1658,10 @@ type orderCreateInput struct {
 }
 
 type orderCreateOutput struct {
-	Order Order `json:"order"`
+	Order       Order  `json:"order"`
+	OperationID string `json:"operation_id,omitempty"`
+	Replayed    bool   `json:"replayed,omitempty"`
+	Reconciled  bool   `json:"reconciled,omitempty"`
 }
 
 func (a orderAddressWire) toInput() OrderAddressInput {
@@ -1494,16 +1677,20 @@ func newOrderCreateTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, orderCreateOutput{}, err
 				}
-				order, err := svc.CreateOrder(ctx, CreateOrderInput{
+				result, err := svc.CreateOrder(ctx, CreateOrderInput{
 					CustomerID: in.CustomerID, StoreID: in.StoreID, Items: in.Items,
 					BillingAddress: in.BillingAddress.toInput(), ShippingAddress: in.ShippingAddress.toInput(),
 					ShippingCarrierCode: in.ShippingCarrierCode, ShippingMethodCode: in.ShippingMethodCode,
-					PaymentMethod: in.PaymentMethod,
+					PaymentMethod:  in.PaymentMethod,
+					IdempotencyKey: in.IdempotencyKey, Instance: in.Instance,
 				})
 				if err != nil {
 					return nil, orderCreateOutput{}, err
 				}
-				return nil, orderCreateOutput{Order: *order}, nil
+				return nil, orderCreateOutput{
+					Order: result.Order, OperationID: result.OperationID,
+					Replayed: result.Replayed, Reconciled: result.Reconciled,
+				}, nil
 			})
 		return nil
 	}
@@ -1572,12 +1759,25 @@ func newTierPricesSetTool(lookup serviceLookup) registry.Tool {
 	return t
 }
 
+// derefInt renders an optional observed quantity for the transfer output, which
+// is only produced for an applied transfer.
+func derefInt(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
 const (
 	inventoryTransferToolName    = "magento.inventory.transfer"
 	inventoryTransferToolTitle   = "Transfer Magento source quantity"
-	inventoryTransferDescription = "Magento write operation: moves quantity for one SKU from one MSI source to another " +
-		"(read source items, then upsert both rows) on the resolved instance. Refuses an insufficient source. " +
-		"The batch is not transactional, so a failure can leave one row updated; destructive and confirmation-gated."
+	inventoryTransferDescription = "Magento write operation: moves whole units for one SKU between MSI sources (read, re-read to " +
+		"detect a concurrent writer, upsert both rows, read them back) on the resolved instance. Refuses an insufficient source and a " +
+		"fractional observed quantity. The result carries a transfer_id, the observed before/after quantities of both sources, and an " +
+		"outcome; needs_verification means unknown: applied_rows is \"unknown\", so verify both sources and do NOT retry. A partial or " +
+		"conflicting write is an error naming the applied rows and is never retried or compensated automatically. Known residual: a " +
+		"concurrent transfer of the same SKU on another replica can still be lost when the re-read sees identical values. Destructive " +
+		"and confirmation-gated."
 
 	inventoryTransferSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
 		"from_source": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
@@ -1595,10 +1795,16 @@ type inventoryTransferInput struct {
 }
 
 type inventoryTransferOutput struct {
+	TransferID  string `json:"transfer_id"`
 	SKU         string `json:"sku"`
 	FromSource  string `json:"from_source"`
 	ToSource    string `json:"to_source"`
 	Quantity    int    `json:"quantity"`
+	FromBefore  int    `json:"from_before"`
+	FromAfter   int    `json:"from_after"`
+	ToBefore    int    `json:"to_before"`
+	ToAfter     int    `json:"to_after"`
+	Outcome     string `json:"outcome"`
 	Transferred bool   `json:"transferred"`
 }
 
@@ -1606,7 +1812,7 @@ func newInventoryTransferTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(inventoryTransferToolName, inventoryTransferToolTitle, inventoryTransferDescription, "magento.inventory.write")
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, &mcp.Tool{
-			Name: inventoryTransferToolName, Title: inventoryTransferToolTitle, Description: inventoryTransferDescription,
+			Name: inventoryTransferToolName, Title: inventoryTransferToolTitle, Description: discloseWrite(inventoryTransferToolName, inventoryTransferDescription),
 			InputSchema: json.RawMessage(inventoryTransferSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in inventoryTransferInput) (*mcp.CallToolResult, inventoryTransferOutput, error) {
@@ -1614,12 +1820,16 @@ func newInventoryTransferTool(lookup serviceLookup) registry.Tool {
 			if err != nil {
 				return nil, inventoryTransferOutput{}, err
 			}
-			if err := svc.TransferSourceQty(ctx, in.SKU, in.FromSource, in.ToSource, in.Quantity); err != nil {
+			result, err := svc.TransferSourceQty(ctx, in.SKU, in.FromSource, in.ToSource, in.Quantity)
+			if err != nil {
 				return nil, inventoryTransferOutput{}, err
 			}
 			return nil, inventoryTransferOutput{
-				SKU: in.SKU, FromSource: in.FromSource, ToSource: in.ToSource,
-				Quantity: in.Quantity, Transferred: true,
+				TransferID: result.TransferID, SKU: result.SKU, FromSource: result.FromSource,
+				ToSource: result.ToSource, Quantity: result.Quantity,
+				FromBefore: result.FromBefore, FromAfter: derefInt(result.FromAfter),
+				ToBefore: result.ToBefore, ToAfter: derefInt(result.ToAfter),
+				Outcome: string(result.Outcome), Transferred: result.Outcome == TransferApplied,
 			}, nil
 		})
 		return nil
@@ -1739,8 +1949,10 @@ const (
 	orderCancelToolName    = "magento.order.cancel"
 	orderCancelToolTitle   = "Cancel a Magento order"
 	orderCancelDescription = "Magento write operation: cancels an order " +
-		"(POST /rest/{store_code}/V1/orders/{id}/cancel) on the resolved instance. Irreversible; Magento rejects it when the order is not cancellable. " +
-		"Requires human confirmation."
+		"(POST /rest/{store_code}/V1/orders/{id}/cancel) on the resolved instance. The order is read first: an order that is already " +
+		"canceled, complete or closed is a conflict and no request is sent. Irreversible. Idempotent when idempotency_key is supplied: " +
+		"a repeat with the same arguments replays the recorded cancellation; an ambiguous outcome is resolved by reading the order " +
+		"back, and an unreadable order returns operation_unknown and must be polled, never retried. Requires human confirmation."
 
 	mediaUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
 		"media_id": {"type": "integer", "minimum": 1},
@@ -1750,7 +1962,7 @@ const (
 		"disabled": {"type": "boolean"}
 	}, "required": ["instance", "sku", "media_id"], "additionalProperties": false}`
 
-	orderCancelSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
+	orderCancelSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + idempotencyKeyProp + `,
 		"order_id": {"type": "integer", "minimum": 1}
 	}, "required": ["instance", "order_id"], "additionalProperties": false}`
 )
@@ -1770,13 +1982,17 @@ type mediaUpdateOutput struct {
 }
 
 type orderCancelInput struct {
-	Instance string `json:"instance"`
-	OrderID  int    `json:"order_id"`
+	Instance       string `json:"instance"`
+	OrderID        int    `json:"order_id"`
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 type orderCancelOutput struct {
-	OrderID  int  `json:"order_id"`
-	Canceled bool `json:"canceled"`
+	OrderID     int    `json:"order_id"`
+	Canceled    bool   `json:"canceled"`
+	OperationID string `json:"operation_id,omitempty"`
+	Replayed    bool   `json:"replayed,omitempty"`
+	Reconciled  bool   `json:"reconciled,omitempty"`
 }
 
 func newMediaUpdateTool(lookup serviceLookup) registry.Tool {
@@ -1805,7 +2021,7 @@ func newOrderCancelTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(orderCancelToolName, orderCancelToolTitle, orderCancelDescription, "magento.order.write")
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, &mcp.Tool{
-			Name: orderCancelToolName, Title: orderCancelToolTitle, Description: orderCancelDescription,
+			Name: orderCancelToolName, Title: orderCancelToolTitle, Description: discloseWrite(orderCancelToolName, orderCancelDescription),
 			InputSchema: json.RawMessage(orderCancelSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in orderCancelInput) (*mcp.CallToolResult, orderCancelOutput, error) {
@@ -1813,10 +2029,16 @@ func newOrderCancelTool(lookup serviceLookup) registry.Tool {
 			if err != nil {
 				return nil, orderCancelOutput{}, err
 			}
-			if err := svc.CancelOrder(ctx, in.OrderID); err != nil {
+			result, err := svc.CancelOrder(ctx, CancelOrderInput{
+				OrderID: in.OrderID, IdempotencyKey: in.IdempotencyKey, Instance: in.Instance,
+			})
+			if err != nil {
 				return nil, orderCancelOutput{}, err
 			}
-			return nil, orderCancelOutput{OrderID: in.OrderID, Canceled: true}, nil
+			return nil, orderCancelOutput{
+				OrderID: result.OrderID, Canceled: result.Canceled,
+				OperationID: result.OperationID, Replayed: result.Replayed, Reconciled: result.Reconciled,
+			}, nil
 		})
 		return nil
 	}
@@ -1896,7 +2118,7 @@ func newAttributeOptionDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(attributeOptionDeleteToolName, attributeOptionDeleteToolTitle, attributeOptionDeleteDescription, "magento.attribute.write")
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, &mcp.Tool{
-			Name: attributeOptionDeleteToolName, Title: attributeOptionDeleteToolTitle, Description: attributeOptionDeleteDescription,
+			Name: attributeOptionDeleteToolName, Title: attributeOptionDeleteToolTitle, Description: discloseWrite(attributeOptionDeleteToolName, attributeOptionDeleteDescription),
 			InputSchema: json.RawMessage(attributeOptionDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in attributeOptionDeleteInput) (*mcp.CallToolResult, attributeOptionDeleteOutput, error) {
@@ -1990,7 +2212,7 @@ func newCategoryDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(categoryDeleteToolName, categoryDeleteToolTitle, categoryDeleteDescription, "magento.category.write")
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, &mcp.Tool{
-			Name: categoryDeleteToolName, Title: categoryDeleteToolTitle, Description: categoryDeleteDescription,
+			Name: categoryDeleteToolName, Title: categoryDeleteToolTitle, Description: discloseWrite(categoryDeleteToolName, categoryDeleteDescription),
 			InputSchema: json.RawMessage(categoryDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in categoryDeleteInput) (*mcp.CallToolResult, categoryDeleteOutput, error) {
@@ -2096,7 +2318,7 @@ func newCustomerAddressDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(customerAddressDeleteToolName, customerAddressDeleteTitle, customerAddressDeleteDescription, "magento.customer.write")
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, &mcp.Tool{
-			Name: customerAddressDeleteToolName, Title: customerAddressDeleteTitle, Description: customerAddressDeleteDescription,
+			Name: customerAddressDeleteToolName, Title: customerAddressDeleteTitle, Description: discloseWrite(customerAddressDeleteToolName, customerAddressDeleteDescription),
 			InputSchema: json.RawMessage(customerAddressDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in customerAddressDeleteInput) (*mcp.CallToolResult, customerAddressDeleteOutput, error) {
@@ -2493,7 +2715,7 @@ func newStockSourceUnlinkTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(stockSourceUnlinkToolName, stockSourceUnlinkToolTitle, stockSourceUnlinkDescription, "magento.inventory.write")
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, &mcp.Tool{
-			Name: stockSourceUnlinkToolName, Title: stockSourceUnlinkToolTitle, Description: stockSourceUnlinkDescription,
+			Name: stockSourceUnlinkToolName, Title: stockSourceUnlinkToolTitle, Description: discloseWrite(stockSourceUnlinkToolName, stockSourceUnlinkDescription),
 			InputSchema: json.RawMessage(stockSourceUnlinkSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in stockSourceUnlinkInput) (*mcp.CallToolResult, stockSourceUnlinkOutput, error) {
@@ -2788,7 +3010,7 @@ func newProductOptionDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(productOptionDeleteToolName, productOptionDeleteToolTitle, productOptionDeleteDescription, "magento.product.write")
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, &mcp.Tool{
-			Name: productOptionDeleteToolName, Title: productOptionDeleteToolTitle, Description: productOptionDeleteDescription,
+			Name: productOptionDeleteToolName, Title: productOptionDeleteToolTitle, Description: discloseWrite(productOptionDeleteToolName, productOptionDeleteDescription),
 			InputSchema: json.RawMessage(productOptionDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in productOptionDeleteInput) (*mcp.CallToolResult, productOptionDeleteOutput, error) {

@@ -338,7 +338,7 @@ func (s *AdminTokenSigner) GoString() string { return s.String() }
 // safe. NewResolverFromSettings installs this client automatically.
 func (s *AdminTokenSigner) HTTPClient() *http.Client {
 	return &http.Client{
-		Transport:     &adminTokenRetryTransport{signer: s},
+		Transport:     &adminTokenRetryTransport{base: NewTransport(), signer: s},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }

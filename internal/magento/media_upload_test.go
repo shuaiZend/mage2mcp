@@ -15,17 +15,31 @@ import (
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
 
+// TestUploadMedia encodes Magento's real contract: POST /products/{sku}/media
+// returns the new gallery entry id as a JSON integer
+// (ProductAttributeMediaGalleryManagementInterface::create(): int), and the
+// gateway resolves the full entry with a gallery read.
 func TestUploadMedia(t *testing.T) {
-	var method, path string
+	var create, read recordedWrite
 	var body mediaUploadBody
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		method, path = r.Method, r.URL.Path
-		raw, _ := io.ReadAll(r.Body)
-		if err := json.Unmarshal(raw, &body); err != nil {
-			t.Errorf("decode body: %v", err)
-		}
+		rec := recordedWrite{Method: r.Method, Path: r.URL.Path}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":9,"media_type":"image","label":"Front","position":1,"file":"/w/i/front.jpg"}`))
+		switch r.Method {
+		case http.MethodPost:
+			raw, _ := io.ReadAll(r.Body)
+			rec.Body = raw
+			create = rec
+			if err := json.Unmarshal(raw, &body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			// Magento returns a bare integer, not a string and not an object.
+			_, _ = w.Write([]byte(`9`))
+		case http.MethodGet:
+			read = rec
+			_, _ = w.Write([]byte(`[{"id":9,"media_type":"image","label":"Front","position":1,` +
+				`"types":["image","small_image"],"file":"/w/i/front.jpg"}]`))
+		}
 	}))
 	defer ts.Close()
 	svc := testService(t, ts.URL)
@@ -35,10 +49,10 @@ func TestUploadMedia(t *testing.T) {
 		Filename: "front.jpg", MIMEType: "image/jpeg", DataBase64: content,
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("integer entry id must be accepted: %v", err)
 	}
-	if method != http.MethodPost || path != "/rest/default/V1/products/SKU-1/media" {
-		t.Fatalf("request = %s %s", method, path)
+	if create.Method != http.MethodPost || create.Path != "/rest/default/V1/products/SKU-1/media" {
+		t.Fatalf("request = %s %s", create.Method, create.Path)
 	}
 	if body.Entry.MediaType != "image" || body.Entry.Content.Type != "image/jpeg" || body.Entry.Content.Name != "front.jpg" {
 		t.Fatalf("body = %+v", body)
@@ -46,8 +60,49 @@ func TestUploadMedia(t *testing.T) {
 	if body.Entry.Content.Base64 != content || len(body.Entry.Types) != 2 {
 		t.Fatalf("body = %+v", body)
 	}
-	if entry.ID != 9 || entry.Label != "Front" {
+	if entry.ID != 9 || entry.Label != "Front" || entry.File != "/w/i/front.jpg" {
 		t.Fatalf("entry = %+v", entry)
+	}
+	if read.Method != http.MethodGet || read.Path != "/rest/default/V1/products/SKU-1/media" {
+		t.Fatalf("the entry must be resolved by reading the gallery: %+v", read)
+	}
+}
+
+// TestUploadMediaObjectResponse keeps the full-entry response shape working.
+func TestUploadMediaObjectResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":9,"media_type":"image","label":"Front","position":1,"file":"/w/i/front.jpg"}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	entry, err := svc.UploadMedia(context.Background(), "SKU-1", MediaUploadInput{
+		Filename: "front.jpg", MIMEType: "image/jpeg", DataBase64: base64.StdEncoding.EncodeToString([]byte("x")),
+	})
+	if err != nil {
+		t.Fatalf("object response must be accepted: %v", err)
+	}
+	if entry.ID != 9 || entry.File != "/w/i/front.jpg" {
+		t.Fatalf("entry = %+v", entry)
+	}
+}
+
+// TestUploadMediaRejectsInvalidEntryID guards the scalar decoder: an id that
+// cannot address a gallery entry is an upstream defect, not a success.
+func TestUploadMediaRejectsInvalidEntryID(t *testing.T) {
+	for _, body := range []string{`0`, `-5`, `"not-an-id"`} {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, body)
+		}))
+		svc := testService(t, ts.URL)
+		_, err := svc.UploadMedia(context.Background(), "SKU-1", MediaUploadInput{
+			Filename: "front.jpg", MIMEType: "image/jpeg", DataBase64: base64.StdEncoding.EncodeToString([]byte("x")),
+		})
+		ts.Close()
+		if errs.CodeOf(err) != errs.CodeUpstreamUnavailable {
+			t.Fatalf("body %q: err = %v, want upstream_unavailable", body, err)
+		}
 	}
 }
 

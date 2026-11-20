@@ -97,7 +97,10 @@ func classifyApproveFailure(ctx context.Context, c *ConfirmStore, id, approver s
 	var expires time.Time
 	var selfApproval bool
 	if err := row.Scan(&state, &expires, &selfApproval); err != nil {
-		return errs.New(errs.CodeNotFound, "confirmation not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errs.New(errs.CodeNotFound, "confirmation not found")
+		}
+		return errs.New(errs.CodeInternal, "confirmation lookup failed").WithCause(err)
 	}
 	switch {
 	case selfApproval:
@@ -111,32 +114,67 @@ func classifyApproveFailure(ctx context.Context, c *ConfirmStore, id, approver s
 	}
 }
 
-// Consume burns an approved confirmation for the exact same arguments.
-func (c *ConfirmStore) Consume(ctx context.Context, id, requester, paramsHash string, now time.Time) error {
+// Consume burns an approved confirmation for the exact same operation: the same
+// requester, tool, instance, and arguments. The compare-and-set is a single
+// UPDATE, so concurrent consumes of one approval yield exactly one winner.
+func (c *ConfirmStore) Consume(ctx context.Context, id, requester, tool, instance, paramsHash string, now time.Time) error {
 	tag, err := c.store.pool.Exec(ctx, `
 		UPDATE confirmation_tokens
-		SET state = 'consumed', consumed_at = $4
-		WHERE id = $1::uuid AND state = 'approved' AND expires_at > $4
-		  AND requester_hash = $2 AND params_hash = decode($3,'hex')`,
-		id, subjectHash(requester), paramsHash, now)
+		SET state = 'consumed', consumed_at = $5
+		WHERE id = $1::uuid AND state = 'approved' AND expires_at > $5
+		  AND requester_hash = $2
+		  AND tool = $3 AND COALESCE(instance_id,'') = $4
+		  AND params_hash = decode($6,'hex')`,
+		id, subjectHash(requester), tool, instance, now, paramsHash)
 	if err != nil {
 		return fmt.Errorf("storage: consume confirmation: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return classifyConsumeFailure(ctx, c, id, requester, paramsHash, now)
+		return classifyConsumeFailure(ctx, c, id, requester, tool, instance, paramsHash, now)
 	}
 	return nil
 }
 
-func classifyConsumeFailure(ctx context.Context, c *ConfirmStore, id, requester, paramsHash string, now time.Time) error {
+// consumeInTx is Consume inside a caller-supplied transaction. The operation
+// ledger uses it so that burning an approval and recording the operation are one
+// atomic step: a crash between them can leave neither, never "approval burned
+// with no operation".
+func (c *ConfirmStore) consumeInTx(ctx context.Context, tx pgx.Tx, id, requester, tool, instance, paramsHash string, now time.Time) error {
+	if tx == nil {
+		return fmt.Errorf("storage: consume requires a transaction")
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE confirmation_tokens
+		SET state = 'consumed', consumed_at = $5
+		WHERE id = $1::uuid AND state = 'approved' AND expires_at > $5
+		  AND requester_hash = $2
+		  AND tool = $3 AND COALESCE(instance_id,'') = $4
+		  AND params_hash = decode($6,'hex')`,
+		id, subjectHash(requester), tool, instance, now, paramsHash)
+	if err != nil {
+		return fmt.Errorf("storage: consume confirmation: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return classifyConsumeFailure(ctx, c, id, requester, tool, instance, paramsHash, now)
+	}
+	return nil
+}
+
+func classifyConsumeFailure(ctx context.Context, c *ConfirmStore, id, requester, tool, instance, paramsHash string, now time.Time) error {
 	row := c.store.pool.QueryRow(ctx, `
-		SELECT state, expires_at, requester_hash = $2, encode(params_hash,'hex') = $3
-		FROM confirmation_tokens WHERE id = $1::uuid`, id, subjectHash(requester), paramsHash)
+		SELECT state, expires_at, requester_hash = $2,
+		       (tool = $3 AND COALESCE(instance_id,'') = $4),
+		       encode(params_hash,'hex') = $5
+		FROM confirmation_tokens WHERE id = $1::uuid`,
+		id, subjectHash(requester), tool, instance, paramsHash)
 	var state string
 	var expires time.Time
-	var sameRequester, sameParams bool
-	if err := row.Scan(&state, &expires, &sameRequester, &sameParams); err != nil {
-		return errs.New(errs.CodeNotFound, "confirmation not found")
+	var sameRequester, sameOperation, sameParams bool
+	if err := row.Scan(&state, &expires, &sameRequester, &sameOperation, &sameParams); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errs.New(errs.CodeNotFound, "confirmation not found")
+		}
+		return errs.New(errs.CodeInternal, "confirmation lookup failed").WithCause(err)
 	}
 	switch {
 	case state == "consumed":
@@ -147,8 +185,9 @@ func classifyConsumeFailure(ctx context.Context, c *ConfirmStore, id, requester,
 		return errs.New(errs.CodeConfirmationRequired, "confirmation has not been approved")
 	case !sameRequester:
 		return errs.New(errs.CodePermissionDenied, "confirmation belongs to a different requester")
-	case !sameParams:
-		return errs.New(errs.CodeConfirmationMismatch, "arguments changed after approval")
+	case !sameOperation || !sameParams:
+		// One generic message: the caller must not learn which binding failed.
+		return errs.New(errs.CodeConfirmationMismatch, "confirmation does not match this operation")
 	default:
 		return errs.New(errs.CodeConflict, "confirmation cannot be consumed")
 	}

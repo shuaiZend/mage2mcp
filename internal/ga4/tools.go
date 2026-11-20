@@ -118,7 +118,8 @@ func trafficInputSchema() map[string]any {
 		allowed[i] = name
 	}
 	return map[string]any{
-		"type": "object",
+		"type":                 "object",
+		"additionalProperties": false,
 		"properties": map[string]any{
 			"instance": map[string]any{
 				"type":        "string",

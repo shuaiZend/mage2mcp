@@ -4,6 +4,7 @@ package magento
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,3 +65,29 @@ func TestWriteArgumentsValidatedBeforeConfirmation(t *testing.T) {
 		t.Fatalf("code = %v, want invalid_argument (confirmation must not be issued)", raw)
 	}
 }
+
+// magentoConfirmService returns an in-memory confirmation service. NewMCP
+// refuses to start when a registered tool requires approval and no service is
+// supplied, so every test that builds a server needs one.
+// magentoConfirmService returns the package-wide confirmation service.
+//
+// It is shared rather than per-server because a test may build several servers
+// (one per simulated caller) and the approval must be visible to all of them —
+// exactly as it is in production, where the store is shared. No test in this
+// package calls t.Parallel, so the singleton cannot be observed concurrently.
+func magentoConfirmService(t *testing.T) *confirm.Service {
+	t.Helper()
+	testConfirmOnce.Do(func() {
+		svc, err := confirm.NewService(confirm.NewMemoryStore(), time.Minute)
+		if err != nil {
+			t.Fatalf("confirm.NewService: %v", err)
+		}
+		testConfirmService = svc
+	})
+	return testConfirmService
+}
+
+var (
+	testConfirmOnce    sync.Once
+	testConfirmService *confirm.Service
+)

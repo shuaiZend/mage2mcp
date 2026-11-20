@@ -4,22 +4,59 @@ package storage
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
+	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 )
 
-func testStore(t *testing.T) *Store {
+// testSchemaDSN returns the test database DSN scoped to a per-package schema.
+//
+// Database-backed test packages share one PostgreSQL instance and `go test ./...`
+// runs packages in parallel, so an unscoped DSN lets one package's cleanup — for
+// example `DELETE FROM jobs` here — destroy another package's fixtures while it
+// is still using them. A per-package search_path removes that interference
+// without serialising the suite.
+func testSchemaDSN(t *testing.T, schema string) string {
 	t.Helper()
-	url := os.Getenv("MAGE2MCP_TEST_DATABASE_URL")
-	if url == "" {
+	base := os.Getenv("MAGE2MCP_TEST_DATABASE_URL")
+	if base == "" {
 		t.Skip("MAGE2MCP_TEST_DATABASE_URL is not set; skipping PostgreSQL integration test")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, base)
+	if err != nil {
+		t.Fatalf("connect to create test schema: %v", err)
+	}
+	if _, err := conn.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
+		_ = conn.Close(ctx)
+		t.Fatalf("create test schema %q: %v", schema, err)
+	}
+	if err := conn.Close(ctx); err != nil {
+		t.Fatalf("close schema-setup connection: %v", err)
+	}
+	parsed, err := url.Parse(base)
+	if err != nil {
+		t.Fatalf("parse MAGE2MCP_TEST_DATABASE_URL: %v", err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func testStore(t *testing.T) *Store {
+	t.Helper()
+	url := testSchemaDSN(t, "test_storage")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	store, err := Open(ctx, Config{URL: url, MaxConns: 4})
@@ -102,10 +139,10 @@ func TestConfirmStoreLifecycle(t *testing.T) {
 	if err := svc.Approve(ctx, req.ID, "human-1"); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	if err := svc.Consume(ctx, req.ID, "agent-1", args); err != nil {
+	if err := svc.Consume(ctx, req.ID, "agent-1", "magento.product.update", "store-us", args); err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
-	if err := svc.Consume(ctx, req.ID, "agent-1", args); err == nil {
+	if err := svc.Consume(ctx, req.ID, "agent-1", "magento.product.update", "store-us", args); err == nil {
 		t.Fatal("replay must be rejected")
 	}
 }
@@ -125,7 +162,10 @@ func TestJobQueueLifecycle(t *testing.T) {
 	if task.ID != id || task.Attempts != 1 || task.MaxAttempts != 2 {
 		t.Fatalf("task = %+v", task)
 	}
-	if err := queue.Complete(ctx, id); err != nil {
+	if task.LeaseToken == "" {
+		t.Fatal("claim did not return a fencing token")
+	}
+	if err := queue.Complete(ctx, id, task.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	if next, _ := queue.Claim(ctx, []string{"default"}, time.Minute); next != nil && next.ID == id {
@@ -165,7 +205,7 @@ func TestJobQueueResultAndLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := queue.GetJob(ctx, id)
+	record, err := queue.GetJob(ctx, id, "", "system")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,17 +215,21 @@ func TestJobQueueResultAndLookup(t *testing.T) {
 	if len(record.Payload) == 0 {
 		t.Fatal("job payload is not returned by GetJob")
 	}
-	if err := queue.SetResult(ctx, id, `{"total":3}`); err != nil {
+	claimed, err := queue.Claim(ctx, []string{"import"}, time.Minute)
+	if err != nil || claimed == nil || claimed.ID != id {
+		t.Fatalf("claim = %+v, %v", claimed, err)
+	}
+	if err := queue.SetResult(ctx, id, claimed.LeaseToken, `{"total":3}`); err != nil {
 		t.Fatal(err)
 	}
-	record, err = queue.GetJob(ctx, id)
+	record, err = queue.GetJob(ctx, id, "", "system")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if record.Result != `{"total":3}` {
 		t.Fatalf("result = %q", record.Result)
 	}
-	if _, err := queue.GetJob(ctx, "00000000-0000-0000-0000-000000000000"); errs.CodeOf(err) != errs.CodeNotFound {
+	if _, err := queue.GetJob(ctx, "00000000-0000-0000-0000-000000000000", "", "system"); errs.CodeOf(err) != errs.CodeNotFound {
 		t.Fatalf("missing job err = %v", err)
 	}
 }
@@ -222,6 +266,11 @@ func TestJobQueueIdempotentEnqueue(t *testing.T) {
 func TestImportBatchLifecycle(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
+	// The assertions below read back by instance_id, so a previous run's rows must
+	// not be in scope (the suite is re-run against a persistent database).
+	if _, err := store.pool.Exec(ctx, `DELETE FROM import_batches WHERE instance_id = 'store-us'`); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
 	id, err := store.CreateImportBatch(ctx, "store-us", "", "csv", []byte("sku,name\nA,B\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +282,7 @@ func TestImportBatchLifecycle(t *testing.T) {
 	if err := store.FinishImportBatch(ctx, id, result, "partial", ""); err != nil {
 		t.Fatal(err)
 	}
-	batch, err := store.GetImportBatchByJob(ctx, "")
+	batch, err := store.GetImportBatchByJob(ctx, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,6 +302,11 @@ func TestListAndGetImportBatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	const instance = "store-list-test"
+	// ListImportBatches returns every row for the instance; clear the leftovers from
+	// earlier runs so len(list) is a property of this test alone.
+	if _, err := store.pool.Exec(ctx, `DELETE FROM import_batches WHERE instance_id = $1`, instance); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
 	id, err := store.CreateImportBatch(ctx, instance, "", "csv", []byte("sku\nA\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -269,14 +323,14 @@ func TestListAndGetImportBatch(t *testing.T) {
 	if len(list) != 1 || list[0].ID != id || list[0].State != "partial" || list[0].Failed != 1 {
 		t.Fatalf("list = %+v", list)
 	}
-	batch, err := store.GetImportBatch(ctx, id)
+	batch, err := store.GetImportBatch(ctx, id, instance, "system")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if batch == nil || len(batch.Failures) != 1 || batch.Failures[0].SKU != "A" {
 		t.Fatalf("batch = %+v", batch)
 	}
-	if missing, err := store.GetImportBatch(ctx, "00000000-0000-0000-0000-000000000000"); err != nil || missing != nil {
+	if missing, err := store.GetImportBatch(ctx, "00000000-0000-0000-0000-000000000000", instance, "system"); err != nil || missing != nil {
 		t.Fatalf("missing batch = %+v, %v", missing, err)
 	}
 	// Default limit and empty instance filter.
@@ -309,7 +363,7 @@ func TestPruneImportBatches(t *testing.T) {
 	if removed < 1 {
 		t.Fatalf("removed = %d", removed)
 	}
-	if batch, err := store.GetImportBatch(ctx, id); err != nil || batch != nil {
+	if batch, err := store.GetImportBatch(ctx, id, "store-prune-test", "system"); err != nil || batch != nil {
 		t.Fatalf("pruned batch = %+v, %v", batch, err)
 	}
 	var failures int
@@ -337,13 +391,137 @@ func TestImportBatchStoreClosed(t *testing.T) {
 	if err := store.FinishImportBatch(ctx, "i", &jobs.ImportBatchResult{}, "failed", ""); err == nil {
 		t.Fatal("finish on a closed store must fail")
 	}
-	if _, err := store.GetImportBatchByJob(ctx, "i"); err == nil {
+	if _, err := store.GetImportBatchByJob(ctx, "i", "", ""); err == nil {
 		t.Fatal("get-by-job on a closed store must fail")
 	}
 	if _, err := store.ListImportBatches(ctx, "i", 10); err == nil {
 		t.Fatal("list on a closed store must fail")
 	}
-	if _, err := store.GetImportBatch(ctx, "i"); err == nil {
+	if _, err := store.GetImportBatch(ctx, "i", "", ""); err == nil {
 		t.Fatal("get on a closed store must fail")
+	}
+}
+
+// SEC-R01: the batch list is scoped to the caller's subject as well as the
+// instance, so one caller on an instance cannot see another caller's batch
+// metadata.
+func TestListImportBatchesIsSubjectScoped(t *testing.T) {
+	store := testStore(t)
+	queue := NewJobQueue(store)
+	ctx := context.Background()
+	const instance = "store-batch-subject"
+	if _, err := store.pool.Exec(ctx,
+		`DELETE FROM import_batches WHERE instance_id = $1`, instance); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.pool.Exec(context.Background(),
+			`DELETE FROM import_batches WHERE instance_id = $1`, instance)
+	})
+
+	// One job and one batch per subject, on the same instance.
+	enqueue := func(subject, key string) string {
+		jobID, err := queue.Enqueue(ctx, jobs.Task{
+			Kind: jobs.TypeMagentoImport, Queue: jobs.QueueImport,
+			InstanceID: instance, IdempotencyKey: key, MaxAttempts: 1,
+			Subject: subject,
+		})
+		if err != nil {
+			t.Fatalf("enqueue for %s: %v", subject, err)
+		}
+		batchID, err := store.CreateImportBatch(ctx, instance, jobID, "csv", []byte("sku\nA\n"))
+		if err != nil {
+			t.Fatalf("create batch for %s: %v", subject, err)
+		}
+		return batchID
+	}
+	aliceBatch := enqueue("alice", "batch-subject-alice")
+	bobBatch := enqueue("bob", "batch-subject-bob")
+
+	list := func(subject string) []jobs.ImportBatch {
+		subjectCtx := auth.WithIdentity(ctx, &auth.Identity{Subject: subject})
+		batches, err := store.ListImportBatches(subjectCtx, instance, 100)
+		if err != nil {
+			t.Fatalf("list for %s: %v", subject, err)
+		}
+		return batches
+	}
+
+	aliceSees := list("alice")
+	if len(aliceSees) != 1 || aliceSees[0].ID != aliceBatch {
+		t.Fatalf("alice sees %+v, want only her own batch %s", aliceSees, aliceBatch)
+	}
+	bobSees := list("bob")
+	if len(bobSees) != 1 || bobSees[0].ID != bobBatch {
+		t.Fatalf("bob sees %+v, want only his own batch %s", bobSees, bobBatch)
+	}
+	// The leaked id must also be unreadable, which the get path already enforced.
+	aliceCtx := auth.WithIdentity(ctx, &auth.Identity{Subject: "alice"})
+	if leaked, err := store.GetImportBatch(aliceCtx, bobBatch, instance, "alice"); err != nil || leaked != nil {
+		t.Fatalf("alice read bob's batch by id: %+v, %v", leaked, err)
+	}
+}
+
+// SEC-R02: an intent row records no decision, so a phase-blind query for allowed
+// calls cannot return a call that was subsequently denied.
+func TestAuditIntentRowDoesNotClaimAllow(t *testing.T) {
+	store := testStore(t)
+	rec := NewAuditRecorder(store)
+	ctx := context.Background()
+	const tool = "test.audit.pending"
+	if _, err := store.pool.Exec(ctx, `DELETE FROM audit_events WHERE tool = $1`, tool); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM audit_events WHERE tool = $1`, tool)
+	})
+
+	// A denied call: intent then outcome.
+	if err := rec.Record(ctx, audit.Event{
+		Subject: "agent-1", IdentityClass: "human", Tool: tool,
+		Decision: DecisionPending, Phase: "intent", State: "pending",
+	}); err != nil {
+		t.Fatalf("record intent: %v", err)
+	}
+	if err := rec.Record(ctx, audit.Event{
+		Subject: "agent-1", IdentityClass: "human", Tool: tool,
+		Decision: "deny", Phase: "outcome", State: "denied", ErrorCode: "permission_denied",
+	}); err != nil {
+		t.Fatalf("record denied outcome: %v", err)
+	}
+
+	var allowed int
+	if err := store.pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events WHERE tool = $1 AND decision = 'allow'`, tool).Scan(&allowed); err != nil {
+		t.Fatalf("count allowed: %v", err)
+	}
+	if allowed != 0 {
+		t.Fatalf("%d rows match decision=allow for a denied call; the intent row still asserts allow", allowed)
+	}
+
+	// A granted call is still found.
+	const grantedTool = "test.audit.granted"
+	t.Cleanup(func() {
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM audit_events WHERE tool = $1`, grantedTool)
+	})
+	if err := rec.Record(ctx, audit.Event{
+		Subject: "agent-1", IdentityClass: "human", Tool: grantedTool,
+		Decision: DecisionPending, Phase: "intent", State: "pending",
+	}); err != nil {
+		t.Fatalf("record granted intent: %v", err)
+	}
+	if err := rec.Record(ctx, audit.Event{
+		Subject: "agent-1", IdentityClass: "human", Tool: grantedTool,
+		Decision: "allow", Phase: "outcome", State: "succeeded",
+	}); err != nil {
+		t.Fatalf("record granted outcome: %v", err)
+	}
+	var grantedAllowed int
+	if err := store.pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events WHERE tool = $1 AND decision = 'allow'`, grantedTool).Scan(&grantedAllowed); err != nil {
+		t.Fatalf("count granted: %v", err)
+	}
+	if grantedAllowed != 1 {
+		t.Fatalf("%d rows match decision=allow for a granted call, want 1", grantedAllowed)
 	}
 }

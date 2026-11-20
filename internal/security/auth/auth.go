@@ -6,6 +6,14 @@
 // Identity is the only authorization input: a verifier produces it, the
 // middleware stores it on the request context, and the policy engine consumes
 // it. Nothing downstream re-parses the raw token, and the token is never logged.
+//
+// Two credential sources are accepted, both verified by the same Verifier:
+// Cloudflare Access forwards a signed JWT in Cf-Access-Jwt-Assertion, and a
+// direct OIDC client sends Authorization: Bearer. The gateway verifies the
+// assertion's signature and claims; it does NOT enforce that the origin is
+// reachable only through Cloudflare. Origin lockdown (a Tunnel, or authenticated
+// origin pull) is a deployment control, and without it any client that can
+// reach the listener can present its own Authorization header.
 package auth
 
 import (
@@ -25,11 +33,17 @@ const (
 	ClassService = "service"
 )
 
+// AssertionHeader is the header Cloudflare Access uses to forward a signed JWT
+// to the origin.
+const AssertionHeader = "Cf-Access-Jwt-Assertion"
+
 // Stable rejection reasons. They are safe to expose and to aggregate.
 const (
 	reasonMissingToken           = "missing_token"
 	reasonMalformedAuthorization = "malformed_authorization"
 	reasonDuplicateAuthorization = "duplicate_authorization"
+	reasonMalformedAssertion     = "malformed_assertion"
+	reasonDuplicateAssertion     = "duplicate_assertion"
 	reasonInvalidIdentity        = "invalid_identity"
 	reasonInvalidToken           = "invalid_token"
 	reasonNoVerifier             = "no_verifier"
@@ -41,7 +55,9 @@ type Identity struct {
 	Subject string
 	// Class is ClassHuman or ClassService.
 	Class string
-	// Roles are the verified role names granted to the caller.
+	// Roles are the role names from the verified token's `roles` claim. The IdP
+	// is the role authority; the policy decides what each name grants, and a name
+	// with no grant grants nothing.
 	Roles []string
 }
 
@@ -71,24 +87,40 @@ func IdentityFromContext(ctx context.Context) (*Identity, bool) {
 	return id, true
 }
 
-// Verifier turns a raw bearer token into an identity. It returns an
-// *errs.Error with code CodeUnauthenticated when the token is not acceptable.
+// Verifier turns a raw credential (a Bearer token or a Cloudflare Access
+// assertion) into an identity. It returns an *errs.Error with code
+// CodeUnauthenticated when the credential is not acceptable.
 type Verifier interface {
 	Verify(ctx context.Context, rawToken string) (*Identity, error)
 }
 
-// Middleware extracts a single Bearer token from the Authorization header,
-// verifies it, and stores the identity on the request context. A missing,
-// malformed, or unverifiable token produces 401 with
-// {"error":"unauthenticated","reason":"<stable_reason>"}. The token itself is
-// never logged or echoed.
+// Middleware extracts exactly one credential, verifies it, and stores the
+// identity on the request context. A missing, malformed, or unverifiable
+// credential produces 401 with
+// {"error":"unauthenticated","reason":"<stable_reason>"}. The credential itself
+// is never logged or echoed.
+//
+// Credential precedence. Cf-Access-Jwt-Assertion is authoritative when present:
+// its value is verified and the Authorization header is not consulted, so a
+// caller cannot downgrade to a bearer token by supplying a bad assertion. When
+// the assertion header is absent, Authorization: Bearer is used unchanged. A
+// duplicate header of either kind is rejected before any verification, so an
+// ambiguous request never reaches the verifier.
+//
+// Both sources go through the same Verifier and therefore the same algorithm
+// allowlist, signature check, issuer, audience, expiry, and role parsing. There
+// is no second, weaker verifier for the assertion path.
+//
+// The middleware does not check that the request came from Cloudflare. That is
+// a deployment control (a Tunnel or authenticated origin pull); see the package
+// comment.
 func Middleware(v Verifier, logger *slog.Logger) func(http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			raw, reason := bearerToken(r)
+			raw, reason := credential(r)
 			if reason != "" {
 				reject(w, logger, r, reason)
 				return
@@ -109,6 +141,38 @@ func Middleware(v Verifier, logger *slog.Logger) func(http.Handler) http.Handler
 			next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), id)))
 		})
 	}
+}
+
+// credential selects the one credential this request may authenticate with.
+//
+// The Access assertion wins when present; the Authorization header is then
+// ignored. Both headers are still checked for duplication first, so a request
+// that presents two credentials of the same kind is rejected rather than
+// silently resolved.
+func credential(r *http.Request) (string, string) {
+	assertions := r.Header.Values(AssertionHeader)
+	authorizations := r.Header.Values("Authorization")
+	switch {
+	case len(assertions) > 1:
+		return "", reasonDuplicateAssertion
+	case len(authorizations) > 1:
+		return "", reasonDuplicateAuthorization
+	}
+	if len(assertions) == 1 {
+		return assertionToken(assertions[0])
+	}
+	return bearerToken(r)
+}
+
+// assertionToken validates the shape of one Cf-Access-Jwt-Assertion value. It
+// deliberately does not verify the JWT: that is the Verifier's job, so the
+// assertion and bearer paths cannot drift apart.
+func assertionToken(value string) (string, string) {
+	token := strings.TrimSpace(value)
+	if token == "" || strings.ContainsAny(token, " \t\r\n") {
+		return "", reasonMalformedAssertion
+	}
+	return token, ""
 }
 
 // bearerToken returns the credential and, on failure, the rejection reason.

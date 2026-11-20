@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
 	mcpserver "github.com/shuaiZend/mage2mcp/internal/mcp/server"
 )
@@ -147,13 +149,60 @@ func structuredOutput[T any](t *testing.T, res *mcp.CallToolResult) T {
 }
 
 // callWriteTool calls one write tool and fails on a protocol error.
+// callWriteTool drives a write tool the way a real client must: the first call
+// returns confirmation_required, a different human approves it, and the second
+// call carries the confirmation id. Tests that assert on the unapproved error
+// should call session.CallTool directly.
 func callWriteTool(t *testing.T, ctx context.Context, session *mcp.ClientSession, name string, args map[string]any) *mcp.CallToolResult { //nolint:revive // test helper keeps t first by convention
 	t.Helper()
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
 		t.Fatalf("call %s: %v", name, err)
 	}
-	return res
+	if !res.IsError {
+		return res
+	}
+	id := confirmationIDFromResult(t, res)
+	if id == "" {
+		return res
+	}
+	if testConfirmService == nil {
+		t.Fatalf("call %s requires approval but the server was built without a confirmation service", name)
+	}
+	if err := testConfirmService.Approve(ctx, id, "qa-approver"); err != nil {
+		t.Fatalf("approve %s (%s): %v", name, id, err)
+	}
+	approved := make(map[string]any, len(args)+1)
+	for k, v := range args {
+		approved[k] = v
+	}
+	approved["confirmation_id"] = id
+	second, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: approved})
+	if err != nil {
+		t.Fatalf("call %s with confirmation: %v", name, err)
+	}
+	return second
+}
+
+// confirmationIDFromResult returns the confirmation id a tool error advertises,
+// or "" when the error is not a pending-approval response.
+func confirmationIDFromResult(t *testing.T, res *mcp.CallToolResult) string {
+	t.Helper()
+	raw, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("encode tool envelope: %v", err)
+	}
+	var envelope struct {
+		Code    string            `json:"code"`
+		Details map[string]string `json:"details"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return ""
+	}
+	if envelope.Code != string(errs.CodeConfirmationRequired) {
+		return ""
+	}
+	return envelope.Details["confirmation_id"]
 }
 
 func TestWriteToolsThroughInMemoryTransport(t *testing.T) {
@@ -183,6 +232,9 @@ func TestWriteToolsThroughInMemoryTransport(t *testing.T) {
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/child"):
 			_, _ = io.WriteString(w, `true`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/children"):
+			// The staged create verifies the child links by reading them back.
+			_, _ = io.WriteString(w, `[{"id":1,"sku":"PHONE-01-BLK","type_id":"simple"}]`)
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/rest/default/V1/products/"):
 			_, _ = io.WriteString(w, `true`)
 		default:
@@ -195,7 +247,7 @@ func TestWriteToolsThroughInMemoryTransport(t *testing.T) {
 	if err := RegisterWrites(reg, testService(t, ts.URL)); err != nil {
 		t.Fatalf("RegisterWrites: %v", err)
 	}
-	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg})
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg, Confirm: magentoConfirmService(t)})
 	if err != nil {
 		t.Fatalf("NewMCP: %v", err)
 	}
@@ -430,4 +482,271 @@ func TestWriteSchemasAcceptConfirmationID(t *testing.T) {
 			t.Fatalf("%s schema does not accept confirmation_id", name)
 		}
 	}
+}
+
+// configurableResumeFake is a stateful catalog for the staged configurable
+// create: products, child links, and the source-item read the stock stage uses.
+type configurableResumeFake struct {
+	mu           sync.Mutex
+	products     map[string]string // sku -> type_id
+	variants     map[string]string // child sku -> color value
+	linked       map[string]bool
+	linkFail     map[string]bool
+	requests     []string
+	productPOSTs int
+	linkPOSTs    int
+}
+
+func newConfigurableResumeFake() *configurableResumeFake {
+	return &configurableResumeFake{
+		products: map[string]string{}, variants: map[string]string{},
+		linked: map[string]bool{}, linkFail: map[string]bool{},
+	}
+}
+
+func (f *configurableResumeFake) productJSON(sku string) string {
+	custom := ""
+	if value, ok := f.variants[sku]; ok {
+		custom = fmt.Sprintf(`,"custom_attributes":[{"attribute_code":"color","value":%q}]`, value)
+	}
+	return fmt.Sprintf(`{"id":100,"sku":%q,"type_id":%q,"name":%q,"price":699,"attribute_set_id":4%s}`,
+		sku, f.products[sku], "Name "+sku, custom)
+}
+
+func (f *configurableResumeFake) handler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.requests = append(f.requests, r.Method+" "+r.URL.Path)
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+		switch {
+		case r.Method == http.MethodGet && path == "/rest/default/V1/products/attribute-sets/4/attributes":
+			_, _ = io.WriteString(w, `[{"attribute_id":93,"attribute_code":"color","frontend_input":"select"}]`)
+		case r.Method == http.MethodGet && path == "/rest/default/V1/inventory/source-items":
+			f.mu.Lock()
+			rows := make([]string, 0, len(f.products))
+			for sku, typeID := range f.products {
+				if typeID == "simple" {
+					rows = append(rows, fmt.Sprintf(`{"sku":%q,"source_code":"default","quantity":5,"status":1}`, sku))
+				}
+			}
+			f.mu.Unlock()
+			_, _ = io.WriteString(w, `{"items":[`+strings.Join(rows, ",")+`],"total_count":`+fmt.Sprint(len(rows))+`}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/children"):
+			f.mu.Lock()
+			items := make([]string, 0, len(f.linked))
+			for sku := range f.linked {
+				items = append(items, fmt.Sprintf(`{"sku":%q,"type_id":"simple"}`, sku))
+			}
+			f.mu.Unlock()
+			_, _ = io.WriteString(w, "["+strings.Join(items, ",")+"]")
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/rest/default/V1/products/"):
+			sku := strings.TrimPrefix(path, "/rest/default/V1/products/")
+			f.mu.Lock()
+			_, ok := f.products[sku]
+			body := ""
+			if ok {
+				body = f.productJSON(sku)
+			}
+			f.mu.Unlock()
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = io.WriteString(w, body)
+		case r.Method == http.MethodPost && path == "/rest/default/V1/products":
+			raw, _ := io.ReadAll(r.Body)
+			var body struct {
+				Product struct {
+					SKU              string `json:"sku"`
+					TypeID           string `json:"type_id"`
+					CustomAttributes []struct {
+						Code  string `json:"attribute_code"`
+						Value string `json:"value"`
+					} `json:"custom_attributes"`
+				} `json:"product"`
+			}
+			_ = json.Unmarshal(raw, &body)
+			f.mu.Lock()
+			f.products[body.Product.SKU] = body.Product.TypeID
+			for _, attribute := range body.Product.CustomAttributes {
+				if attribute.Code == "color" {
+					f.variants[body.Product.SKU] = attribute.Value
+				}
+			}
+			f.productPOSTs++
+			rendered := f.productJSON(body.Product.SKU)
+			f.mu.Unlock()
+			_, _ = io.WriteString(w, rendered)
+		case r.Method == http.MethodPost && strings.HasSuffix(path, "/child"):
+			raw, _ := io.ReadAll(r.Body)
+			child := linkChildSKU(t, raw)
+			f.mu.Lock()
+			f.linkPOSTs++
+			fail := f.linkFail[child]
+			if !fail {
+				f.linked[child] = true
+			}
+			f.mu.Unlock()
+			if fail {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(w, `{"message":"The child could not be linked."}`)
+				return
+			}
+			_, _ = io.WriteString(w, `true`)
+		case r.Method == http.MethodPut && strings.Contains(path, "/stockItems/"):
+			_, _ = io.WriteString(w, `true`)
+		default:
+			http.NotFound(w, r)
+		}
+	}
+}
+
+func (f *configurableResumeFake) counts() (productPOSTs, linkPOSTs int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.productPOSTs, f.linkPOSTs
+}
+
+// TestConfigurableCreateResumesThroughMCP is the t29 regression: a partial create
+// exposes its execution record at the MCP boundary, and the returned
+// operation_id resumes it without re-POSTing an existing SKU.
+func TestConfigurableCreateResumesThroughMCP(t *testing.T) {
+	fake := newConfigurableResumeFake()
+	fake.linkFail["PHONE-01-WHT"] = true
+	ts := httptest.NewServer(fake.handler(t))
+	defer ts.Close()
+	session := startToolSession(t, testService(t, ts.URL))
+	ctx := context.Background()
+
+	args := map[string]any{
+		"instance": "default",
+		"parent": map[string]any{
+			"sku": "PHONE-01", "name": "Phone 01", "attribute_set_id": 4, "price": "699",
+		},
+		"variant_attributes": []any{map[string]any{
+			"attribute_id": 93, "code": "color",
+			"values": []any{map[string]any{"value_index": 12}, map[string]any{"value_index": 13}},
+		}},
+		"children": []any{
+			map[string]any{"sku": "PHONE-01-BLK", "attributes": map[string]string{"color": "12"}},
+			map[string]any{"sku": "PHONE-01-WHT", "attributes": map[string]string{"color": "13"}},
+		},
+	}
+
+	// First attempt: the second link fails, so the create is partial.
+	first := callWriteTool(t, ctx, session, configurableCreateToolName, args)
+	if !first.IsError {
+		t.Fatalf("partial create must be a tool error: %s", writeToolResultText(t, first))
+	}
+	var envelope struct {
+		Code   string                   `json:"code"`
+		Result configurableCreateOutput `json:"result"`
+	}
+	rawEnvelope, err := json.Marshal(first.StructuredContent)
+	if err != nil {
+		t.Fatalf("partial envelope is not JSON: %v", err)
+	}
+	if err := json.Unmarshal(rawEnvelope, &envelope); err != nil {
+		t.Fatalf("partial envelope is not JSON: %v (%s)", err, rawEnvelope)
+	}
+	if envelope.Code != string(errs.CodeConflict) {
+		t.Fatalf("code = %q, want conflict", envelope.Code)
+	}
+	partial := envelope.Result
+	if partial.Outcome != ConfigurablePartial || partial.FailedStage != stageLinks {
+		t.Fatalf("partial record = %+v, want outcome=partial failed_stage=links", partial)
+	}
+	if got := strings.Join(partial.OrphanSKUs, ","); got != "PHONE-01-WHT" {
+		t.Fatalf("orphan_skus = %q, want the unlinked child", got)
+	}
+	if partial.OperationID == "" {
+		t.Fatal("operation_id is empty, so the caller cannot resume")
+	}
+	if !contains(partial.CompletedStages, stageChildren) || !contains(partial.CompletedStages, stageParent) {
+		t.Fatalf("completed_stages = %v, want children and parent", partial.CompletedStages)
+	}
+	if len(partial.Stages) != len(configurableStages) {
+		t.Fatalf("stages = %v, want %d entries", partial.Stages, len(configurableStages))
+	}
+	productPOSTs, linkPOSTs := fake.counts()
+	if productPOSTs != 3 {
+		t.Fatalf("product POSTs = %d, want 3", productPOSTs)
+	}
+	if linkPOSTs != 2 {
+		t.Fatalf("link POSTs = %d, want 2 (one succeeded, one failed)", linkPOSTs)
+	}
+
+	// Resume with the operation id after the link is repaired upstream.
+	fake.mu.Lock()
+	delete(fake.linkFail, "PHONE-01-WHT")
+	fake.mu.Unlock()
+	args["operation_id"] = partial.OperationID
+
+	resumed := callWriteTool(t, ctx, session, configurableCreateToolName, args)
+	if resumed.IsError {
+		t.Fatalf("resume failed: %s", writeToolResultText(t, resumed))
+	}
+	out := structuredOutput[configurableCreateOutput](t, resumed)
+	if out.Outcome != ConfigurableCompleted || out.FailedStage != "" || len(out.OrphanSKUs) != 0 {
+		t.Fatalf("resume record = %+v, want a completed create", out)
+	}
+	if out.OperationID != partial.OperationID {
+		t.Fatalf("operation_id = %q, want the resumed id %q", out.OperationID, partial.OperationID)
+	}
+	for _, name := range []string{stagePrecheck, stageChildren, stageParent, stageLinks, stageStock} {
+		if !contains(out.CompletedStages, name) {
+			t.Fatalf("completed_stages = %v, want %q", out.CompletedStages, name)
+		}
+	}
+	if len(out.Stages) != len(configurableStages) {
+		t.Fatalf("stages = %v, want %d entries", out.Stages, len(configurableStages))
+	}
+	for i, name := range configurableStages {
+		if out.Stages[i].Name != name || out.Stages[i].Detail == "" {
+			t.Fatalf("stage %d = %+v, want %q with a detail", i, out.Stages[i], name)
+		}
+	}
+	// The resume reused the children and the parent: no new product POST, and
+	// exactly one new link call for the orphan.
+	gotProducts, gotLinks := fake.counts()
+	if gotProducts != productPOSTs {
+		t.Fatalf("product POSTs after the resume = %d, want %d (no SKU re-created)", gotProducts, productPOSTs)
+	}
+	if gotLinks != linkPOSTs+1 {
+		t.Fatalf("link POSTs after the resume = %d, want %d (only the orphan is relinked)", gotLinks, linkPOSTs+1)
+	}
+	if !fake.linked["PHONE-01-WHT"] {
+		t.Fatal("the orphan was not linked on resume")
+	}
+}
+
+// callToolApproved is callTool plus the approval dance: when the call comes back
+// confirmation_required it approves as a different human and retries with the
+// confirmation id. Read tools and already-approved calls pass straight through.
+func callToolApproved(t *testing.T, ctx context.Context, session *mcp.ClientSession, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+	t.Helper()
+	res, err := session.CallTool(ctx, params)
+	if err != nil || res == nil || !res.IsError {
+		return res, err
+	}
+	id := confirmationIDFromResult(t, res)
+	if id == "" || testConfirmService == nil {
+		return res, nil
+	}
+	if aerr := testConfirmService.Approve(ctx, id, "qa-approver"); aerr != nil {
+		t.Fatalf("approve %s (%s): %v", params.Name, id, aerr)
+	}
+	original, ok := params.Arguments.(map[string]any)
+	if !ok {
+		return res, nil
+	}
+	approved := make(map[string]any, len(original)+1)
+	for k, v := range original {
+		approved[k] = v
+	}
+	approved["confirmation_id"] = id
+	return session.CallTool(ctx, &mcp.CallToolParams{Name: params.Name, Arguments: approved})
 }

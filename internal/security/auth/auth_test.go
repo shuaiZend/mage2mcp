@@ -232,3 +232,191 @@ func TestMiddlewareNeverLeaksToken(t *testing.T) {
 		t.Fatal("expected the rejection to be logged at debug level")
 	}
 }
+
+// perTokenVerifier accepts a fixed set of tokens and rejects everything else, so
+// a test can prove which credential the middleware actually handed to the
+// verifier.
+type perTokenVerifier struct {
+	accept map[string]*Identity
+	got    []string
+}
+
+func (v *perTokenVerifier) Verify(_ context.Context, raw string) (*Identity, error) {
+	v.got = append(v.got, raw)
+	if id, ok := v.accept[raw]; ok {
+		return id, nil
+	}
+	return nil, errs.New(errs.CodeUnauthenticated, "authentication failed").
+		WithDetail("reason", "bad_signature")
+}
+
+func (v *perTokenVerifier) onlyToken(t *testing.T, want string) {
+	t.Helper()
+	if len(v.got) != 1 || v.got[0] != want {
+		t.Fatalf("verifier saw %q, want exactly [%q]", v.got, want)
+	}
+}
+
+// TestMiddlewareAcceptsAssertionHeader proves the documented Cloudflare Access
+// ingress works: the assertion is extracted and handed to the verifier.
+func TestMiddlewareAcceptsAssertionHeader(t *testing.T) {
+	verifier := &perTokenVerifier{accept: map[string]*Identity{
+		testToken: {Subject: "user-1", Class: ClassHuman, Roles: []string{"viewer"}},
+	}}
+	var got *Identity
+	h := Middleware(verifier, nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, _ = IdentityFromContext(r.Context())
+	}))
+	rec := doRequest(t, h, map[string][]string{AssertionHeader: {testToken}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	verifier.onlyToken(t, testToken)
+	if got == nil || got.Subject != "user-1" || len(got.Roles) != 1 || got.Roles[0] != "viewer" {
+		t.Fatalf("identity missing from request context: %+v", got)
+	}
+}
+
+// TestMiddlewareRejectsBadAssertionHeaders mirrors the Authorization handling
+// for duplicates and malformed values.
+func TestMiddlewareRejectsBadAssertionHeaders(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string][]string
+		reason  string
+	}{
+		{"duplicate assertion", map[string][]string{AssertionHeader: {"a", "b"}}, reasonDuplicateAssertion},
+		{"empty assertion", map[string][]string{AssertionHeader: {""}}, reasonMalformedAssertion},
+		{"blank assertion", map[string][]string{AssertionHeader: {"   "}}, reasonMalformedAssertion},
+		{"whitespace inside assertion", map[string][]string{AssertionHeader: {"a b"}}, reasonMalformedAssertion},
+		{"neither header", map[string][]string{"X-Forwarded-For": {"203.0.113.7"}}, reasonMissingToken},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verifier := &perTokenVerifier{accept: map[string]*Identity{}}
+			called := false
+			h := Middleware(verifier, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				called = true
+			}))
+			rec := doRequest(t, h, tt.headers)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d", rec.Code)
+			}
+			if body := decodeBody(t, rec); body["reason"] != tt.reason {
+				t.Fatalf("reason = %q, want %q", body["reason"], tt.reason)
+			}
+			if called {
+				t.Fatal("handler ran for a rejected request")
+			}
+			if len(verifier.got) != 0 {
+				t.Fatalf("verifier ran for a malformed request: %v", verifier.got)
+			}
+		})
+	}
+}
+
+// TestMiddlewareAssertionTakesPrecedence pins the documented rule: when the
+// Access assertion is present it is the only credential consulted, so a second
+// credential can never widen access and a bad assertion is never downgraded to a
+// bearer token.
+func TestMiddlewareAssertionTakesPrecedence(t *testing.T) {
+	const assertionToken = "assertion.header.sig"
+	const bearerToken = "bearer.header.sig"
+
+	t.Run("assertion wins over a valid bearer", func(t *testing.T) {
+		verifier := &perTokenVerifier{accept: map[string]*Identity{
+			assertionToken: {Subject: "access-user", Class: ClassHuman, Roles: []string{"viewer"}},
+			bearerToken:    {Subject: "bearer-user", Class: ClassHuman, Roles: []string{"admin"}},
+		}}
+		var got *Identity
+		h := Middleware(verifier, nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			got, _ = IdentityFromContext(r.Context())
+		}))
+		rec := doRequest(t, h, map[string][]string{
+			AssertionHeader: {assertionToken},
+			"Authorization": {"Bearer " + bearerToken},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+		}
+		verifier.onlyToken(t, assertionToken)
+		if got == nil || got.Subject != "access-user" {
+			t.Fatalf("identity = %+v, want the assertion's subject", got)
+		}
+	})
+
+	t.Run("a bad assertion is not downgraded to a valid bearer", func(t *testing.T) {
+		verifier := &perTokenVerifier{accept: map[string]*Identity{
+			bearerToken: {Subject: "bearer-user", Class: ClassHuman, Roles: []string{"admin"}},
+		}}
+		h := Middleware(verifier, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("handler ran on a rejected request")
+		}))
+		rec := doRequest(t, h, map[string][]string{
+			AssertionHeader: {"forged.header.sig"},
+			"Authorization": {"Bearer " + bearerToken},
+		})
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		if body := decodeBody(t, rec); body["reason"] != "bad_signature" {
+			t.Fatalf("reason = %q, want the verifier's reason", body["reason"])
+		}
+		verifier.onlyToken(t, "forged.header.sig")
+	})
+
+	t.Run("authorization is not parsed when the assertion is present", func(t *testing.T) {
+		verifier := &perTokenVerifier{accept: map[string]*Identity{
+			assertionToken: {Subject: "access-user", Class: ClassHuman},
+		}}
+		h := Middleware(verifier, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		rec := doRequest(t, h, map[string][]string{
+			AssertionHeader: {assertionToken},
+			"Authorization": {"Basic not-a-bearer-token"},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("a malformed Authorization must be ignored when the assertion is present, got %d (%s)",
+				rec.Code, rec.Body.String())
+		}
+		verifier.onlyToken(t, assertionToken)
+	})
+
+	t.Run("duplicate authorization is still rejected", func(t *testing.T) {
+		verifier := &perTokenVerifier{accept: map[string]*Identity{
+			assertionToken: {Subject: "access-user", Class: ClassHuman},
+		}}
+		h := Middleware(verifier, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("handler ran for an ambiguous request")
+		}))
+		rec := doRequest(t, h, map[string][]string{
+			AssertionHeader: {assertionToken},
+			"Authorization": {"Bearer a", "Bearer b"},
+		})
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		if body := decodeBody(t, rec); body["reason"] != reasonDuplicateAuthorization {
+			t.Fatalf("reason = %q, want %q", body["reason"], reasonDuplicateAuthorization)
+		}
+		if len(verifier.got) != 0 {
+			t.Fatalf("verifier ran for an ambiguous request: %v", verifier.got)
+		}
+	})
+}
+
+// TestMiddlewareNeverLeaksAssertion is the assertion-header counterpart of the
+// bearer-token leak test.
+func TestMiddlewareNeverLeaksAssertion(t *testing.T) {
+	var logs bytes.Buffer
+	verifier := &stubVerifier{err: errs.New(errs.CodeUnauthenticated, "authentication failed").WithDetail("reason", "expired")}
+	h := Middleware(verifier, newLogger(&logs))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("handler ran for a rejected request")
+	}))
+	rec := doRequest(t, h, map[string][]string{AssertionHeader: {testToken}})
+	if body := rec.Body.String(); bytes.Contains([]byte(body), []byte(testToken)) {
+		t.Fatalf("response leaked the assertion: %s", body)
+	}
+	if bytes.Contains(logs.Bytes(), []byte(testToken)) {
+		t.Fatalf("logs leaked the assertion: %s", logs.String())
+	}
+}

@@ -3,11 +3,19 @@
 # Values come from environment variables at runtime. Authentication is enabled
 # by default; for a local container only, set MAGE2MCP_AUTH_ENABLED=false and
 # MAGE2MCP_DEV_INSECURE=true.
+#
+# No data source is enabled here, so the container exposes only platform.info.
+# For a real deployment mount a configuration over
+# /etc/mage2mcp/config.yaml (or build an image with this file replaced) and
+# provide the MAGE2MCP_AUTH_* values; see configs/config.production.template.yaml
+# and docs/configuration.md.
 server:
   listen: "0.0.0.0:8080"
-  public_url: "${MAGE2MCP_PUBLIC_URL}"
   shutdown_grace: 10s
-  max_body_bytes: 1048576
+  # 16 MiB: sized for a maximum-size import (8 MiB decoded -> 11,184,812 bytes
+  # base64 plus the JSON envelope). Lower it only if you do not import; with
+  # tools.writes enabled a value below 12 MiB fails startup validation.
+  max_body_bytes: 16777216
 
 auth:
   enabled: true
@@ -25,7 +33,6 @@ tools:
 database:
   url: "${MAGE2MCP_DATABASE_URL}"
   max_conns: 10
-
 
 datasources:
   magento:

@@ -45,7 +45,10 @@ const (
 )
 
 var (
-	nameRE = regexp.MustCompile(`^(magento|cloudflare|ga4|unified|platform)\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
+	// nameRE enforces module.domain.action for the data modules. platform.info
+	// is the one two-segment server-owned tool; it is a first-class registry
+	// entry (not a side map) and is validated by the same metadata contract.
+	nameRE = regexp.MustCompile(`^((magento|cloudflare|ga4|unified)\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+|platform\.[a-z][a-z0-9_]*)$`)
 	// mcpNameRE is the specification rule: 1-128 characters from [A-Za-z0-9_.-].
 	mcpNameRE = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 )
@@ -58,13 +61,46 @@ const (
 
 // Registry is safe for concurrent use.
 type Registry struct {
-	mu    sync.RWMutex
-	tools map[string]Tool
+	mu            sync.RWMutex
+	tools         map[string]Tool
+	writesEnabled bool
 }
 
-// New returns an empty registry.
+// New returns an empty registry. Writes are enabled by default so module tests
+// and development embeddings keep their historical behaviour; the server entry
+// point calls SetWritesEnabled(cfg.Tools.Writes) before registering modules.
 func New() *Registry {
-	return &Registry{tools: make(map[string]Tool)}
+	return &Registry{tools: make(map[string]Tool), writesEnabled: true}
+}
+
+// SetWritesEnabled is the registration-time write gate. It must be called
+// before tools are registered; Register rejects every non-read tool while the
+// flag is false, so a module that forgets its own check cannot leak a write.
+func (r *Registry) SetWritesEnabled(enabled bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.writesEnabled = enabled
+}
+
+// WritesEnabled reports the registration gate flag.
+func (r *Registry) WritesEnabled() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.writesEnabled
+}
+
+// HasWrites reports whether any registered tool mutates data. platform.info
+// uses this to report writes_enabled truthfully instead of trusting a config
+// flag that may not match the registry.
+func (r *Registry) HasWrites() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, t := range r.tools {
+		if t.Permission != PermissionRead {
+			return true
+		}
+	}
+	return false
 }
 
 // Register validates and adds a tool. It returns an error rather than panicking
@@ -75,6 +111,9 @@ func (r *Registry) Register(t Tool) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if !r.writesEnabled && t.Permission != PermissionRead {
+		return fmt.Errorf("registry: %s tool %q is disabled by tools.writes", t.Permission, t.Name)
+	}
 	if _, exists := r.tools[t.Name]; exists {
 		return fmt.Errorf("registry: duplicate tool %q", t.Name)
 	}

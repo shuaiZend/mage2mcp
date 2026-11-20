@@ -11,7 +11,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"text/tabwriter"
 	"time"
 
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
@@ -67,12 +66,9 @@ func run() error {
 			fmt.Println("no pending confirmations")
 			return nil
 		}
-		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "ID\tTOOL\tSUMMARY\tEXPIRES")
-		for _, r := range requests {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.ID, r.Tool, r.Summary, r.ExpiresAt.Format(time.RFC3339))
-		}
-		return w.Flush()
+		// The approver must see what is being approved, on which instance, and
+		// until when. WritePending renders a bounded, sanitised argument summary.
+		return confirm.WritePending(os.Stdout, requests)
 	case "approve":
 		if flag.NArg() < 2 {
 			return fmt.Errorf("approve requires a confirmation id")

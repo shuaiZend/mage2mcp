@@ -8,6 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
 
 const maxOrderCommentBytes = 1024
@@ -91,17 +94,146 @@ func (s *Service) SendOrderEmail(ctx context.Context, orderID int) error {
 	return err
 }
 
+// CancelOrderInput is one order cancellation request.
+type CancelOrderInput struct {
+	OrderID int `json:"order_id"`
+	// IdempotencyKey makes the call replayable: repeating it with the same
+	// arguments returns the recorded cancellation.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// Instance is the configured instance id recorded in the operation ledger.
+	Instance string `json:"instance,omitempty"`
+}
+
+// CancelOrderResult is the recorded outcome of one cancellation.
+type CancelOrderResult struct {
+	OrderID     int    `json:"order_id"`
+	Canceled    bool   `json:"canceled"`
+	OperationID string `json:"operation_id,omitempty"`
+	Replayed    bool   `json:"replayed,omitempty"`
+	Reconciled  bool   `json:"reconciled,omitempty"`
+}
+
 // CancelOrder cancels an order with POST /orders/{id}/cancel.
 //
-// Cancellation is irreversible; Magento only allows it while the order is in a
-// cancellable state and returns an upstream error otherwise.
-func (s *Service) CancelOrder(ctx context.Context, orderID int) error {
+// Cancellation is irreversible, so the order is read first: an order that is
+// already canceled, complete or closed is a typed conflict and no request is
+// sent. The operation is recorded in the ledger before the POST. An ambiguous
+// outcome (timeout, transport failure, 5xx) is resolved by reading the order
+// back: a canceled order is a success, an order still open is a definite
+// failure, and an unreadable order stays unknown for a human.
+func (s *Service) CancelOrder(ctx context.Context, in CancelOrderInput) (*CancelOrderResult, error) {
 	if err := s.requireOrderService(); err != nil {
-		return err
+		return nil, err
 	}
-	if orderID <= 0 {
-		return invalidf("order_id must be a positive integer")
+	if in.OrderID <= 0 {
+		return nil, invalidf("order_id must be a positive integer")
 	}
-	_, err := s.client.do(ctx, http.MethodPost, "/orders/"+strconv.Itoa(orderID)+"/cancel", nil, nil)
-	return err
+	if in.IdempotencyKey != "" && len(in.IdempotencyKey) > 256 {
+		return nil, invalidf("idempotency_key must be at most 256 characters")
+	}
+	order, err := s.GetOrder(ctx, in.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	amount, amountErr := moneyFromAmount(order.GrandTotal, order.Currency)
+	ops, err := configuredOperations()
+	if err != nil {
+		return nil, err
+	}
+	request := OperationRequest{
+		Tool: "magento.order.cancel", Instance: s.operationInstanceID(in.Instance),
+		Subject: callerSubject(ctx), IdempotencyKey: in.IdempotencyKey,
+		EntityType: storage.EntityOrder, EntityID: strconv.Itoa(in.OrderID),
+		Args: cancelArgs{OrderID: in.OrderID},
+	}
+	if amountErr == nil {
+		request.Amount = &amount
+	}
+	run, begun, err := ops.Begin(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if begun != nil && begun.Decision == storage.DecisionReplay {
+		var recorded CancelOrderResult
+		if err := Replay(begun, &recorded); err != nil {
+			return nil, err
+		}
+		recorded.Replayed = true
+		return &recorded, nil
+	}
+	// Pre-flight on a fresh attempt: a repeat of a successful cancellation replays
+	// above instead of being rejected here as a conflict.
+	switch order.State {
+	case "canceled":
+		_ = run.Fail(ctx, string(errs.CodeConflict))
+		return nil, errs.New(errs.CodeConflict,
+			"the order is already canceled; no cancel request was sent").
+			WithDetail("order_id", strconv.Itoa(in.OrderID)).
+			WithDetail("order_state", order.State).
+			WithDetail("operation_id", run.ID())
+	case "complete", "closed":
+		_ = run.Fail(ctx, string(errs.CodeConflict))
+		return nil, errs.New(errs.CodeConflict,
+			"the order can no longer be canceled in its current state").
+			WithDetail("order_id", strconv.Itoa(in.OrderID)).
+			WithDetail("order_state", order.State).
+			WithDetail("operation_id", run.ID())
+	}
+	_, postErr := s.client.do(ctx, http.MethodPost, "/orders/"+strconv.Itoa(in.OrderID)+"/cancel", nil, nil)
+	switch classifyOperationError(postErr) {
+	case operationNotApplied:
+		_ = run.Fail(ctx, string(errs.CodeOf(postErr)))
+		return nil, postErr
+	case operationAmbiguous:
+		upstreamCode := string(errs.CodeOf(postErr))
+		// A single read is not evidence: the cancellation may still be in flight.
+		// Require two agreeing reads before calling it a definite failure.
+		notCanceled, lastState := 0, ""
+		for attempt := 1; attempt <= reconcileReads; attempt++ {
+			if attempt > 1 {
+				if err := sleepContext(ctx, reconcileBackoff); err != nil {
+					break
+				}
+			}
+			after, readErr := s.GetOrder(ctx, in.OrderID)
+			if readErr != nil {
+				continue
+			}
+			if after.State == "canceled" {
+				result := &CancelOrderResult{OrderID: in.OrderID, Canceled: true, OperationID: run.ID(), Reconciled: true}
+				if err := run.Succeed(ctx, orderRef(*after), result); err != nil {
+					return nil, err
+				}
+				return result, nil
+			}
+			notCanceled++
+			lastState = after.State
+			if notCanceled >= 2 {
+				break
+			}
+		}
+		if notCanceled >= 2 {
+			if err := run.Fail(ctx, reconciledNotApplied); err != nil {
+				return nil, err
+			}
+			failure := errs.New(errs.CodeOf(postErr),
+				"the order was not canceled: two independent reads show it still open, so it is safe to retry with a new idempotency key").
+				WithDetail("operation_id", run.ID()).
+				WithDetail("order_state", lastState)
+			failure.Retryable = true
+			return nil, failure
+		}
+		_ = run.Unknown(ctx, upstreamCode)
+		return nil, operationUnknownError(run.ID(), "order cancellation", upstreamCode)
+	}
+	result := &CancelOrderResult{OrderID: in.OrderID, Canceled: true, OperationID: run.ID()}
+	if err := run.Succeed(ctx, "order:"+strconv.Itoa(in.OrderID), result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// cancelArgs is the canonical argument set hashed for replay detection.
+type cancelArgs struct {
+	OrderID int `json:"order_id"`
 }

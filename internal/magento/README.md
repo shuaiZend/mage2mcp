@@ -28,7 +28,7 @@ No plugin is installed and the Magento database is never touched.
 
 - Configurable creation is children → parent options → links. Failures report
   the stage, completed SKUs, and failed SKU; writes are **not** rolled back.
-- Import execution is bounded (8 MiB, 5000 rows) and non-atomic; new products
+- Import execution is bounded (8 MiB decoded, 5000 rows; the default 16 MiB `server.max_body_bytes` admits its 11,184,812-byte base64 form plus the JSON envelope) and non-atomic; new products
   require `attribute_set_id`.
 - Client IPs, credentials, and raw upstream bodies never appear in errors;
   Magento's sanitized validation message may appear as `upstream_message`.

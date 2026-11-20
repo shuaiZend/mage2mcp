@@ -19,11 +19,61 @@ import (
 
 // Import limits. They are enforced before any row is inspected so a hostile
 // payload cannot allocate unbounded memory.
+//
+// The ceiling is a capability, so it is declared first and the transport is sized
+// to honour it — not the other way round. 8 MiB decoded encodes to 11,184,812
+// bytes of base64; the MCP body cap that must admit that plus the JSON envelope
+// is internal/core/config.DefaultMaxBodyBytes (16 MiB). Lowering this constant
+// would silently shrink a documented feature, so it stays at the documented
+// value and the three limits (schema maxLength, decoder, body cap) are pinned by
+// TestImportLimitsAgreeAcrossPackages.
 const (
 	maxImportBytes = 8 << 20
 	maxImportRows  = 5000
 	maxImportCols  = 64
+
+	// DefaultHTTPBodyBytes mirrors internal/core/config.DefaultMaxBodyBytes. It
+	// is repeated here so an import error can report the body cap without the
+	// magento package depending on config; the drift test asserts the two are
+	// equal.
+	DefaultHTTPBodyBytes = 16 << 20
+	// importEnvelopeBytes bounds the JSON around data_base64 (instance, format,
+	// update_existing, idempotency_key, braces, and escaping). The measured
+	// envelope for a maximum import is ~162 bytes; 4 KiB is deliberate headroom.
+	importEnvelopeBytes = 4 << 10
 )
+
+// MaxImportBytes is the largest decoded import payload accepted, in bytes.
+const MaxImportBytes = maxImportBytes
+
+// ImportHTTPBodyBytes returns the MCP request-body size an import of decodedLen
+// bytes needs once base64-encoded and wrapped in its JSON envelope.
+func ImportHTTPBodyBytes(decodedLen int) int {
+	return base64.StdEncoding.EncodedLen(decodedLen) + importEnvelopeBytes
+}
+
+// ImportFitsHTTPBody reports whether a decoded payload of decodedLen bytes fits
+// the default transport body cap.
+func ImportFitsHTTPBody(decodedLen int) bool {
+	return ImportHTTPBodyBytes(decodedLen) <= DefaultHTTPBodyBytes
+}
+
+// importTooLargeError names the limit and the observed size so an operator can
+// split the batch without guessing which cap was hit.
+func importTooLargeError(observed int, encoded bool) error {
+	unit := ""
+	if encoded {
+		unit = " (base64-encoded)"
+	}
+	e := errs.New(errs.CodeInvalidArgument,
+		fmt.Sprintf("import payload is %d bytes%s; the limit is %d bytes decoded (%d bytes encoded)",
+			observed, unit, maxImportBytes, base64.StdEncoding.EncodedLen(maxImportBytes)))
+	e = e.WithDetail("limit_bytes", fmt.Sprint(maxImportBytes))
+	e = e.WithDetail("observed_bytes", fmt.Sprint(observed))
+	e = e.WithDetail("max_rows", fmt.Sprint(maxImportRows))
+	e = e.WithDetail("http_body_limit_bytes", fmt.Sprint(DefaultHTTPBodyBytes))
+	return e
+}
 
 // ImportRow is one parsed product row.
 type ImportRow struct {
@@ -68,8 +118,7 @@ func (s *Service) ValidateImport(_ context.Context, format string, data []byte) 
 		return nil, errs.New(errs.CodeInvalidArgument, "import payload is empty")
 	}
 	if len(data) > maxImportBytes {
-		return nil, errs.New(errs.CodeInvalidArgument, "import payload exceeds 8 MiB").
-			WithDetail("limit_bytes", fmt.Sprint(maxImportBytes))
+		return nil, importTooLargeError(len(data), false)
 	}
 	var rows []ImportRow
 	var err error
@@ -145,13 +194,20 @@ func importSEOWarnings(row ImportRow) []ImportWarning {
 }
 
 // DecodeImportPayload decodes a base64 import body with a size cap.
+//
+// The encoded length is checked first so an oversized body is rejected without
+// paying for the decode allocation, and so the error names the same limit the
+// transport enforces.
 func DecodeImportPayload(encoded string) ([]byte, error) {
+	if len(encoded) > base64.StdEncoding.EncodedLen(maxImportBytes) {
+		return nil, importTooLargeError(len(encoded), true)
+	}
 	decoded, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return nil, errs.New(errs.CodeInvalidArgument, "import payload is not valid base64").WithCause(err)
 	}
 	if len(decoded) > maxImportBytes {
-		return nil, errs.New(errs.CodeInvalidArgument, "import payload exceeds 8 MiB")
+		return nil, importTooLargeError(len(decoded), false)
 	}
 	return decoded, nil
 }

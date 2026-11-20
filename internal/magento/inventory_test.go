@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
@@ -167,32 +168,100 @@ func TestInventorySourcesAndStocks(t *testing.T) {
 	}
 }
 
-func TestTransferSourceQty(t *testing.T) {
-	var posted sourceItemsBody
-	postedCount := 0
+// sourceItemsResponse renders a source-item page for the transfer fakes.
+func sourceItemsResponse(from, to int) string {
+	return fmt.Sprintf(`{"items":[
+		{"sku":"SKU-1","source_code":"default","quantity":%d,"status":1},
+		{"sku":"SKU-1","source_code":"warehouse","quantity":%d,"status":1}
+	],"total_count":2}`, from, to)
+}
+
+// transferScript drives the transfer fakes: successive GETs return the scripted
+// quantity pairs (the last entry repeats) and a write returns writeStatus. The
+// script, not the fake, decides what the post-write read observes, so partial
+// and mismatched writes are expressible without a mutable backend.
+type transferScript struct {
+	gets        [][2]int
+	getStatus   []int
+	writeStatus int
+}
+
+// transferServer starts a fake MSI endpoint from a script and returns the
+// service plus the recorded writes.
+func transferServer(t *testing.T, script transferScript) (*Service, *[]sourceItemsBody, *int) {
+	t.Helper()
+	writes := &[]sourceItemsBody{}
+	gets := new(int)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method {
 		case http.MethodGet:
-			_, _ = w.Write([]byte(`{"items":[
-				{"sku":"SKU-1","source_code":"default","quantity":10,"status":1},
-				{"sku":"SKU-1","source_code":"warehouse","quantity":0,"status":0}
-			]}`))
+			n := *gets
+			*gets++
+			if n < len(script.getStatus) && script.getStatus[n] != 0 {
+				w.WriteHeader(script.getStatus[n])
+				_, _ = io.WriteString(w, `{"message":"read failed"}`)
+				return
+			}
+			pair := script.gets[len(script.gets)-1]
+			if n < len(script.gets) {
+				pair = script.gets[n]
+			}
+			_, _ = io.WriteString(w, sourceItemsResponse(pair[0], pair[1]))
 		case http.MethodPost:
-			postedCount++
 			raw, _ := io.ReadAll(r.Body)
-			_ = json.Unmarshal(raw, &posted)
-			_, _ = w.Write([]byte(`[]`))
+			var body sourceItemsBody
+			_ = json.Unmarshal(raw, &body)
+			*writes = append(*writes, body)
+			if script.writeStatus >= 400 {
+				w.WriteHeader(script.writeStatus)
+				_, _ = io.WriteString(w, `{"message":"The source item could not be saved."}`)
+				return
+			}
+			_, _ = io.WriteString(w, `[]`)
 		}
 	}))
-	defer ts.Close()
-	svc := testService(t, ts.URL)
-	if err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 3); err != nil {
-		t.Fatal(err)
+	t.Cleanup(ts.Close)
+	return testService(t, ts.URL), writes, gets
+}
+
+// intPtr returns a pointer to value, for the optional observed quantities.
+func intPtr(value int) *int { return &value }
+
+// equalIntPtr compares two optional quantities.
+func equalIntPtr(got, want *int) bool {
+	if got == nil || want == nil {
+		return got == nil && want == nil
 	}
-	if postedCount != 1 || len(posted.SourceItems) != 2 {
-		t.Fatalf("posted = %d %+v", postedCount, posted)
+	return *got == *want
+}
+
+func TestTransferSourceQty(t *testing.T) {
+	svc, writes, gets := transferServer(t, transferScript{gets: [][2]int{{10, 0}, {10, 0}, {7, 3}}})
+	result, err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 3)
+	if err != nil {
+		t.Fatalf("TransferSourceQty: %v", err)
 	}
+	if result.Outcome != TransferApplied || !result.FromApplied || !result.ToApplied {
+		t.Fatalf("result = %+v, want an applied transfer", result)
+	}
+	if !strings.HasPrefix(result.TransferID, "tr_") || len(result.TransferID) != len("tr_")+16 {
+		t.Fatalf("transfer id = %q, want tr_<16 hex>", result.TransferID)
+	}
+	if result.FromBefore != 10 || !equalIntPtr(result.FromAfter, intPtr(7)) ||
+		result.ToBefore != 0 || !equalIntPtr(result.ToAfter, intPtr(3)) {
+		t.Fatalf("quantities = %+v", result)
+	}
+	if result.IntendedFrom != 7 || result.IntendedTo != 3 {
+		t.Fatalf("intended = %+v", result)
+	}
+	if *gets != 3 {
+		t.Fatalf("reads = %d, want 3 (read, re-read, read-back)", *gets)
+	}
+	if len(*writes) != 1 || len((*writes)[0].SourceItems) != 2 {
+		t.Fatalf("writes = %+v", *writes)
+	}
+	posted := (*writes)[0]
 	if posted.SourceItems[0].Quantity != 7 || posted.SourceItems[0].Status != 1 {
 		t.Fatalf("from item = %+v", posted.SourceItems[0])
 	}
@@ -202,23 +271,12 @@ func TestTransferSourceQty(t *testing.T) {
 }
 
 func TestTransferSourceQtyInsufficient(t *testing.T) {
-	posted := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost {
-			posted++
-			_, _ = w.Write([]byte(`[]`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"items":[{"sku":"SKU-1","source_code":"default","quantity":1,"status":1}]}`))
-	}))
-	defer ts.Close()
-	svc := testService(t, ts.URL)
-	err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 5)
+	svc, writes, _ := transferServer(t, transferScript{gets: [][2]int{{1, 0}}})
+	_, err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 5)
 	if errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("err = %v", err)
 	}
-	if posted != 0 {
+	if len(*writes) != 0 {
 		t.Fatal("insufficient transfer must not write")
 	}
 }
@@ -236,9 +294,256 @@ func TestTransferSourceQtyValidation(t *testing.T) {
 		{"SKU-1", "default", "warehouse", 0},
 	}
 	for i, tc := range cases {
-		if err := svc.TransferSourceQty(ctx, tc.sku, tc.from, tc.to, tc.qty); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		if _, err := svc.TransferSourceQty(ctx, tc.sku, tc.from, tc.to, tc.qty); errs.CodeOf(err) != errs.CodeInvalidArgument {
 			t.Fatalf("case %d: err = %v", i, err)
 		}
+	}
+}
+
+// TestTransferSourceQtyTransferIDIsUnique asserts the caller-visible id differs
+// per transfer.
+func TestTransferSourceQtyTransferIDIsUnique(t *testing.T) {
+	svc, _, _ := transferServer(t, transferScript{gets: [][2]int{{10, 0}, {10, 0}, {9, 1}, {9, 1}, {9, 1}, {8, 2}}})
+	first, err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 1)
+	if err != nil {
+		t.Fatalf("first transfer: %v", err)
+	}
+	second, err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 1)
+	if err != nil {
+		t.Fatalf("second transfer: %v", err)
+	}
+	if first.TransferID == second.TransferID || first.TransferID == "" {
+		t.Fatalf("transfer ids = %q, %q, want two distinct ids", first.TransferID, second.TransferID)
+	}
+}
+
+// TestTransferSourceQtyOutcomes is the table-driven CONTRACT test for MAG-10 and
+// MAG-11: every non-applied outcome is typed, carries the observed state, and
+// never triggers a second write (no silent retry, no compensation).
+func TestTransferSourceQtyOutcomes(t *testing.T) {
+	tests := []struct {
+		name          string
+		script        transferScript
+		wantOutcome   TransferOutcome
+		wantCode      errs.Code
+		wantWrites    int
+		wantFromAfter *int
+		wantToAfter   *int
+		wantApplied   string
+		wantDetail    string
+		wantObserved  bool
+	}{
+		{
+			// MAG-10: T1 read 10/0 at t0; T2 (another replica) committed 7/3 at
+			// t1; T1 re-reads 7/3 at t2 and must abort instead of overwriting.
+			name: "concurrent transfer detected (lost update)",
+			script: transferScript{
+				gets: [][2]int{{10, 0}, {7, 3}},
+			},
+			wantOutcome: TransferConflict, wantCode: errs.CodeConflict, wantWrites: 0,
+			wantFromAfter: intPtr(7), wantToAfter: intPtr(3), wantApplied: "none",
+			wantDetail: "another writer changed the source quantities", wantObserved: true,
+		},
+		{
+			// MAG-11: the batch is not atomic; the source row lands and the
+			// destination row is rejected.
+			name: "partial application",
+			script: transferScript{
+				gets:        [][2]int{{10, 0}, {10, 0}, {7, 0}},
+				writeStatus: http.StatusBadRequest,
+			},
+			wantOutcome: TransferPartial, wantCode: errs.CodeConflict, wantWrites: 1,
+			wantFromAfter: intPtr(7), wantToAfter: intPtr(0), wantApplied: "from",
+			wantDetail: "only the from row was applied", wantObserved: true,
+		},
+		{
+			// Magento acknowledged the write but the state does not match.
+			name: "verification mismatch",
+			script: transferScript{
+				gets: [][2]int{{10, 0}, {10, 0}, {10, 0}},
+			},
+			wantOutcome: TransferVerificationMismatch, wantCode: errs.CodeConflict, wantWrites: 1,
+			wantFromAfter: intPtr(10), wantToAfter: intPtr(0), wantApplied: "none",
+			wantDetail: "does not match the intended post-state", wantObserved: true,
+		},
+		{
+			// The write was rejected and nothing changed: retry-safe.
+			name: "not applied",
+			script: transferScript{
+				gets:        [][2]int{{10, 0}, {10, 0}, {10, 0}},
+				writeStatus: http.StatusBadRequest,
+			},
+			wantOutcome: TransferNotApplied, wantCode: errs.CodeValidationFailed, wantWrites: 1,
+			wantFromAfter: intPtr(10), wantToAfter: intPtr(0), wantApplied: "none",
+			wantDetail: "neither source row changed", wantObserved: true,
+		},
+		{
+			// A timeout with an unchanged read-back proves nothing: Magento may
+			// still commit the lost response, so this must stay unverified.
+			name: "timeout with unchanged state",
+			script: transferScript{
+				gets:        [][2]int{{10, 0}, {10, 0}, {10, 0}},
+				writeStatus: http.StatusRequestTimeout,
+			},
+			wantOutcome: TransferNeedsVerification, wantCode: errs.CodeConflict, wantWrites: 1,
+			wantFromAfter: intPtr(10), wantToAfter: intPtr(0), wantApplied: "unknown",
+			wantDetail: "may still commit it", wantObserved: true,
+		},
+		{
+			// The write failed and the read-back failed: the state is unknown and
+			// the operator must verify. No compensation is issued.
+			name: "needs verification",
+			script: transferScript{
+				gets:        [][2]int{{10, 0}},
+				getStatus:   []int{0, 0, http.StatusInternalServerError},
+				writeStatus: http.StatusInternalServerError,
+			},
+			wantOutcome: TransferNeedsVerification, wantCode: errs.CodeConflict, wantWrites: 1,
+			wantFromAfter: nil, wantToAfter: nil, wantApplied: "unknown",
+			wantDetail: "verify both source quantities",
+		},
+		{
+			// The write reported an error but both rows hold the intended state:
+			// the read-back is the ground truth, so this is a success and must not
+			// invite a retry that would move another 3 units.
+			name: "write error but both rows applied",
+			script: transferScript{
+				gets:        [][2]int{{10, 0}, {10, 0}, {7, 3}},
+				writeStatus: http.StatusInternalServerError,
+			},
+			wantOutcome: TransferApplied, wantWrites: 1,
+			wantFromAfter: intPtr(7), wantToAfter: intPtr(3), wantApplied: "both",
+			wantDetail: "both rows reached the intended state", wantObserved: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, writes, _ := transferServer(t, tc.script)
+			result, err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 3)
+			if result == nil {
+				t.Fatalf("result = nil, want the observed transfer state (err=%v)", err)
+			}
+			if result.Outcome != tc.wantOutcome {
+				t.Fatalf("outcome = %q, want %q (%v)", result.Outcome, tc.wantOutcome, err)
+			}
+			if tc.wantCode == "" {
+				if err != nil {
+					t.Fatalf("err = %v, want nil for an applied transfer", err)
+				}
+			} else {
+				if got := errs.CodeOf(err); got != tc.wantCode {
+					t.Fatalf("code = %s, want %s (%v)", got, tc.wantCode, err)
+				}
+			}
+			if len(*writes) != tc.wantWrites {
+				t.Fatalf("writes = %d, want %d (no retry, no compensation)", len(*writes), tc.wantWrites)
+			}
+			if !equalIntPtr(result.FromAfter, tc.wantFromAfter) || !equalIntPtr(result.ToAfter, tc.wantToAfter) {
+				t.Fatalf("observed after = from %s to %s, want from %s to %s",
+					observedAfter(result.FromAfter), observedAfter(result.ToAfter),
+					observedAfter(tc.wantFromAfter), observedAfter(tc.wantToAfter))
+			}
+			// An unobserved post-state must omit the after quantities entirely: a
+			// zero would read as "the source went to zero".
+			encoded, marshalErr := json.Marshal(result)
+			if marshalErr != nil {
+				t.Fatalf("result does not encode: %v", marshalErr)
+			}
+			if !result.AfterObserved && (strings.Contains(string(encoded), `"from_after"`) ||
+				strings.Contains(string(encoded), `"to_after"`)) {
+				t.Fatalf("unobserved result still carries after quantities: %s", encoded)
+			}
+			if got := result.AppliedRows(); got != tc.wantApplied {
+				t.Fatalf("applied rows = %q, want %q", got, tc.wantApplied)
+			}
+			// An unobserved post-state must never be reported as "none": an agent
+			// keying on that could conclude nothing was applied and retry.
+			if !result.AfterObserved && result.AppliedRows() == "none" {
+				t.Fatal("an unobserved transfer must not claim applied_rows=none")
+			}
+			if result.Outcome == TransferNeedsVerification && result.AppliedRows() != "unknown" {
+				t.Fatalf("needs_verification reported applied rows %q, want unknown", result.AppliedRows())
+			}
+			if result.AfterObserved != tc.wantObserved {
+				t.Fatalf("after_observed = %v, want %v", result.AfterObserved, tc.wantObserved)
+			}
+			if tc.wantDetail != "" && !strings.Contains(result.Detail, tc.wantDetail) {
+				t.Fatalf("detail = %q, want it to contain %q", result.Detail, tc.wantDetail)
+			}
+			if result.TransferID == "" || result.FromSource != "default" || result.ToSource != "warehouse" || result.Quantity != 3 {
+				t.Fatalf("result is missing the caller-visible transfer facts: %+v", result)
+			}
+			if retryable := errs.RetryableError(err); retryable != (tc.wantOutcome == TransferNotApplied) {
+				t.Fatalf("retryable = %v, want %v for outcome %q", retryable, tc.wantOutcome == TransferNotApplied, tc.wantOutcome)
+			}
+			if tc.wantCode != "" {
+				var typed *errs.Error
+				if !errors.As(err, &typed) {
+					t.Fatalf("err = %v, want a typed error", err)
+				}
+				if typed.Details["transfer_id"] != result.TransferID ||
+					typed.Details["outcome"] != string(result.Outcome) ||
+					typed.Details["applied_rows"] != tc.wantApplied {
+					t.Fatalf("error details = %v, want the transfer facts", typed.Details)
+				}
+			}
+		})
+	}
+}
+
+// TestTransferSourceQtyConcurrentSameProcess runs two transfers of the same SKU
+// concurrently against a stateful fake and asserts no units are lost: the
+// per-SKU guard serialises them, so the second transfer sees the first one's
+// result (4/6, not 7/3 twice).
+func TestTransferSourceQtyConcurrentSameProcess(t *testing.T) {
+	var mu sync.Mutex
+	state := map[string]int{"default": 10, "warehouse": 0}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			mu.Lock()
+			body := sourceItemsResponse(state["default"], state["warehouse"])
+			mu.Unlock()
+			_, _ = io.WriteString(w, body)
+		case http.MethodPost:
+			raw, _ := io.ReadAll(r.Body)
+			var body sourceItemsBody
+			_ = json.Unmarshal(raw, &body)
+			mu.Lock()
+			for _, item := range body.SourceItems {
+				state[item.SourceCode] = item.Quantity
+			}
+			mu.Unlock()
+			_, _ = io.WriteString(w, `[]`)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	results := make([]*TransferResult, 2)
+	errsOut := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i], errsOut[i] = svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 3)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errsOut {
+		if err != nil {
+			t.Fatalf("transfer %d: %v", i, err)
+		}
+		if results[i].Outcome != TransferApplied {
+			t.Fatalf("transfer %d outcome = %q, want applied", i, results[i].Outcome)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if state["default"] != 4 || state["warehouse"] != 6 {
+		t.Fatalf("state = %+v, want default=4 warehouse=6 (no lost update)", state)
 	}
 }
 
@@ -330,5 +635,110 @@ func TestUnlinkStockSource(t *testing.T) {
 	}
 	if err := svc.UnlinkStockSource(context.Background(), 0, "warehouse"); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("stock err = %v", err)
+	}
+}
+
+// fractionalSourceItems renders a source-item page with fractional quantities.
+func fractionalSourceItems(from, to float64) string {
+	return fmt.Sprintf(`{"items":[
+		{"sku":"SKU-1","source_code":"default","quantity":%g,"status":1},
+		{"sku":"SKU-1","source_code":"warehouse","quantity":%g,"status":1}
+	],"total_count":2}`, from, to)
+}
+
+// TestTransferSourceQtyRefusesFractionalQuantity is the MAG-R07 regression: a
+// fractional observed quantity is refused with a typed error instead of being
+// truncated into an integer write that is then reported as applied.
+func TestTransferSourceQtyRefusesFractionalQuantity(t *testing.T) {
+	tests := []struct {
+		name string
+		from float64
+		to   float64
+	}{
+		{name: "fractional source", from: 7.9, to: 0},
+		{name: "fractional destination", from: 10, to: 0.5},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			writes := 0
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodPost {
+					writes++
+					_, _ = io.WriteString(w, `[]`)
+					return
+				}
+				_, _ = io.WriteString(w, fractionalSourceItems(tc.from, tc.to))
+			}))
+			defer ts.Close()
+			svc := testService(t, ts.URL)
+			result, err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 3)
+			if errs.CodeOf(err) != errs.CodeUnsupportedCapability {
+				t.Fatalf("err = %v, want unsupported_capability", err)
+			}
+			if !strings.Contains(err.Error(), "fractional") {
+				t.Fatalf("err = %v, want the fractional quantity named", err)
+			}
+			if result != nil {
+				t.Fatalf("result = %+v, want nil before any write", result)
+			}
+			if writes != 0 {
+				t.Fatalf("writes = %d, want 0 (a fractional read must not be truncated into a write)", writes)
+			}
+		})
+	}
+}
+
+// TestTransferSourceQtyFractionalReadBackIsUnknown proves a fractional read-back
+// does not report the transfer as applied: the post-state was not established.
+func TestTransferSourceQtyFractionalReadBackIsUnknown(t *testing.T) {
+	gets := 0
+	writes := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			writes++
+			_, _ = io.WriteString(w, `[]`)
+			return
+		}
+		gets++
+		if gets <= 2 {
+			// read and compare-before-write see whole units
+			_, _ = io.WriteString(w, fractionalSourceItems(10, 0))
+			return
+		}
+		// the read-back sees a fractional destination row
+		_, _ = io.WriteString(w, fractionalSourceItems(7, 2.9))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	result, err := svc.TransferSourceQty(context.Background(), "SKU-1", "default", "warehouse", 3)
+	if result == nil {
+		t.Fatalf("result = nil, want the observed transfer state (err=%v)", err)
+	}
+	if result.Outcome != TransferNeedsVerification {
+		t.Fatalf("outcome = %q, want needs_verification", result.Outcome)
+	}
+	if result.AfterObserved {
+		t.Fatal("after_observed = true, want false when the read-back was refused")
+	}
+	if got := result.AppliedRows(); got != "unknown" {
+		t.Fatalf("applied_rows = %q, want unknown", got)
+	}
+	if errs.CodeOf(err) != errs.CodeConflict {
+		t.Fatalf("code = %s, want conflict", errs.CodeOf(err))
+	}
+	if errs.RetryableError(err) {
+		t.Fatal("a needs_verification transfer must not be retryable")
+	}
+	var typed *errs.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("err = %v, want a typed error", err)
+	}
+	if typed.Details["applied_rows"] != "unknown" || typed.Details["after_observed"] != "false" {
+		t.Fatalf("details = %v, want applied_rows=unknown after_observed=false", typed.Details)
+	}
+	if writes != 1 {
+		t.Fatalf("writes = %d, want 1 (no retry, no compensation)", writes)
 	}
 }

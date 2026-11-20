@@ -12,152 +12,163 @@ Common behavior:
 - Read tools are registered by default. Write tools are registered only when
   `tools.writes: true` and require two-step human approval.
 - Every call is authorized (default-deny RBAC) and audited (intent + outcome).
-- `instance` is schema-validated routing metadata. This release supports one
-  instance per module; the value does not select credentials yet.
+- `instance` is schema-validated routing metadata. Every tool routes to the
+  configured instance (Magento reads and writes; Cloudflare and GA4 reads), and
+  each instance has its own credential. Multi-instance unified bindings remain
+  the current limitation.
 
-## Platform
+<!-- GENERATED INVENTORY START -->
 
-| Tool | Scope | Timeout | Notes |
-|---|---|---|---|
-| `platform.info` | read | 30s | Name, version, protocol versions, registered tools, configured instances, and whether write tools are enabled |
+## Generated inventory
 
-## Magento 2
+Generated from the tool registry by `go run ./scripts/gen-implemented-tools -write`.
+Do not edit the tables by hand; run the generator after changing registration.
 
-| Tool | Scope | Timeout | Notes |
-|---|---|---|---|
-| `magento.product.get` | read | 30s | One product by SKU |
-| `magento.products.get` | read | 30s | Up to 50 products by SKU in one search (duplicates ignored) |
-| `magento.tax.classes` | read | 30s | Tax classes (id, name, type) for product writes |
-| `magento.product.tier_prices` | read | 30s | Quantity-based tier prices for one SKU |
-| `magento.product.seo` | read | 30s | Deterministic SEO/content audit (description, short description, url_key, meta_title, meta_description, meta_keywords) with a score and suggestions |
-| `magento.configurable.children` | read | 30s | Child products linked to a configurable product |
-| `magento.product.search` | read | 30s | Search by name/SKU/type/status plus price and creation windows |
-| `magento.import.validate` | read | 30s | CSV/JSON preview with per-row errors plus bounded SEO/content warnings; never writes |
-| `magento.category.get` | read | 30s | One category by id |
-| `magento.category.tree` | read | 30s | Category subtree under a root, flattened depth-first under `categories` (depth 1-5) |
-| `magento.category.products` | read | 30s | Products assigned to a category, paginated |
-| `magento.store.configs` | read | 30s | Store views with locale, currencies, timezone, base URL |
-| `magento.categories.flat` | read | 30s | Category id/parent/name/level/path rows for SKU mapping |
-| `magento.customer.groups` | read | 30s | Customer groups (id, code, tax class) for customer writes |
-| `magento.customer.get` | read | 30s | One customer with a PII-safe projection (no email, name, or addresses) |
-| `magento.customer.search` | read | 30s | Exact-email customer lookup; response omits email, name, and addresses |
-| `magento.customer.create` | write + confirmation | 60s | Creates a customer (accepts PII); response is the PII-safe projection |
-| `magento.customer.update` | write + confirmation | 60s | Partial update of email/name/group; response is PII-safe |
-| `magento.customer.addresses` | read | 30s | PII-safe address projection: country, region, and default flags only |
-| `magento.customer.addresses.create` | write + confirmation | 60s | Adds a customer address (accepts PII); response is PII-safe |
-| `magento.customer.addresses.update` | write + confirmation | 60s | Partial address update (fields and default flags); PII-safe response |
-| `magento.customer.addresses.delete` | destructive + confirmation | 60s | Deletes a customer address |
-| `magento.attribute.sets` | read | 30s | Product attribute sets (max 200) |
-| `magento.attributes.list` | read | 30s | Attributes of one attribute set |
-| `magento.attributes.options` | read | 30s | Options of a select/multiselect attribute (value_index) |
-| `magento.attributes.options.create` | write + confirmation | 60s | Adds a value to a select/multiselect attribute (variant option) |
-| `magento.attributes.options.bulk_create` | write + confirmation | 120s | Adds up to 50 labels with a per-label partial-success report |
-| `magento.attributes.options.delete` | destructive + confirmation | 60s | Deletes an option; rejected while products reference it |
-| `magento.product.media.types` | read | 30s | Media roles available for an attribute set |
-| `magento.product.media.get` | read | 30s | One gallery entry: file, label, position, types, disabled |
-| `magento.product.media` | read | 30s | Media gallery of one product |
-| `magento.product.options.create` | write + confirmation | 60s | Adds one custom option; selectable types require values with fixed/percent pricing |
-| `magento.product.options.update` | write + confirmation | 60s | Updates one custom option (same value rules as create) |
-| `magento.product.options.delete` | destructive + confirmation | 60s | Deletes one custom option |
-| `magento.product.options` | read | 30s | Custom options (not variant options) with values, prices, and price types |
-| `magento.product.links` | read | 30s | Related, upsell, or cross-sell links of a product |
-| `magento.product.media.upload` | write + confirmation | 60s | Adds an image to a gallery; base64 capped at 5 MiB, MIME/filename/types validated |
-| `magento.product.media.update` | write + confirmation | 60s | Updates label/position/types/disabled of one gallery entry |
-| `magento.product.media.delete` | destructive + confirmation | 60s | Deletes one media entry from a gallery |
-| `magento.invoice.email` | write + confirmation | 60s | Sends the invoice email to the order's customer |
-| `magento.invoice.create` | write + confirmation | 60s | Invoices an order; `capture` defaults to false and does not charge |
-| `magento.shipment.email` | write + confirmation | 60s | Sends the shipment email to the order's customer |
-| `magento.shipment.create` | write + confirmation | 60s | Ships order items with up to 20 tracking numbers |
-| `magento.creditmemo.email` | write + confirmation | 60s | Sends the credit memo email to the order's customer |
-| `magento.creditmemo.create` | write + confirmation | 60s | Refund record with order-item lines and optional adjustments |
-| `magento.order.create` | write + confirmation | 60s | Places an order for an existing customer through the admin cart flow; Magento computes totals; stage-tagged failures |
-| `magento.order.comment` | write + confirmation | 60s | Adds a status-history comment; a non-empty status also transitions the order |
-| `magento.order.hold` | write + confirmation | 60s | Places an order on hold |
-| `magento.order.unhold` | write + confirmation | 60s | Releases an order hold |
-| `magento.order.cancel` | destructive + confirmation | 60s | Cancels a cancellable order; irreversible |
-| `magento.category.create` | write + confirmation | 60s | Creates a category under a parent; optional `url_key` is sent as a custom attribute |
-| `magento.category.update` | write + confirmation | 60s | Partial update of name/active/position/menu visibility |
-| `magento.category.delete` | destructive + confirmation | 60s | Deletes a category and its subtree; products lose the assignment but are not deleted |
-| `magento.category.assign_product` | write + confirmation | 60s | Links a product to a category |
-| `magento.product.links.add` | write + confirmation | 60s | Creates a related/upsell/crosssell link between two products |
-| `magento.product.links.bulk` | write + confirmation | 120s | Add/remove one link type for up to 50 targets with a per-target partial-success report |
-| `magento.product.links.remove` | write + confirmation | 60s | Deletes a related/upsell/crosssell link |
-| `magento.invoice.capture` | write + confirmation | 60s | Captures payment for an existing invoice; charges the payment method |
-| `magento.order.email` | write + confirmation | 60s | Sends the order confirmation email |
-| `magento.inventory.status` | read | 30s | Catalog quantity, in-stock flag, and backorders for one SKU |
-| `magento.inventory.status_batch` | read | 60s | Up to 25 SKUs, each reporting its own result or error |
-| `magento.inventory.source_items` | read | 30s | MSI per-source quantities for up to 20 SKUs |
-| `magento.inventory.sources` | read | 30s | MSI inventory sources with location fields |
-| `magento.inventory.source_create` | write + confirmation | 60s | Creates an MSI source with code, name, enabled flag, and location |
-| `magento.inventory.stock_source_link` | write + confirmation | 60s | Attaches a source to a stock with a position |
-| `magento.inventory.stock_source_unlink` | destructive + confirmation | 60s | Detaches a source from a stock; source items are kept |
-| `magento.inventory.stocks` | read | 30s | MSI inventory stocks |
-| `magento.order.get` | read | 30s | One order with line items; no customer email, addresses, or payment data |
-| `magento.orders.geography` | read | 120s | Orders aggregated by shipping country (codes, counts, revenue; no PII) |
-| `magento.order.summary` | read | 30s | Daily order count, revenue, and quantity over a bounded window (same data as `sales.summary`) |
-| `magento.order.search` | read | 30s | Orders by status, state, increment id, creation window, store view, or customer id; items omitted |
-| `magento.order.status_history` | read | 30s | Status history with comment and notification flags |
-| `magento.invoice.list` | read | 30s | Invoices of one order |
-| `magento.invoice.get` | read | 30s | One invoice by id |
-| `magento.shipment.list` | read | 30s | Shipments of one order, including tracking numbers |
-| `magento.shipment.get` | read | 30s | One shipment by id |
-| `magento.creditmemo.list` | read | 30s | Credit memos of one order |
-| `magento.creditmemo.get` | read | 30s | One credit memo by id |
-| `magento.sales.analysis` | read | 120s | Business summary: KPIs, repeat/new customers, coupons, refunds by SKU, daily/weekday/hour trend, status/payment/store/currency/shipping mix, AOV bands, country, top SKUs, shipment latency |
-| `magento.sales.summary` | read | 30s | Per-day order count, grand-total revenue, and item quantity over a bounded window (max 1000 orders, truncation reported) |
-| `magento.product.create` | write + confirmation | 60s | Simple/virtual/downloadable/bundle create with EAV attributes plus description, short_description, url_key, meta_title, meta_keywords, meta_description (SEO guidance in the schema) |
-| `magento.product.update` | write + confirmation | 60s | Merge update of provided fields, including SEO/content fields and category/website reassignment |
-| `magento.products.bulk_update` | write + confirmation | 120s | Same status/visibility/attributes update for up to 50 SKUs with a per-SKU partial-success report |
-| `magento.configurable.update` | write + confirmation | 60s | Updates a configurable parent (fields, SEO/pricing, assignments); refuses non-configurable SKUs |
-| `magento.configurable.set_options` | write + confirmation | 120s | Declares variant attributes and value ordering (1-10 options) |
-| `magento.configurable.create_variations` | write + confirmation | 120s | Creates simple children for an existing parent and links them; existing SKUs are skipped |
-| `magento.configurable.create` | write + confirmation | 60s | Children → parent options → links; staged non-atomic errors; parent and children support SEO/content fields |
-| `magento.configurable.add_child` | write + confirmation | 60s | Link one variant |
-| `magento.inventory.assign` | write + confirmation | 60s | MSI source items, at most 100 per call |
-| `magento.import.execute` | write + confirmation | 60s | Bounded batch execution with partial-success report |
-| `magento.import.start` | write + confirmation | 30s | Queues a bounded import for the worker (up to 2 attempts on pre-execution failures); optional `idempotency_key` deduplicates submissions; requires the database queue |
-| `magento.import.status` | read | 30s | Job state, attempts, error code, live progress (`done`/`total`), and a bounded result report (first 100 failed rows) |
-| `magento.import.cancel` | write + confirmation | 30s | Cancels a queued or running import job |
-| `magento.import.batches` | read | 30s | Lists recent import batches for the instance (state, counts, error code) |
-| `magento.import.batch` | read | 30s | One import batch with every failed row |
-| `magento.import.resume` | write + confirmation | 30s | Queues a new job containing only the failed rows of a previous job, read from the persisted batch (unbounded by the 100-row report); idempotent per source job |
-| `magento.product.tier_prices.set` | write + confirmation | 60s | Replaces a SKU's fixed-price tiers (1-50); omitted tiers are removed |
-| `magento.product.delete` | destructive + confirmation | 60s | Deletes one product by SKU; irreversible, 404 on unknown SKU |
-| `magento.configurable.remove_child` | write + confirmation | 60s | Unlinks a child from a configurable product; child product remains |
-| `magento.inventory.unassign` | write + confirmation | 60s | Removes MSI source assignments for up to 100 sku/source pairs |
-| `magento.inventory.transfer` | destructive + confirmation | 60s | Moves quantity between two sources for one SKU; refuses an insufficient source; not transactional |
+### Configuration counts
 
-## Cloudflare (read-only)
+| Configuration | Tools | Magento |
+|---|---:|---:|
+| Maximal (all modules, `tools.writes: true`, `database.url` set, bindings configured) | 112 | 101 |
+| Read-only default (all modules, no writes, no database) | 54 | 43 |
+| Read-only, database, no bindings | 56 | 46 |
 
-| Tool | Scope | Timeout | Notes |
-|---|---|---|---|
-| `cloudflare.analytics.traffic` | read | 60s | Hourly requests/bytes/cache by hostname, country, or status |
-| `cloudflare.security.summary` | read | 60s | Security event counts by action; sampled, 31-day retention |
-| `cloudflare.security.events` | read | 60s | Bounded event page without client IPs; sampled, 31-day retention |
+`tools.writes` gates 52 Magento write/destructive tools; `database.url` gates 3 import read tools (status/batches/batch); start/cancel/resume require both. Module enablement and bindings gate the Cloudflare, GA4, and unified tools; `platform.info` is always registered.
 
-## Google Analytics 4 (read-only, aggregate-only)
+A database-enabled read-only deployment registers only the three read import tools; start/cancel/resume also require `tools.writes`.
 
-| Tool | Scope | Timeout | Notes |
-|---|---|---|---|
-| `ga4.analytics.traffic` | read | 60s | Sessions, users, views, engagement by date |
-| `ga4.analytics.realtime` | read | 60s | Last 30 minutes, allowlisted dimensions/metrics |
-| `ga4.property.metadata` | read | 30s | Available dimensions and metrics |
-| `ga4.property.capabilities` | read | 60s | Ecommerce tracking presence with evidence |
-| `ga4.ecommerce.overview` | read | 60s | Purchases/revenue per day; returns `ecommerce_not_tracked` instead of zeros when the property has no ecommerce data |
-| `ga4.ecommerce.products` | read | 60s | Item-level views, add-to-carts, purchases, and item revenue per `itemId`, capability-gated |
+### Platform (1 tool)
 
-## Unified analytics
+| Tool | Scope | Write? | Confirmation | Timeout | Gate | Notes |
+|---|---|---|---|---|---|---|
+| `platform.info` | read | no | no | 30s | always | Server information: version, protocol versions, registered tools, instances, and the writes flag. |
 
-| Tool | Scope | Timeout | Notes |
-|---|---|---|---|
-| `unified.traffic.compare` | read | 60s | Cloudflare requests vs GA4 sessions for a declared binding; ratio is null without sessions |
+### Magento 2 (101 tools)
 
-Field-level requirements and SEO guidance for the Magento writes are in
-[magento-fields.md](magento-fields.md).
+| Tool | Scope | Write? | Confirmation | Timeout | Gate | Notes |
+|---|---|---|---|---|---|---|
+| `magento.attribute.sets` | read | no | no | 30s | always | Lists the product attribute sets (GET /rest/{store_code}/V1/products/attribute-sets/sets/list), at most 200. |
+| `magento.attributes.list` | read | no | no | 30s | always | Lists the attributes of one product attribute set (GET /rest/{store_code}/V1/products/attribute-sets/{setId}/attributes). |
+| `magento.attributes.options` | read | no | no | 30s | always | Lists the options of a select or multiselect attribute (GET /rest/{store_code}/V1/products/attributes/{code}/options); configurable variants reference options by value_index. |
+| `magento.attributes.options.bulk_create` | write | yes | yes | 120s | tools.writes | Magento write operation: adds up to 50 option labels to one select or multiselect attribute (POST /rest/{store_code}/V1/products/attributes/{code}/options, one call per label) w... |
+| `magento.attributes.options.create` | write | yes | yes | 60s | tools.writes | Magento write operation: adds a value to a select or multiselect attribute (POST /rest/{store_code}/V1/products/attributes/{code}/options) on the resolved instance. |
+| `magento.attributes.options.delete` | destructive | yes | yes | 60s | tools.writes | Magento write operation: deletes a select or multiselect option (DELETE /rest/{store_code}/V1/products/attributes/{code}/options/{id}) on the resolved instance. |
+| `magento.categories.flat` | read | no | no | 30s | always | Flattens the category tree (GET /rest/{store_code}/V1/categories) into id, parent, name, level, and slash-separated path rows, which is what product-to-category mapping needs. |
+| `magento.category.assign_product` | write | yes | yes | 60s | tools.writes | Magento write operation: links a product to a category (POST /rest/{store_code}/V1/categories/{id}/products) on the resolved instance. |
+| `magento.category.create` | write | yes | yes | 60s | tools.writes | Magento write operation: creates a category under a parent (POST /rest/{store_code}/V1/categories) on the resolved instance. |
+| `magento.category.delete` | destructive | yes | yes | 60s | tools.writes | Magento write operation: deletes a category and its subtree (DELETE /rest/{store_code}/V1/categories/{id}) on the resolved instance. |
+| `magento.category.get` | read | no | no | 30s | always | Reads one category from the configured Magento 2 REST API (GET /rest/{store_code}/V1/categories/{id}). |
+| `magento.category.products` | read | no | no | 30s | always | Lists the products assigned to a category (GET /rest/{store_code}/V1/categories/{id}/products) with pagination. |
+| `magento.category.tree` | read | no | no | 30s | always | Reads the category subtree under a root category (GET /rest/{store_code}/V1/categories?rootCategoryId&depth), nested up to depth 1-5. |
+| `magento.category.update` | write | yes | yes | 60s | tools.writes | Magento write operation: updates category name, active flag, position, or menu visibility (PUT /rest/{store_code}/V1/categories/{id}) on the resolved instance. |
+| `magento.configurable.add_child` | write | yes | yes | 60s | tools.writes | Links an existing simple product to a configurable parent in the configured Magento 2 REST catalog (POST /rest/{store_code}/V1/configurable-products/{sku}/child) using the integ... |
+| `magento.configurable.children` | read | no | no | 30s | always | Lists the child products linked to a configurable product (GET /rest/{store_code}/V1/configurable-products/{sku}/children). |
+| `magento.configurable.create` | write | yes | yes | 60s | tools.writes | Magento write operation: Creates a configurable product in the configured Magento 2 REST catalog as a staged workflow: precheck, children, parent, links (verified by read-back),... |
+| `magento.configurable.create_variations` | write | yes | yes | 120s | tools.writes | Magento write operation: creates simple children for an existing configurable parent and links them (POST /rest/{store_code}/V1/products then POST /rest/{store_code}/V1/configur... |
+| `magento.configurable.remove_child` | write | yes | yes | 60s | tools.writes | Magento write operation: unlinks a child product from a configurable product (DELETE /rest/{store_code}/V1/configurable-products/{parentSku}/children/{childSku}) on the resolved... |
+| `magento.configurable.set_options` | write | yes | yes | 120s | tools.writes | Magento write operation: declares the variant attributes and value ordering of an existing configurable parent (POST /rest/{store_code}/V1/configurable-products/{sku}/options, o... |
+| `magento.configurable.update` | write | yes | yes | 60s | tools.writes | Magento write operation: updates a configurable parent's name, price, status, visibility, attributes, SEO fields, pricing fields, or assignments via the product update endpoint ... |
+| `magento.creditmemo.create` | write | yes | yes | 60s | tools.writes | Magento write operation: creates a credit memo (POST /rest/{store_code}/V1/creditmemos) with 1-100 order-item lines and optional adjustments on the resolved instance. |
+| `magento.creditmemo.email` | write | yes | yes | 60s | tools.writes | Magento write operation: sends the credit memo email (POST /rest/{store_code}/V1/creditmemos/{id}/emails) on the resolved instance. |
+| `magento.creditmemo.get` | read | no | no | 30s | always | Reads one credit memo by id (GET /rest/{store_code}/V1/creditmemos/{id}) with totals and quantities. |
+| `magento.creditmemo.list` | read | no | no | 30s | always | Lists the credit memos of one order (GET /rest/{store_code}/V1/creditmemos filtered by order_id) with totals and quantities. |
+| `magento.customer.addresses` | read | no | no | 30s | always | Lists a customer's addresses as a PII-safe projection (GET /rest/{store_code}/V1/customers/{id}): country, region, and default flags only; name, street, city, postcode, and tele... |
+| `magento.customer.addresses.create` | write | yes | yes | 60s | tools.writes | Magento write operation: adds an address to a customer (POST /rest/{store_code}/V1/customers/{id}/addresses) on the resolved instance. |
+| `magento.customer.addresses.delete` | destructive | yes | yes | 60s | tools.writes | Magento write operation: deletes a customer address (DELETE /rest/{store_code}/V1/addresses/{id}) on the resolved instance. |
+| `magento.customer.addresses.update` | write | yes | yes | 60s | tools.writes | Magento write operation: partially updates a customer address (PUT /rest/{store_code}/V1/customers/{id}/addresses/{addressId}) on the resolved instance. |
+| `magento.customer.create` | write | yes | yes | 60s | tools.writes | Magento write operation: creates a customer (POST /rest/{store_code}/V1/customers) on the resolved instance. |
+| `magento.customer.get` | read | no | no | 30s | always | Reads one customer from the configured Magento 2 REST API (GET /rest/{store_code}/V1/customers/{id}). |
+| `magento.customer.groups` | read | no | no | 30s | always | Lists customer groups (GET /rest/{store_code}/V1/customerGroups/search) with id, code, and tax class id, which the customer write tools accept as group_id. |
+| `magento.customer.search` | read | no | no | 30s | always | Finds customers by exact email (GET /rest/{store_code}/V1/customers/search with an email eq filter). |
+| `magento.customer.update` | write | yes | yes | 60s | tools.writes | Magento write operation: updates customer email, first/last name, or group (PUT /rest/{store_code}/V1/customers/{id}) on the resolved instance. |
+| `magento.import.batch` | read | no | no | 30s | database.url | Returns one asynchronous import batch by id on the named instance with its counts and every failed row. |
+| `magento.import.batches` | read | no | no | 30s | database.url | Lists recent asynchronous import batches for the configured instance (newest first, at most 100) with state, counts, and error code. |
+| `magento.import.cancel` | write | yes | yes | 60s | tools.writes + database.url | Magento write operation: Cancels a queued or running asynchronous import job on the named instance. |
+| `magento.import.execute` | write | yes | yes | 60s | tools.writes | Magento write operation: executes a bounded CSV or JSON product import (base64, at most 8 MiB and 5000 rows) for the resolved instance. |
+| `magento.import.resume` | write | yes | yes | 60s | tools.writes + database.url | Magento write operation: Queues a new asynchronous import on the named instance containing only the failed rows of a previous job (from its bounded report). |
+| `magento.import.start` | write | yes | yes | 60s | tools.writes + database.url | Queues a bounded CSV/JSON product import for the worker (at most 8 MiB decoded and 5000 rows, and small enough that its base64 form fits the server body limit, 16 MiB by default... |
+| `magento.import.status` | read | no | no | 30s | database.url | Reads the state, attempts, error code, and result summary of an asynchronous import job on the named instance. |
+| `magento.import.validate` | read | no | no | 30s | always | Parses and validates a CSV or JSON product import (base64-encoded, at most 8 MiB decoded and 5000 rows; the encoded payload must fit the server body limit, 16 MiB by default) an... |
+| `magento.inventory.assign` | write | yes | yes | 60s | tools.writes | Assigns per-source quantities in the configured Magento 2 REST catalog (POST /rest/{store_code}/V1/inventory/source-items) using the integration credential. |
+| `magento.inventory.source_create` | write | yes | yes | 60s | tools.writes | Magento write operation: creates an MSI source (POST /rest/{store_code}/V1/inventory/sources) on the resolved instance with code, name, enabled flag, and location. |
+| `magento.inventory.source_items` | read | no | no | 30s | always | Lists MSI source quantities for up to 20 SKUs (GET /rest/{store_code}/V1/inventory/source-items with a sku in-filter). |
+| `magento.inventory.sources` | read | no | no | 30s | always | Lists the MSI inventory sources (GET /rest/{store_code}/V1/inventory/sources), at most 100, with code, name, enabled flag, and location fields. |
+| `magento.inventory.status` | read | no | no | 30s | always | Reads the catalog inventory status of one SKU (GET /rest/{store_code}/V1/stockItems/{sku}): quantity, in-stock flag, and backorders. |
+| `magento.inventory.status_batch` | read | no | no | 60s | always | Reads catalog inventory status for up to 25 SKUs (GET /rest/{store_code}/V1/stockItems/{sku} per SKU). |
+| `magento.inventory.stock_source_link` | write | yes | yes | 60s | tools.writes | Magento write operation: attaches an MSI source to a stock (POST /rest/{store_code}/V1/inventory/stock-source-links) on the resolved instance with a position. |
+| `magento.inventory.stock_source_unlink` | destructive | yes | yes | 60s | tools.writes | Magento write operation: detaches an MSI source from a stock (DELETE /rest/{store_code}/V1/inventory/stock-source-links) on the resolved instance. |
+| `magento.inventory.stocks` | read | no | no | 30s | always | Lists the MSI inventory stocks (GET /rest/{store_code}/V1/inventory/stocks), at most 100, with stock id and name. |
+| `magento.inventory.transfer` | destructive | yes | yes | 60s | tools.writes | Magento write operation: moves whole units for one SKU between MSI sources (read, re-read to detect a concurrent writer, upsert both rows, read them back) on the resolved instance. |
+| `magento.inventory.unassign` | write | yes | yes | 60s | tools.writes | Magento write operation: removes per-source inventory assignments (DELETE /rest/{store_code}/V1/inventory/source-items) on the resolved instance for at most 100 sku/source pairs. |
+| `magento.invoice.capture` | write | yes | yes | 60s | tools.writes | Magento write operation: captures the payment for an existing invoice (POST /rest/{store_code}/V1/invoices/{id}/capture) on the resolved instance. |
+| `magento.invoice.create` | write | yes | yes | 60s | tools.writes | Magento write operation: invoices an order through the workflow route (POST /rest/{store_code}/V1/order/{orderId}/invoice) on the resolved instance, which is the route that hono... |
+| `magento.invoice.email` | write | yes | yes | 60s | tools.writes | Magento write operation: sends the invoice email (POST /rest/{store_code}/V1/invoices/{id}/emails) on the resolved instance. |
+| `magento.invoice.get` | read | no | no | 30s | always | Reads one invoice by id (GET /rest/{store_code}/V1/invoices/{id}) with totals and quantities. |
+| `magento.invoice.list` | read | no | no | 30s | always | Lists the invoices of one order (GET /rest/{store_code}/V1/invoices filtered by order_id) with totals and quantities. |
+| `magento.order.cancel` | destructive | yes | yes | 60s | tools.writes | Magento write operation: cancels an order (POST /rest/{store_code}/V1/orders/{id}/cancel) on the resolved instance. |
+| `magento.order.comment` | write | yes | yes | 60s | tools.writes | Magento write operation: appends a status-history comment to an order (POST /rest/{store_code}/V1/orders/{id}/comments) on the resolved instance; a non-empty status also transit... |
+| `magento.order.create` | write | yes | yes | 60s | tools.writes | Magento write operation: places an order through the admin cart flow (cart, items, shipping information, then POST /rest/{store_code}/V1/carts/{cartId}/order) on the resolved in... |
+| `magento.order.email` | write | yes | yes | 60s | tools.writes | Magento write operation: sends the order confirmation email (POST /rest/{store_code}/V1/orders/{id}/emails) on the resolved instance. |
+| `magento.order.get` | read | no | no | 30s | always | Reads one order from the configured Magento 2 REST API (GET /rest/{store_code}/V1/orders/{id}) including its line items. |
+| `magento.order.hold` | write | yes | yes | 60s | tools.writes | Magento write operation: places an order on hold (POST /rest/{store_code}/V1/orders/{id}/hold) on the resolved instance. |
+| `magento.order.search` | read | no | no | 30s | always | Searches the configured Magento 2 REST API (GET /rest/{store_code}/V1/orders with searchCriteria filter groups) by status, state, increment id, creation window, or store view. |
+| `magento.order.status_history` | read | no | no | 30s | always | Reads the status history of one order (GET /rest/{store_code}/V1/orders/{id}/comments), including status, comment, and notification flags. |
+| `magento.order.summary` | read | no | no | 30s | always | Deprecated alias for magento.sales.summary. |
+| `magento.order.unhold` | write | yes | yes | 60s | tools.writes | Magento write operation: releases an order hold (POST /rest/{store_code}/V1/orders/{id}/unhold) on the resolved instance. |
+| `magento.orders.geography` | read | no | no | 120s | always | Aggregates orders created in a window by the country of their shipping address (GET /rest/{store_code}/V1/orders with a created_at filter), returning country codes, order counts... |
+| `magento.product.create` | write | yes | yes | 60s | tools.writes | Creates one product in the configured Magento 2 REST catalog (POST /rest/{store_code}/V1/products) using the integration credential. |
+| `magento.product.delete` | destructive | yes | yes | 60s | tools.writes | Magento write operation: deletes one product by SKU (DELETE /rest/{store_code}/V1/products/{sku}) on the resolved instance. |
+| `magento.product.get` | read | no | no | 30s | always | Reads one product from the configured Magento 2 REST catalog (GET /rest/{store_code}/V1/products/{sku}) using the integration credential. |
+| `magento.product.links` | read | no | no | 30s | always | Lists related, upsell, or cross-sell links of a product (GET /rest/{store_code}/V1/products/{sku}/links?linkType=...). |
+| `magento.product.links.add` | write | yes | yes | 60s | tools.writes | Magento write operation: creates a related, upsell, or cross-sell link between two products (POST /rest/{store_code}/V1/products/{sku}/links) on the resolved instance. |
+| `magento.product.links.bulk` | write | yes | yes | 120s | tools.writes | Magento write operation: adds (POST /rest/{store_code}/V1/products/{sku}/links) or removes (DELETE /rest/{store_code}/V1/products/{sku}/links/{type}/{linkedSku}) one link type (... |
+| `magento.product.links.remove` | write | yes | yes | 60s | tools.writes | Magento write operation: deletes a related, upsell, or cross-sell link (DELETE /rest/{store_code}/V1/products/{sku}/links/{type}/{linkedSku}) on the resolved instance. |
+| `magento.product.media` | read | no | no | 30s | always | Lists the media gallery of one product (GET /rest/{store_code}/V1/products/{sku}/media). |
+| `magento.product.media.delete` | destructive | yes | yes | 60s | tools.writes | Magento write operation: deletes one media entry from a product gallery (DELETE /rest/{store_code}/V1/products/{sku}/media/{id}) on the resolved instance. |
+| `magento.product.media.get` | read | no | no | 30s | always | Returns one product gallery entry (GET /rest/{store_code}/V1/products/{sku}/media/{id}) with file, label, position, types, and disabled flag. |
+| `magento.product.media.types` | read | no | no | 30s | always | Lists the media roles available for an attribute set (GET /rest/{store_code}/V1/products/media/types/{attributeSetName}) so media uploads use valid type codes. |
+| `magento.product.media.update` | write | yes | yes | 60s | tools.writes | Magento write operation: updates one gallery entry (label, position, types, disabled) (PUT /rest/{store_code}/V1/products/{sku}/media/{id}) on the resolved instance. |
+| `magento.product.media.upload` | write | yes | yes | 60s | tools.writes | Magento write operation: adds an image to a product gallery (POST /rest/{store_code}/V1/products/{sku}/media) on the resolved instance. |
+| `magento.product.options` | read | no | no | 30s | always | Lists a product's custom options (not configurable variant options) (GET /rest/{store_code}/V1/products/{sku}/options), including each value's price and price type. |
+| `magento.product.options.create` | write | yes | yes | 60s | tools.writes | Magento write operation: adds one custom option to a product (POST /rest/{store_code}/V1/products/{sku}/options) on the resolved instance. |
+| `magento.product.options.delete` | destructive | yes | yes | 60s | tools.writes | Magento write operation: deletes one custom option (DELETE /rest/{store_code}/V1/products/{sku}/options/{optionId}) on the resolved instance. |
+| `magento.product.options.update` | write | yes | yes | 60s | tools.writes | Magento write operation: updates one custom option (PUT /rest/{store_code}/V1/products/{sku}/options/{optionId}) on the resolved instance. |
+| `magento.product.search` | read | no | no | 30s | always | Searches the configured Magento 2 REST catalog (GET /rest/{store_code}/V1/products with searchCriteria filter groups) using the integration credential. |
+| `magento.product.seo` | read | no | no | 30s | always | Audits one product's content and SEO fields (GET /rest/{store_code}/V1/products/{sku}) and returns deterministic pass/warn/fail checks for description, short_description, url_ke... |
+| `magento.product.tier_prices` | read | no | no | 30s | always | Lists the quantity-based tier prices of one product (GET /rest/{store_code}/V1/products/tier-prices?skus={sku}), including website, customer group, quantity, and price. |
+| `magento.product.tier_prices.set` | write | yes | yes | 60s | tools.writes | Magento write operation: replaces the tier prices of one product (POST /rest/{store_code}/V1/products/tier-prices) on the resolved instance with 1-50 fixed-price tiers. |
+| `magento.product.update` | write | yes | yes | 60s | tools.writes | Updates one product in the configured Magento 2 REST catalog Changing url_key changes the storefront URL; Magento does not create a 301 redirect for API writes. |
+| `magento.products.bulk_update` | write | yes | yes | 120s | tools.writes | Magento write operation: applies the same status, visibility, or custom attributes to up to 50 products (one PUT per SKU) on the resolved instance. |
+| `magento.products.get` | read | no | no | 30s | always | Reads up to 50 products by SKU in one search (GET /rest/{store_code}/V1/products with a sku in-filter). |
+| `magento.sales.analysis` | read | no | no | 120s | always | Aggregates an order window into business metrics: orders, revenue, AOV, discounts, shipping, tax, mixed-currency flag, guest share, repeat/new customers, coupons, refunds (total... |
+| `magento.sales.summary` | read | no | no | 30s | always | Aggregates Magento orders per day over a bounded window: order count, grand-total revenue, and item quantity. |
+| `magento.shipment.create` | write | yes | yes | 60s | tools.writes | Magento write operation: creates a shipment for an order (POST /rest/{store_code}/V1/shipments) on the resolved instance, with 1-100 order-item lines and up to 20 tracking numbers. |
+| `magento.shipment.email` | write | yes | yes | 60s | tools.writes | Magento write operation: sends the shipment email (POST /rest/{store_code}/V1/shipments/{id}/emails) on the resolved instance. |
+| `magento.shipment.get` | read | no | no | 30s | always | Reads one shipment by id (GET /rest/{store_code}/V1/shipments/{id}) with total quantity and tracking numbers. |
+| `magento.shipment.list` | read | no | no | 30s | always | Lists the shipments of one order (GET /rest/{store_code}/V1/shipments filtered by order_id) with total quantity and tracking numbers. |
+| `magento.store.configs` | read | no | no | 30s | always | Lists store views (GET /rest/{store_code}/V1/store/storeConfigs) with id, code, website, locale, currencies, timezone, and base URL. |
+| `magento.tax.classes` | read | no | no | 30s | always | Lists tax classes (GET /rest/{store_code}/V1/taxClasses/search) with id, name, and type, which product writes accept as tax_class_id. |
 
-## Not implemented yet
+### Cloudflare (3 tools)
 
-Customer address tools, order creation, invoice capture,
-category and attribute tools, Logpush inspection, GA4 ecommerce reports, and the
-remaining unified scenarios. They are designed in [mcp-tools.md](mcp-tools.md)
-but are not registered.
+| Tool | Scope | Write? | Confirmation | Timeout | Gate | Notes |
+|---|---|---|---|---|---|---|
+| `cloudflare.analytics.traffic` | read | no | no | 60s | always | Read-only. |
+| `cloudflare.security.events` | read | no | no | 60s | always | Read-only. |
+| `cloudflare.security.summary` | read | no | no | 60s | always | Read-only. |
+
+### Google Analytics 4 (6 tools)
+
+| Tool | Scope | Write? | Confirmation | Timeout | Gate | Notes |
+|---|---|---|---|---|---|---|
+| `ga4.analytics.realtime` | read | no | no | 60s | always | Reads the last 30 minutes of activity from the Google Analytics 4 Data API for the configured property. |
+| `ga4.analytics.traffic` | read | no | no | 60s | always | Reads aggregate traffic from the Google Analytics 4 Data API for the configured property. |
+| `ga4.ecommerce.overview` | read | no | no | 60s | always | Read-only aggregate report of GA4 purchases and revenue per day for the configured property. |
+| `ga4.ecommerce.products` | read | no | no | 60s | always | Read-only item-level GA4 report: views, add-to-carts, purchases, and item revenue per itemId for the configured property. |
+| `ga4.property.capabilities` | read | no | no | 60s | always | Reads the ecommerce capability profile of the configured Google Analytics 4 property: whether any of the eleven standard ecommerce events fired in the last seven complete days, ... |
+| `ga4.property.metadata` | read | no | no | 30s | always | Lists the dimension and metric API names available on the configured Google Analytics 4 property, including custom fields. |
+
+### Unified analytics (1 tool)
+
+| Tool | Scope | Write? | Confirmation | Timeout | Gate | Notes |
+|---|---|---|---|---|---|---|
+| `unified.traffic.compare` | read | no | no | 60s | always | Compares Cloudflare HTTP requests with GA4 sessions for a declared binding and UTC window. |

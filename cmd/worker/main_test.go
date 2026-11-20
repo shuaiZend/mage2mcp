@@ -6,14 +6,52 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/shuaiZend/mage2mcp/internal/magento"
 	"github.com/shuaiZend/mage2mcp/internal/observability"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
+
+// workerTestDSN returns the test database DSN scoped to the worker package's own
+// schema. Database-backed test packages share one PostgreSQL instance and
+// `go test ./...` runs packages in parallel, so an unscoped DSN lets another
+// package's cleanup destroy this package's rows mid-test — and lets this
+// package's reconcile backlog fill another package's claim window.
+func workerTestDSN(t *testing.T) string {
+	t.Helper()
+	const schema = "test_worker"
+	base := os.Getenv("MAGE2MCP_TEST_DATABASE_URL")
+	if base == "" {
+		t.Skip("MAGE2MCP_TEST_DATABASE_URL is not set; skipping PostgreSQL integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, base)
+	if err != nil {
+		t.Fatalf("connect to create test schema: %v", err)
+	}
+	if _, err := conn.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
+		_ = conn.Close(ctx)
+		t.Fatalf("create test schema %q: %v", schema, err)
+	}
+	if err := conn.Close(ctx); err != nil {
+		t.Fatalf("close schema-setup connection: %v", err)
+	}
+	parsed, err := url.Parse(base)
+	if err != nil {
+		t.Fatalf("parse MAGE2MCP_TEST_DATABASE_URL: %v", err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
 
 func TestImportBatchResultKeepsAllFailures(t *testing.T) {
 	result := &magento.ImportResult{
@@ -34,10 +72,7 @@ func TestImportBatchResultKeepsAllFailures(t *testing.T) {
 }
 
 func TestPruneImportBatchesStopsOnCancel(t *testing.T) {
-	url := os.Getenv("MAGE2MCP_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("MAGE2MCP_TEST_DATABASE_URL is not set; skipping PostgreSQL integration test")
-	}
+	url := workerTestDSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	store, err := storage.Open(ctx, storage.Config{URL: url, MaxConns: 2})
@@ -76,6 +111,10 @@ func (f *fakePruner) PruneImportBatches(context.Context, time.Time) (int64, erro
 		f.onCall()
 	}
 	return f.removed, f.err
+}
+
+func (f *fakePruner) PruneJobs(context.Context, time.Time) (int64, error) {
+	return 0, nil
 }
 
 func TestPruneImportBatchesLogsAndStops(t *testing.T) {

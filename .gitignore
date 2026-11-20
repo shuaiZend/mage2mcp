@@ -1,6 +1,10 @@
 # Binaries and build output
 /bin/
 /dist/
+# `go build ./cmd/x` from the repo root drops the binary here
+/server
+/worker
+/admin
 *.exe
 *.test
 *.out

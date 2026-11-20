@@ -138,16 +138,23 @@ type SalesDay struct {
 }
 
 // SalesSummary aggregates orders per day over a bounded window.
+//
+// Completeness is explicit: TotalAvailable is the number of orders Magento
+// reports for the window, ScannedOrders is how many were aggregated, and
+// ExcludedOrders is the difference. Truncated is true only when at least one
+// order was excluded.
 type SalesSummary struct {
-	Window        string     `json:"window"`
-	Days          []SalesDay `json:"days"`
-	TotalOrders   int        `json:"total_orders"`
-	TotalRevenue  float64    `json:"total_revenue"`
-	TotalItems    float64    `json:"total_items"`
-	Currency      string     `json:"currency,omitempty"`
-	MixedCurrency bool       `json:"mixed_currency"`
-	Truncated     bool       `json:"truncated"`
-	ScannedOrders int        `json:"scanned_orders"`
+	Window         string     `json:"window"`
+	Days           []SalesDay `json:"days"`
+	TotalOrders    int        `json:"total_orders"`
+	TotalRevenue   float64    `json:"total_revenue"`
+	TotalItems     float64    `json:"total_items"`
+	Currency       string     `json:"currency,omitempty"`
+	MixedCurrency  bool       `json:"mixed_currency"`
+	Truncated      bool       `json:"truncated"`
+	TotalAvailable int        `json:"total_available"`
+	ExcludedOrders int        `json:"excluded_orders"`
+	ScannedOrders  int        `json:"scanned_orders"`
 }
 
 // SalesSummary aggregates order count, revenue, and item quantity per day.
@@ -172,7 +179,7 @@ func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesS
 	}
 	byDate := map[string]*SalesDay{}
 	limit := maxOrderLimit
-	truncated := false
+	totalAvailable := 0
 	for offset := 0; offset < maxSummaryOrders; offset += limit {
 		query, err := orderSearchCriteria(OrderQuery{
 			CreatedFrom:  from.UTC().Format(time.RFC3339),
@@ -218,14 +225,22 @@ func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesS
 				summary.MixedCurrency = true
 			}
 		}
-		if payload.TotalCount > summary.ScannedOrders {
-			truncated = true
+		if payload.TotalCount > 0 {
+			totalAvailable = payload.TotalCount
 		}
 		if len(payload.Items) < limit {
 			break
 		}
 	}
-	summary.Truncated = truncated
+	// Truncation is a property of the finished scan, not of the first page: the
+	// flag used to latch as soon as total_count exceeded the first page size, so
+	// a complete 924-order scan reported truncated=true.
+	summary.TotalAvailable = totalAvailable
+	if summary.TotalAvailable < summary.ScannedOrders {
+		summary.TotalAvailable = summary.ScannedOrders
+	}
+	summary.ExcludedOrders = summary.TotalAvailable - summary.ScannedOrders
+	summary.Truncated = summary.ExcludedOrders > 0
 	for _, day := range byDate {
 		summary.Days = append(summary.Days, *day)
 	}

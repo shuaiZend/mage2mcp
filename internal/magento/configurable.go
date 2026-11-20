@@ -5,11 +5,14 @@ package magento
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,11 +28,16 @@ const (
 	maxCompletedSKUs        = 20
 	maxCompletedSKUsBytes   = 900
 
+	stagePrecheck = "precheck"
 	stageChildren = "children"
 	stageParent   = "parent"
 	stageOptions  = "options"
 	stageLinks    = "links"
+	stageStock    = "stock"
 )
+
+// configurableStages is the fixed order of the create-configurable workflow.
+var configurableStages = []string{stagePrecheck, stageChildren, stageParent, stageLinks, stageStock}
 
 // VariantAttribute declares one configurable option. The option label sent to
 // Magento is the attribute code, since VariantAttribute carries no label.
@@ -75,13 +83,73 @@ type CreateConfigurableInput struct {
 	Parent   CreateProductInput
 	Variants []VariantAttribute
 	Children []ChildProduct
+
+	// OperationID resumes an earlier attempt of the same create. When set, SKUs
+	// that already exist upstream are reused (and missing links repaired)
+	// instead of colliding; when empty the run is a fresh create and any
+	// pre-existing SKU aborts in precheck.
+	//
+	// The resume state is the upstream read-back: the id is a caller-carried
+	// handle that selects resume mode, and this workflow does not record the
+	// intent in the durable operation ledger (that ledger covers the
+	// money-moving tools).
+	OperationID string
 }
 
 // ConfigurableProduct is a configurable parent together with its linked children.
+//
+// ParentInStock reports whether the parent is salable as far as the gateway
+// could observe it, and ParentStockSource states how that value was derived so
+// the caller never has to guess. CreateConfigurable derives it from the MSI
+// source items of the children; GetConfigurable leaves both fields zero.
 type ConfigurableProduct struct {
-	Parent        Product
-	Children      []Product
-	ParentInStock bool `json:"parent_in_stock"`
+	Parent            Product
+	Children          []Product
+	ParentInStock     bool   `json:"parent_in_stock"`
+	ParentStockSource string `json:"parent_stock_source,omitempty"`
+
+	// Execution record. CreateConfigurable always sets it; GetConfigurable
+	// leaves it empty.
+	OperationID     string              `json:"operation_id,omitempty"`
+	Outcome         ConfigurableOutcome `json:"outcome,omitempty"`
+	Stages          []ConfigurableStage `json:"stages,omitempty"`
+	CompletedStages []string            `json:"completed_stages,omitempty"`
+	FailedStage     string              `json:"failed_stage,omitempty"`
+	OrphanSKUs      []string            `json:"orphan_skus,omitempty"`
+}
+
+// ConfigurableOutcome is the overall outcome of a create-configurable run.
+type ConfigurableOutcome string
+
+const (
+	// ConfigurableCompleted means every stage completed or was already satisfied
+	// upstream.
+	ConfigurableCompleted ConfigurableOutcome = "completed"
+	// ConfigurablePartial means at least one stage failed or was left pending.
+	// The result names the completed stages, the failed stage, and any orphaned
+	// SKUs, and the call returns a typed error.
+	ConfigurablePartial ConfigurableOutcome = "partial"
+)
+
+// ConfigurableStageState is the state of one workflow stage.
+type ConfigurableStageState string
+
+const (
+	// ConfigurableStagePending means the stage never ran (an earlier stage failed).
+	ConfigurableStagePending ConfigurableStageState = "pending"
+	// ConfigurableStageSkipped means the stage was already satisfied upstream.
+	ConfigurableStageSkipped ConfigurableStageState = "skipped"
+	// ConfigurableStageCompleted means this run did the stage's work.
+	ConfigurableStageCompleted ConfigurableStageState = "completed"
+	// ConfigurableStageFailed means the stage's work failed.
+	ConfigurableStageFailed ConfigurableStageState = "failed"
+)
+
+// ConfigurableStage is one ordered step of the create-configurable workflow.
+type ConfigurableStage struct {
+	Name   string                 `json:"name"`
+	State  ConfigurableStageState `json:"state"`
+	Detail string                 `json:"detail,omitempty"`
 }
 
 type configurableOption struct {
@@ -103,14 +171,33 @@ type configurableChildBody struct {
 	ChildSKU string `json:"childSku"`
 }
 
-// CreateConfigurable creates a configurable product in the documented order:
-// every child simple product first, then the parent with type_id=configurable
-// and its configurable_product_options, then one child link per child.
+// CreateConfigurable creates a configurable product as a staged, resumable
+// workflow: precheck -> children -> parent -> links -> stock.
 //
-// This operation is NOT atomic. A failure returns an error whose Details carry
-// stage (children, parent, options, or links) and completed_skus (bounded to 20
-// SKUs); everything already created stays in Magento, so the caller must run
-// compensation before retrying.
+// PRECHECK runs before the first write: local validation (SKUs, attribute codes,
+// duplicate variant combinations), the variant attributes' membership in the
+// parent attribute set, and an upstream read of every SKU. A fresh create (no
+// OperationID) aborts on any pre-existing SKU with a conflict and zero writes.
+//
+// The result always carries the execution record: OperationID, Outcome
+// (completed or partial), the ordered Stages with their state and detail, the
+// completed stage names, the failed stage, and any OrphanSKUs (children that
+// exist upstream but are not linked to the parent). A partial run returns the
+// record together with a typed error, so it can never be mistaken for a success.
+//
+// RESUME: pass the OperationID of a failed attempt to reuse what already exists.
+// Existing children and a parent that match the request are skipped (never
+// re-POSTed), missing links are added, and an orphan left by a failed link stage
+// is repaired. The upstream read-back is the resume state; the durable operation
+// ledger records the intent across processes.
+//
+// VERIFICATION: after linking, the parent's children are read back; a link the
+// API accepted but the parent does not report fails the links stage.
+//
+// COMPENSATION: nothing is deleted. A partial run reports the orphans and the
+// completed stages and leaves the decision to the operator, because the gateway
+// has no reliable evidence that a given product was created by this operation
+// (that evidence belongs to the operation ledger).
 func (s *Service) CreateConfigurable(ctx context.Context, in CreateConfigurableInput) (*ConfigurableProduct, error) {
 	if err := s.requireClient(); err != nil {
 		return nil, err
@@ -118,39 +205,403 @@ func (s *Service) CreateConfigurable(ctx context.Context, in CreateConfigurableI
 	if err := validateConfigurableInput(in); err != nil {
 		return nil, err
 	}
-	completed := make([]string, 0, len(in.Children)+1)
+	operationID, resume, err := configurableOperationID(in)
+	if err != nil {
+		return nil, err
+	}
+	result := newConfigurableRun(operationID)
+
+	// PRECHECK: no write happens before this returns clean.
+	pre, err := s.precheckConfigurable(ctx, in, resume, result)
+	if err != nil {
+		return nil, err
+	}
+	result.finishStage(stagePrecheck, ConfigurableStageCompleted, pre.detail)
+
+	// CHILDREN: create only what is missing; a resumed run reuses the rest.
 	children := make([]Product, 0, len(in.Children))
+	existing := make([]string, 0, len(in.Children)+1)
+	createdChildren, reusedChildren := 0, 0
 	for _, child := range in.Children {
+		if product, ok := pre.children[child.SKU]; ok {
+			children = append(children, *product)
+			existing = append(existing, child.SKU)
+			reusedChildren++
+			continue
+		}
 		product, err := s.createChild(ctx, in.Parent, child)
 		if err != nil {
 			if productCreated(err) {
-				completed = append(completed, child.SKU)
+				existing = append(existing, child.SKU)
 			}
-			return nil, writeStageError(stageChildren, completed, child.SKU, err)
+			result.Children = children
+			result.OrphanSKUs = append([]string(nil), existing...)
+			result.finishStage(stageChildren, ConfigurableStageFailed, stageDetail(err))
+			return result, configurableStageError(result, existing, child.SKU, err)
 		}
 		children = append(children, *product)
-		completed = append(completed, child.SKU)
+		existing = append(existing, child.SKU)
+		createdChildren++
 	}
-	parent, err := s.createConfigurableParent(ctx, in)
-	if err != nil {
-		if productCreated(err) {
-			completed = append(completed, in.Parent.SKU)
+	childrenState := ConfigurableStageCompleted
+	if createdChildren == 0 {
+		childrenState = ConfigurableStageSkipped
+	}
+	result.finishStage(stageChildren, childrenState,
+		fmt.Sprintf("created %d, reused %d", createdChildren, reusedChildren))
+
+	// PARENT: reuse an existing configurable parent on resume.
+	parent := pre.parent
+	if parent != nil {
+		result.finishStage(stageParent, ConfigurableStageSkipped, "parent already exists")
+	} else {
+		created, err := s.createConfigurableParent(ctx, in)
+		if err != nil {
+			result.Children = children
+			result.OrphanSKUs = append([]string(nil), existing...)
+			result.finishStage(stageParent, ConfigurableStageFailed, stageDetail(err))
+			return result, configurableStageError(result, existing, in.Parent.SKU, err)
 		}
-		return nil, writeStageError(stageParent, completed, in.Parent.SKU, err)
+		parent = created
+		result.finishStage(stageParent, ConfigurableStageCompleted, "created")
 	}
-	completed = append(completed, in.Parent.SKU)
+	existing = append(existing, in.Parent.SKU)
+
+	// LINKS: link what is missing, then verify the association by reading it back.
+	linkedNow := make(map[string]bool, len(pre.linked)+len(in.Children))
+	for sku := range pre.linked {
+		linkedNow[sku] = true
+	}
+	addedLinks, reusedLinks := 0, 0
+	var linkErr error
+	var failedLink string
 	for _, child := range in.Children {
+		if linkedNow[child.SKU] {
+			reusedLinks++
+			continue
+		}
 		if err := s.AddChild(ctx, in.Parent.SKU, child.SKU); err != nil {
-			return nil, writeStageError(stageLinks, completed, child.SKU, err)
+			linkErr, failedLink = err, child.SKU
+			break
 		}
+		linkedNow[child.SKU] = true
+		addedLinks++
 	}
-	inStock := false
+	actual, verifyErr := s.Children(ctx, in.Parent.SKU)
+	verified := make(map[string]bool, len(actual))
+	for _, child := range actual {
+		verified[child.SKU] = true
+	}
+	switch {
+	case linkErr != nil:
+		detail := "link failed for " + failedLink + ": " + stageDetail(linkErr)
+		if verifyErr != nil {
+			detail += "; verification read failed: " + string(errs.CodeOf(verifyErr))
+		}
+		result.Parent, result.Children = *parent, children
+		result.OrphanSKUs = missingChildSKUs(in.Children, linkedNow)
+		result.finishStage(stageLinks, ConfigurableStageFailed, detail)
+		return result, configurableStageError(result, existing, failedLink, linkErr)
+	case verifyErr != nil:
+		result.Parent, result.Children = *parent, children
+		result.OrphanSKUs = missingChildSKUs(in.Children, linkedNow)
+		result.finishStage(stageLinks, ConfigurableStageFailed,
+			"link verification read failed: "+string(errs.CodeOf(verifyErr)))
+		return result, configurableStageError(result, existing, "", verifyErr)
+	case len(missingChildSKUs(in.Children, verified)) > 0:
+		missing := missingChildSKUs(in.Children, verified)
+		err := errs.New(errs.CodeConflict,
+			"Magento accepted the child links but the parent does not report them")
+		result.Parent, result.Children = *parent, children
+		result.OrphanSKUs = missing
+		result.finishStage(stageLinks, ConfigurableStageFailed,
+			"verification: not linked: "+strings.Join(missing, ","))
+		return result, configurableStageError(result, existing, missing[0], err)
+	}
+	linksState := ConfigurableStageCompleted
+	if addedLinks == 0 {
+		linksState = ConfigurableStageSkipped
+	}
+	result.finishStage(stageLinks, linksState,
+		fmt.Sprintf("linked %d, reused %d, verified %d of %d",
+			addedLinks, reusedLinks, len(in.Children), len(in.Children)))
+
+	// STOCK: derive the salable state from the children's source items (MAG-09)
+	// and write it; a failed write fails the stage (MAG-08).
+	inStock, stockSource, observeErr := s.observeParentStock(ctx, in.Children)
+	result.Parent, result.Children = *parent, children
+	if observeErr != nil {
+		result.ParentInStock = false
+		result.ParentStockSource = "unobserved: " + string(errs.CodeOf(observeErr))
+		result.finishStage(stageStock, ConfigurableStageSkipped,
+			result.ParentStockSource+"; no stock status written")
+		result.Outcome = ConfigurableCompleted
+		return result, nil
+	}
 	if parent.ID > 0 {
-		if err := s.setParentStockStatus(ctx, in.Parent.SKU, parent.ID); err == nil {
-			inStock = true
+		if err := s.setParentStockStatus(ctx, in.Parent.SKU, parent.ID, inStock); err != nil {
+			result.finishStage(stageStock, ConfigurableStageFailed, stageDetail(err))
+			return result, configurableStageError(result, existing, in.Parent.SKU, err)
+		}
+	} else {
+		inStock, stockSource = false, "parent_id_missing: stock status not set"
+		result.ParentInStock, result.ParentStockSource = inStock, stockSource
+		result.finishStage(stageStock, ConfigurableStageSkipped, stockSource)
+		result.Outcome = ConfigurableCompleted
+		return result, nil
+	}
+	result.ParentInStock, result.ParentStockSource = inStock, stockSource
+	result.finishStage(stageStock, ConfigurableStageCompleted, stockSource)
+	result.Outcome = ConfigurableCompleted
+	return result, nil
+}
+
+// newConfigurableRun returns an execution record whose default outcome is
+// partial: only a run that reaches the end sets ConfigurableCompleted, so an
+// early return can never look like a success.
+func newConfigurableRun(operationID string) *ConfigurableProduct {
+	stages := make([]ConfigurableStage, 0, len(configurableStages))
+	for _, name := range configurableStages {
+		stages = append(stages, ConfigurableStage{Name: name, State: ConfigurableStagePending})
+	}
+	return &ConfigurableProduct{OperationID: operationID, Outcome: ConfigurablePartial, Stages: stages}
+}
+
+// finishStage records one stage's final state.
+func (r *ConfigurableProduct) finishStage(name string, state ConfigurableStageState, detail string) {
+	for i := range r.Stages {
+		if r.Stages[i].Name != name {
+			continue
+		}
+		r.Stages[i].State = state
+		r.Stages[i].Detail = detail
+	}
+	switch state {
+	case ConfigurableStageCompleted, ConfigurableStageSkipped:
+		r.CompletedStages = append(r.CompletedStages, name)
+	case ConfigurableStageFailed:
+		r.FailedStage = name
+	}
+}
+
+// configurableOperationID returns the operation id for this run and whether the
+// caller asked to resume an earlier attempt.
+func configurableOperationID(in CreateConfigurableInput) (string, bool, error) {
+	if in.OperationID == "" {
+		var raw [8]byte
+		if _, err := rand.Read(raw[:]); err != nil {
+			return "", false, errs.New(errs.CodeInternal, "cannot generate an operation id").WithCause(err)
+		}
+		return "cfg_" + hex.EncodeToString(raw[:]), false, nil
+	}
+	if !configurableOperationIDRE.MatchString(in.OperationID) {
+		return "", false, invalidf("operation_id must match %s", configurableOperationIDRE.String())
+	}
+	return in.OperationID, true, nil
+}
+
+var configurableOperationIDRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+// configurablePrecheck is the upstream state observed before the first write.
+type configurablePrecheck struct {
+	children map[string]*Product
+	parent   *Product
+	linked   map[string]bool
+	detail   string
+}
+
+// precheckConfigurable validates variant attributes, then reads every SKU the
+// run would write. A fresh create aborts on any pre-existing SKU; a resume
+// adopts existing products that match the request.
+func (s *Service) precheckConfigurable(ctx context.Context, in CreateConfigurableInput, resume bool, result *ConfigurableProduct) (*configurablePrecheck, error) {
+	pre := &configurablePrecheck{
+		children: make(map[string]*Product, len(in.Children)),
+		linked:   make(map[string]bool),
+	}
+	attributeDetail, err := s.checkVariantAttributes(ctx, in)
+	if err != nil {
+		result.finishStage(stagePrecheck, ConfigurableStageFailed, stageDetail(err))
+		return nil, configurablePrecheckError(result, err)
+	}
+	var collisions []string
+	for _, child := range in.Children {
+		product, getErr := s.Get(ctx, child.SKU)
+		switch {
+		case getErr == nil:
+			if !resume || !sameChildShape(product, child, in.Variants) {
+				collisions = append(collisions, child.SKU)
+				continue
+			}
+			pre.children[child.SKU] = product
+		case errs.CodeOf(getErr) == errs.CodeNotFound:
+		default:
+			result.finishStage(stagePrecheck, ConfigurableStageFailed, stageDetail(getErr))
+			return nil, configurablePrecheckError(result, getErr)
 		}
 	}
-	return &ConfigurableProduct{Parent: *parent, Children: children, ParentInStock: inStock}, nil
+	parentDetail := "absent"
+	parent, getErr := s.Get(ctx, in.Parent.SKU)
+	switch {
+	case getErr == nil:
+		if !resume || parent.TypeID != configurableTypeID {
+			collisions = append(collisions, in.Parent.SKU)
+			break
+		}
+		linked, linkErr := s.Children(ctx, in.Parent.SKU)
+		if linkErr != nil {
+			result.finishStage(stagePrecheck, ConfigurableStageFailed, stageDetail(linkErr))
+			return nil, configurablePrecheckError(result, linkErr)
+		}
+		pre.parent = parent
+		for _, child := range linked {
+			pre.linked[child.SKU] = true
+		}
+		parentDetail = fmt.Sprintf("present with %d linked children", len(linked))
+	case errs.CodeOf(getErr) == errs.CodeNotFound:
+	default:
+		result.finishStage(stagePrecheck, ConfigurableStageFailed, stageDetail(getErr))
+		return nil, configurablePrecheckError(result, getErr)
+	}
+	if len(collisions) > 0 {
+		sort.Strings(collisions)
+		e := errs.New(errs.CodeConflict,
+			"SKU already exists in Magento and a fresh create never overwrites it: "+strings.Join(collisions, ", ")+
+				" (resume with the operation id of the earlier attempt to reuse the products it created)")
+		e = e.WithDetail("collision_skus", strings.Join(collisions, ","))
+		result.finishStage(stagePrecheck, ConfigurableStageFailed, "SKU collision: "+strings.Join(collisions, ", "))
+		return nil, configurablePrecheckError(result, e)
+	}
+	pre.detail = fmt.Sprintf("%s; %d of %d children already present; parent %s",
+		attributeDetail, len(pre.children), len(in.Children), parentDetail)
+	return pre, nil
+}
+
+// checkVariantAttributes verifies that every variant attribute is a selectable
+// attribute of the parent's attribute set. The attribute-set read is best
+// effort: when it cannot be read the precheck records that membership was not
+// verified rather than blocking the create on an unrelated permission.
+func (s *Service) checkVariantAttributes(ctx context.Context, in CreateConfigurableInput) (string, error) {
+	attributes, err := s.Attributes(ctx, in.Parent.AttributeSetID)
+	if err != nil {
+		return "attribute set " + strconv.Itoa(in.Parent.AttributeSetID) +
+			" unreadable (" + string(errs.CodeOf(err)) + "); variant membership not verified", nil
+	}
+	if len(attributes) == 0 {
+		return "attribute set " + strconv.Itoa(in.Parent.AttributeSetID) +
+			" returned no attributes; variant membership not verified", nil
+	}
+	known := make(map[string]Attribute, len(attributes))
+	for _, attribute := range attributes {
+		known[attribute.Code] = attribute
+	}
+	var invalid []string
+	for _, variant := range in.Variants {
+		attribute, ok := known[variant.Code]
+		if !ok {
+			invalid = append(invalid, variant.Code+" (absent from attribute set)")
+			continue
+		}
+		switch attribute.Input {
+		case "select", "multiselect", "swatch_visual", "swatch_text":
+		default:
+			invalid = append(invalid, variant.Code+" (frontend_input "+attribute.Input+")")
+		}
+	}
+	if len(invalid) > 0 {
+		return "", invalidf("variant attributes are not selectable attributes of attribute set %d: %s",
+			in.Parent.AttributeSetID, strings.Join(invalid, ", "))
+	}
+	return fmt.Sprintf("attribute set %d carries %d of %d variant attributes",
+		in.Parent.AttributeSetID, len(in.Variants), len(in.Variants)), nil
+}
+
+// sameChildShape reports whether an existing simple product looks like the child
+// this request would create, which is the evidence a resume needs to reuse it.
+// A variant attribute the projection did not return is not treated as a
+// mismatch: Magento omits attributes outside the attribute set.
+func sameChildShape(product *Product, child ChildProduct, variants []VariantAttribute) bool {
+	if product.TypeID != simpleTypeID {
+		return false
+	}
+	for _, variant := range variants {
+		value, ok := product.Attributes[variant.Code]
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		if strings.TrimSpace(value) != strings.TrimSpace(child.Attributes[variant.Code]) {
+			return false
+		}
+	}
+	return true
+}
+
+// missingChildSKUs returns the requested child SKUs that are not present.
+func missingChildSKUs(children []ChildProduct, present map[string]bool) []string {
+	missing := make([]string, 0, len(children))
+	for _, child := range children {
+		if !present[child.SKU] {
+			missing = append(missing, child.SKU)
+		}
+	}
+	return missing
+}
+
+// stageDetail renders an error for a stage record without leaking the upstream
+// body.
+func stageDetail(err error) string {
+	var typed *errs.Error
+	if errors.As(err, &typed) && typed.Message != "" {
+		return typed.Message
+	}
+	return err.Error()
+}
+
+// configurableStageError renders a partial run as a typed error carrying the
+// execution record, so a caller that only sees the error still knows the
+// operation id, the failed stage, the completed stages, and the orphans.
+func configurableStageError(result *ConfigurableProduct, completed []string, failedSKU string, cause error) error {
+	message := fmt.Sprintf("Magento configurable product create is %s at stage %s", result.Outcome, result.FailedStage)
+	if detail := stageDetail(cause); detail != "" {
+		message += ": " + detail
+	}
+	message += "; completed writes are not rolled back and require compensation"
+	e := errs.New(errs.CodeOf(cause), message)
+	e = e.WithCause(cause)
+	e = e.WithDetail("stage", result.FailedStage)
+	completedSKUs, omitted := boundedSKUs(completed)
+	e = e.WithDetail("completed_skus", completedSKUs)
+	if omitted > 0 {
+		e = e.WithDetail("completed_total", strconv.Itoa(len(completed)))
+		e = e.WithDetail("completed_omitted", strconv.Itoa(omitted))
+	}
+	if failedSKU != "" {
+		e = e.WithDetail("failed_sku", failedSKU)
+	}
+	e = e.WithDetail("operation_id", result.OperationID)
+	e = e.WithDetail("outcome", string(result.Outcome))
+	e = e.WithDetail("failed_stage", result.FailedStage)
+	e = e.WithDetail("completed_stages", strings.Join(result.CompletedStages, ","))
+	if len(result.OrphanSKUs) > 0 {
+		e = e.WithDetail("orphan_skus", strings.Join(result.OrphanSKUs, ","))
+	}
+	return e
+}
+
+// configurablePrecheckError renders a precheck failure. Nothing was written, so
+// the error carries no completed SKUs.
+func configurablePrecheckError(result *ConfigurableProduct, cause error) error {
+	e := errs.New(errs.CodeOf(cause), "configurable product create failed at precheck: "+stageDetail(cause))
+	e = e.WithCause(cause)
+	e = e.WithDetail("stage", stagePrecheck)
+	e = e.WithDetail("operation_id", result.OperationID)
+	e = e.WithDetail("outcome", string(result.Outcome))
+	var typed *errs.Error
+	if errors.As(cause, &typed) {
+		if collisions := typed.Details["collision_skus"]; collisions != "" {
+			e = e.WithDetail("collision_skus", collisions)
+		}
+	}
+	return e
 }
 
 func (s *Service) createChild(ctx context.Context, parent CreateProductInput, child ChildProduct) (*Product, error) {
@@ -475,12 +926,22 @@ func stageFailure(stage, sku string, cause error) error {
 }
 
 // writeStageError reports a non-atomic failure with its stage and completed SKUs.
+// The completed list is the caller's only compensation record, so it is never
+// abbreviated mid-SKU: whole SKUs are included until the detail budget is spent
+// and the remainder is reported as completed_omitted/completed_total.
+//
+//nolint:unparam // completed is part of the shared helper's contract; the cart flow passes nil.
 func writeStageError(stage string, completed []string, failedSKU string, cause error) error {
 	e := errs.New(errs.CodeOf(cause), stageMessage(stage, cause)+
 		"; completed writes are not rolled back and require compensation")
 	e = e.WithCause(cause)
 	e = e.WithDetail("stage", stage)
-	e = e.WithDetail("completed_skus", boundedSKUs(completed))
+	completedSKUs, omitted := boundedSKUs(completed)
+	e = e.WithDetail("completed_skus", completedSKUs)
+	if omitted > 0 {
+		e = e.WithDetail("completed_total", strconv.Itoa(len(completed)))
+		e = e.WithDetail("completed_omitted", strconv.Itoa(omitted))
+	}
 	if failedSKU != "" {
 		_ = e.WithDetail("failed_sku", failedSKU)
 	}
@@ -496,20 +957,32 @@ func stageMessage(stage string, cause error) string {
 	return message
 }
 
-// boundedSKUs renders at most maxCompletedSKUs comma-separated SKUs within the
-// error detail size budget.
-func boundedSKUs(skus []string) string {
-	if len(skus) == 0 {
-		return ""
+// boundedSKUs renders as many whole SKUs as fit the detail budget, at most
+// maxCompletedSKUs entries, and returns how many were left out. A SKU that does
+// not fit is dropped entirely: a partial token would name a product that does
+// not exist and corrupt the compensation list.
+func boundedSKUs(skus []string) (string, int) {
+	total := len(skus)
+	if total == 0 {
+		return "", 0
 	}
 	if len(skus) > maxCompletedSKUs {
 		skus = skus[:maxCompletedSKUs]
 	}
-	joined := strings.Join(skus, ",")
-	if len(joined) > maxCompletedSKUsBytes {
-		joined = joined[:maxCompletedSKUsBytes]
+	kept := make([]string, 0, len(skus))
+	used := 0
+	for _, sku := range skus {
+		needed := len(sku)
+		if len(kept) > 0 {
+			needed++ // comma separator
+		}
+		if used+needed > maxCompletedSKUsBytes {
+			break
+		}
+		kept = append(kept, sku)
+		used += needed
 	}
-	return joined
+	return strings.Join(kept, ","), total - len(kept)
 }
 
 // RemoveChild unlinks a child product from a configurable product with
@@ -567,14 +1040,18 @@ type VariationRow struct {
 type VariationResult struct {
 	Total   int            `json:"total"`
 	Created int            `json:"created"`
+	Linked  int            `json:"linked"`
 	Skipped int            `json:"skipped"`
 	Failed  int            `json:"failed"`
 	Rows    []VariationRow `json:"rows"`
 }
 
 // CreateVariations creates simple children for an existing configurable parent
-// and links them. Existing SKUs are skipped, so the call is idempotent per SKU;
-// failures are reported per row and earlier children are not rolled back.
+// and links them. An existing SKU that is already linked is skipped; an existing
+// SKU that is not linked is an orphan left by an earlier failed link and is
+// repaired (linked) rather than reported as "exists" and abandoned, so the call
+// is idempotent per SKU. Failures are reported per row and earlier children are
+// not rolled back.
 func (s *Service) CreateVariations(ctx context.Context, parentSKU string, variants []VariationInput) (*VariationResult, error) {
 	if s == nil || s.client == nil {
 		return nil, errs.New(errs.CodeInternal, "Magento product service is not configured")
@@ -617,12 +1094,35 @@ func (s *Service) CreateVariations(ctx context.Context, parentSKU string, varian
 	if parent.TypeID != "configurable" {
 		return nil, invalidf("product %q is %s, not configurable", parentSKU, parent.TypeID)
 	}
+	linkedChildren, err := s.Children(ctx, parentSKU)
+	if err != nil {
+		return nil, err
+	}
+	linked := make(map[string]bool, len(linkedChildren))
+	for _, child := range linkedChildren {
+		linked[child.SKU] = true
+	}
 	result := &VariationResult{Total: len(variants), Rows: make([]VariationRow, 0, len(variants))}
 	for _, variant := range variants {
 		row := VariationRow{SKU: variant.SKU}
 		if _, err := s.Get(ctx, variant.SKU); err == nil {
-			row.Status = "exists"
-			result.Skipped++
+			if linked[variant.SKU] {
+				row.Status = "exists"
+				result.Skipped++
+				result.Rows = append(result.Rows, row)
+				continue
+			}
+			// The child exists but is not linked to the parent: an orphan left
+			// by an earlier failed link. Repair it instead of abandoning it.
+			if err := s.AddChild(ctx, parentSKU, variant.SKU); err != nil {
+				row.Status = "failed"
+				row.Error = importErrorMessage(err)
+				result.Failed++
+			} else {
+				row.Status = "linked"
+				result.Linked++
+				linked[variant.SKU] = true
+			}
 			result.Rows = append(result.Rows, row)
 			continue
 		} else if errs.CodeOf(err) != errs.CodeNotFound {
@@ -654,6 +1154,7 @@ func (s *Service) CreateVariations(ctx context.Context, parentSKU string, varian
 		}
 		row.Status = "created"
 		result.Created++
+		linked[variant.SKU] = true
 		result.Rows = append(result.Rows, row)
 	}
 	return result, nil
@@ -742,16 +1243,66 @@ func (s *Service) SetConfigurableOptions(ctx context.Context, sku string, option
 	return nil
 }
 
-// setParentStockStatus makes a configurable parent salable after its children
-// are linked. Magento keeps a legacy stock item for the parent whose
-// is_in_stock flag is not updated by MSI source items alone.
-func (s *Service) setParentStockStatus(ctx context.Context, sku string, productID int) error {
+// observeParentStock derives whether a configurable parent is salable from the
+// MSI source items of its children, and returns a human-readable derivation.
+//
+// A child counts as in stock when at least one of its source items is enabled
+// (status 1) with a positive quantity; the parent counts as in stock when at
+// least one child is. Reservations and the stock-source topology are not
+// applied, so the value is a conservative proxy for salable quantity: it can
+// under-report (a child whose source is not linked to the parent's stock still
+// counts) but it never reports stock that no source holds.
+func (s *Service) observeParentStock(ctx context.Context, children []ChildProduct) (bool, string, error) {
+	skus := make([]string, 0, len(children))
+	for _, child := range children {
+		skus = append(skus, child.SKU)
+	}
+	inStockChildren := 0
+	units := 0.0
+	for start := 0; start < len(skus); start += maxSourceItemQuerySKUs {
+		end := start + maxSourceItemQuerySKUs
+		if end > len(skus) {
+			end = len(skus)
+		}
+		items, err := s.SourceItems(ctx, skus[start:end])
+		if err != nil {
+			return false, "", err
+		}
+		if len(items) >= maxSourceItemsRead {
+			// The read hit its page cap, so the observation is incomplete and a
+			// derived status could take a stocked parent offline. Report the
+			// unobserved state instead (see MAG-13).
+			return false, "", errs.New(errs.CodeInsufficientData,
+				"the child source-item read hit its page cap; the parent stock status cannot be derived")
+		}
+		perSKU := make(map[string]float64, len(items))
+		for _, item := range items {
+			if item.Status != 1 || item.Quantity <= 0 {
+				continue
+			}
+			perSKU[item.SKU] += item.Quantity
+		}
+		for _, quantity := range perSKU {
+			units += quantity
+		}
+		inStockChildren += len(perSKU)
+	}
+	source := fmt.Sprintf("source_items: %d of %d children in stock, %s units observed",
+		inStockChildren, len(skus), strconv.FormatFloat(units, 'f', -1, 64))
+	return inStockChildren > 0, source, nil
+}
+
+// setParentStockStatus writes the legacy stock item's is_in_stock flag for a
+// configurable parent. Magento keeps a legacy stock item for the parent whose
+// flag is not updated by MSI source items alone; the value comes from
+// observeParentStock so the parent is never forced in stock.
+func (s *Service) setParentStockStatus(ctx context.Context, sku string, productID int, inStock bool) error {
 	body := struct {
 		StockItem struct {
 			IsInStock bool `json:"is_in_stock"`
 		} `json:"stockItem"`
 	}{}
-	body.StockItem.IsInStock = true
+	body.StockItem.IsInStock = inStock
 	_, err := s.client.do(ctx, http.MethodPut,
 		"/products/"+url.PathEscape(sku)+"/stockItems/"+strconv.Itoa(productID), nil, body)
 	return err

@@ -83,6 +83,41 @@ type productSearchOutput struct {
 	Total    int       `json:"total"`
 }
 
+// RegisterImportReadTools registers only the read-only asynchronous import
+// tools. It exists so a read-only deployment (database configured,
+// tools.writes: false) can still inspect import status and batches without
+// registering the start/cancel/resume write tools. The registry write gate is
+// the second line of defence: any non-read tool registered while writes are
+// disabled is rejected.
+func RegisterImportReadTools(reg *registry.Registry, resolver *Resolver, queue ImportQueue, batchReaders ...ImportBatchReader) error {
+	if reg == nil || resolver == nil || queue == nil {
+		return errs.New(errs.CodeInternal, "import read tools require a registry, resolver, and queue")
+	}
+	var batches ImportBatchReader
+	if len(batchReaders) > 0 {
+		batches = batchReaders[0]
+	}
+	for _, tool := range []registry.Tool{
+		newImportStatusTool(resolver, queue),
+		newImportBatchListTool(resolver, batches),
+		newImportBatchGetTool(resolver, batches),
+	} {
+		if err := reg.Register(tool); err != nil {
+			return err
+		}
+	}
+	for name, schema := range map[string]string{
+		importStatusToolName:    importStatusSchema,
+		importBatchListToolName: importBatchListSchema,
+		importBatchGetToolName:  importBatchGetSchema,
+	} {
+		if err := reg.SetInputValidator(name, schema); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Register adds the read-only Magento product tools to reg.
 func Register(reg *registry.Registry, svc *Service) error {
 	if svc == nil {
@@ -192,7 +227,7 @@ func newSearchTool(lookup serviceLookup) registry.Tool {
 const (
 	importValidateToolName        = "magento.import.validate"
 	importValidateToolTitle       = "Validate a product import"
-	importValidateToolDescription = "Parses and validates a CSV or JSON product import (base64-encoded, at most 8 MiB and 5000 rows) and returns a preview with per-row errors. Read-only: nothing is written to Magento."
+	importValidateToolDescription = "Parses and validates a CSV or JSON product import (base64-encoded, at most 8 MiB decoded and 5000 rows; the encoded payload must fit the server body limit, 16 MiB by default) and returns a preview with per-row errors. Read-only: nothing is written to Magento."
 	importValidateCapability      = "magento.import.read"
 )
 
@@ -206,6 +241,8 @@ type importValidateOutput struct {
 	Preview *ImportPreview `json:"preview"`
 }
 
+// importValidateSchema bounds data_base64 to base64.EncodedLen(maxImportBytes)
+// (11184812 = 4*ceil(8 MiB/3)); see TestImportLimitsAgreeAcrossPackages.
 const importValidateSchema = `{
   "type": "object",
   "additionalProperties": false,
@@ -266,7 +303,8 @@ const (
 		"creation window, or store view. Read-only; line items are omitted from search results. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 	salesSummaryToolDescription = "Aggregates Magento orders per day over a bounded window: order count, " +
-		"grand-total revenue, and item quantity. Scans at most 1000 orders and reports truncation. " +
+		"grand-total revenue, and item quantity. Scans at most 1000 orders and reports total_available, " +
+		"scanned_orders, excluded_orders, and whether anything was excluded. " +
 		"Revenue is order grand_total (tax and shipping included) and is not GA4 purchase revenue. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
@@ -1609,34 +1647,44 @@ const (
 	orderSummaryToolName  = "magento.order.summary"
 	orderSummaryToolTitle = "Magento order summary"
 
-	orderSummaryToolDescription = "Aggregates Magento orders per day over a bounded window: order count, " +
-		"grand-total revenue, and item quantity. Scans at most 1000 orders and reports truncation. " +
-		"This is the design-catalog name for the same data as magento.sales.summary; both stay available. " +
+	orderSummaryToolDescription = "Deprecated alias for magento.sales.summary. Aggregates Magento orders per day " +
+		"over a bounded window (order count, grand-total revenue, item quantity) and returns the same aggregate " +
+		"plus deprecated=true and use=magento.sales.summary so a client can migrate. Scans at most 1000 orders and " +
+		"reports total_available, scanned_orders, excluded_orders, and whether anything was excluded. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 )
+
+// orderSummaryOutput is deliberately not salesSummaryOutput: the deprecated
+// alias carries migration metadata, so the two tools no longer have identical
+// behaviour or output schemas. Use magento.sales.summary for new integrations.
+type orderSummaryOutput struct {
+	Summary    SalesSummary `json:"summary"`
+	Deprecated bool         `json:"deprecated"`
+	Use        string       `json:"use"`
+}
 
 func newOrderSummaryTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(orderSummaryToolName, orderSummaryToolTitle, orderSummaryToolDescription)
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(orderSummaryToolName, orderSummaryToolTitle, orderSummaryToolDescription, salesSummarySchema),
-			func(ctx context.Context, _ *mcp.CallToolRequest, in salesSummaryInput) (*mcp.CallToolResult, salesSummaryOutput, error) {
+			func(ctx context.Context, _ *mcp.CallToolRequest, in salesSummaryInput) (*mcp.CallToolResult, orderSummaryOutput, error) {
 				from, err := parseSummaryTime(in.From, "from")
 				if err != nil {
-					return nil, salesSummaryOutput{}, err
+					return nil, orderSummaryOutput{}, err
 				}
 				to, err := parseSummaryTime(in.To, "to")
 				if err != nil {
-					return nil, salesSummaryOutput{}, err
+					return nil, orderSummaryOutput{}, err
 				}
 				svc, err := lookup(in.Instance)
 				if err != nil {
-					return nil, salesSummaryOutput{}, err
+					return nil, orderSummaryOutput{}, err
 				}
 				summary, err := svc.SalesSummary(ctx, from, to)
 				if err != nil {
-					return nil, salesSummaryOutput{}, err
+					return nil, orderSummaryOutput{}, err
 				}
-				return nil, salesSummaryOutput{Summary: *summary}, nil
+				return nil, orderSummaryOutput{Summary: *summary, Deprecated: true, Use: "magento.sales.summary"}, nil
 			})
 		return nil
 	}
@@ -1810,7 +1858,8 @@ const (
 
 	orderGeographyToolDescription = "Aggregates orders created in a window by the country of their shipping address " +
 		"(GET /rest/{store_code}/V1/orders with a created_at filter), returning country codes, order counts, and revenue only. " +
-		"Address details and customer PII are never returned. Scans at most 10,000 orders and reports truncation. Read-only. " +
+		"Address details and customer PII are never returned. Scans at most 10,000 orders and reports total_available, " +
+		"unscanned_orders, and duplicates_skipped. Read-only. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	orderGeographySchema = `{"type": "object", "properties": {
@@ -1869,7 +1918,8 @@ const (
 	salesAnalysisToolDescription = "Aggregates an order window into business metrics: orders, revenue, AOV, discounts, shipping, tax, " +
 		"mixed-currency flag, guest share, repeat/new customers, coupons, refunds (total and by SKU), daily/weekday/hour trend, " +
 		"status/payment/store/currency mix, shipping methods, AOV bands, shipping country, top SKUs, and shipment latency. " +
-		"Only aggregates are returned; customer PII never enters the result. Scans at most 20,000 orders and reports truncation. Read-only. " +
+		"Only aggregates are returned; customer PII never enters the result. Scans at most 20,000 orders and reports " +
+		"total_available, excluded_orders, duplicates_skipped, and the paging caveat. Read-only. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	salesAnalysisSchema = `{"type": "object", "properties": {

@@ -36,8 +36,8 @@ type Binding struct {
 	GA4        string `yaml:"ga4"`
 }
 
-// Tools controls optional tool surfaces. Writes stay disabled until the
-// confirmation middleware ships: a write tool without approval is unsafe.
+// Tools controls optional tool surfaces. Write tools are registered only when
+// Writes is true; every write still requires two-step human confirmation.
 type Tools struct {
 	Writes bool `yaml:"writes"`
 }
@@ -49,10 +49,44 @@ type Database struct {
 	MaxConns int32  `yaml:"max_conns"`
 }
 
+// Request-body limits.
+//
+// DefaultMaxBodyBytes bounds one MCP request body. It is sized for the largest
+// supported operation — a maximum-size product import — rather than for the
+// median call: an 8 MiB decoded import encodes to 11,184,812 bytes of base64
+// (internal/magento.MaxImportBytes), and the JSON envelope adds ~200 bytes, so
+// 12 MiB would be the bare minimum. 16 MiB leaves 33% headroom for envelope
+// growth and keeps the bound a round power of two.
+//
+// This is a deliberate trade, not an oversight. The endpoint is authenticated
+// (auth.enabled defaults to true, and a non-loopback listener with auth disabled
+// is refused), every import write additionally needs a two-step human
+// confirmation, and the cap is a hard ceiling: the handler reads at most this
+// many bytes and answers 413 "request body exceeds N bytes" beyond it. Peak
+// memory for one in-flight maximum import is roughly 16 MiB (body) + 11.2 MiB
+// (base64 string) + 8 MiB (decoded) + ~7 MB (parsed rows) ≈ 42 MB; a deployment
+// that never imports (tools.writes false, or no import tools) can lower this
+// value, and a write-enabled deployment that lowers it below
+// MinMaxBodyBytesForImport fails validation at startup instead of failing at
+// runtime.
+const (
+	// DefaultMaxBodyBytes is the shipped server.max_body_bytes default.
+	DefaultMaxBodyBytes int64 = 16 << 20
+	// MinMaxBodyBytesForImport is the smallest body cap that still admits a
+	// maximum-size import (8 MiB decoded -> 11,184,812 bytes base64 plus the
+	// envelope). internal/magento's TestImportLimitsAgreeAcrossPackages fails if
+	// this stops covering magento.ImportHTTPBodyBytes(magento.MaxImportBytes),
+	// so raise both together.
+	MinMaxBodyBytesForImport int64 = 12 << 20
+)
+
 // Server holds listener settings.
+//
+// There is deliberately no public_url field: the server never consumed one, and
+// a configuration key that cannot change behaviour is worse than no key. Use
+// MAGE2MCP_LISTEN and the Cloudflare Tunnel hostname instead.
 type Server struct {
 	Listen        string        `yaml:"listen"`
-	PublicURL     string        `yaml:"public_url"`
 	ShutdownGrace time.Duration `yaml:"shutdown_grace"`
 	MaxBodyBytes  int64         `yaml:"max_body_bytes"`
 }
@@ -93,6 +127,24 @@ type Instance struct {
 	ZoneID     string `yaml:"zone_id"`
 	PropertyID string `yaml:"property_id"`
 	Credential string `yaml:"credential"`
+	// Limits is the outbound request budget for this instance. Nil means the
+	// module default; the Magento module applies a generous default so an
+	// unconfigured deployment is still protected from a retry storm.
+	Limits *InstanceLimits `yaml:"limits"`
+}
+
+// InstanceLimits bounds how hard the gateway may drive one upstream instance.
+//
+// It is per instance because two stores have independent capacity. A zero
+// field disables that dimension: no rate limit, no concurrency cap.
+type InstanceLimits struct {
+	// RequestsPerSecond is the sustained request rate.
+	RequestsPerSecond float64 `yaml:"requests_per_second"`
+	// Burst is how many requests may be issued back-to-back before the
+	// sustained rate applies.
+	Burst int `yaml:"burst"`
+	// MaxConcurrent bounds in-flight requests for the instance.
+	MaxConcurrent int `yaml:"max_concurrent"`
 }
 
 // Default returns the safe defaults: loopback listener, auth required, info logs.
@@ -101,7 +153,7 @@ func Default() Config {
 		Server: Server{
 			Listen:        "127.0.0.1:8080",
 			ShutdownGrace: 10 * time.Second,
-			MaxBodyBytes:  1 << 20,
+			MaxBodyBytes:  DefaultMaxBodyBytes,
 		},
 		Auth:     Auth{Enabled: true},
 		Log:      Log{Level: "info", Format: "json"},
@@ -135,9 +187,6 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("MAGE2MCP_LISTEN"); v != "" {
 		c.Server.Listen = v
 	}
-	if v := os.Getenv("MAGE2MCP_PUBLIC_URL"); v != "" {
-		c.Server.PublicURL = v
-	}
 	if v := os.Getenv("MAGE2MCP_AUTH_ISSUER"); v != "" {
 		c.Auth.Issuer = v
 	}
@@ -148,12 +197,17 @@ func applyEnv(c *Config) {
 		c.Auth.JWKSURL = v
 	}
 	if v := os.Getenv("MAGE2MCP_AUTH_ENABLED"); v != "" {
+		// Only the exact lower-case "true" or "1" enables authentication; any
+		// other non-empty value disables it. docs/configuration.md warns that
+		// the value is compared literally.
 		c.Auth.Enabled = v == "true" || v == "1"
 	}
 	if v := os.Getenv("MAGE2MCP_LOG_LEVEL"); v != "" {
 		c.Log.Level = v
 	}
 	if v := os.Getenv("MAGE2MCP_TOOLS_WRITES"); v == "true" || v == "1" {
+		// Only the exact lower-case "true" or "1" enables writes; the variable
+		// can never disable a YAML-enabled write profile.
 		c.Tools.Writes = true
 	}
 	if v := os.Getenv("MAGE2MCP_DATABASE_URL"); v != "" {
@@ -172,6 +226,15 @@ func (c Config) Validate() error {
 	}
 	if c.Server.MaxBodyBytes <= 0 {
 		problems = append(problems, "server.max_body_bytes must be positive")
+	} else if c.Tools.Writes && c.Server.MaxBodyBytes < MinMaxBodyBytesForImport {
+		// A write-enabled deployment ships the import tools; a body cap below the
+		// import envelope would reject a documented maximum-size import at the
+		// transport with a 413 long after startup. Fail at startup instead.
+		problems = append(problems, fmt.Sprintf(
+			"server.max_body_bytes is %d but tools.writes is enabled: a maximum-size import "+
+				"(8 MiB decoded, 11184812 bytes base64) needs at least %d; raise "+
+				"server.max_body_bytes to %d or more, or disable tools.writes",
+			c.Server.MaxBodyBytes, MinMaxBodyBytesForImport, DefaultMaxBodyBytes))
 	}
 	if c.Auth.Enabled {
 		if !strings.HasPrefix(c.Auth.Issuer, "https://") {
@@ -224,6 +287,21 @@ func (c Config) Validate() error {
 			if inst.Credential == "" {
 				problems = append(problems, fmt.Sprintf("%s instance %q has no credential reference", name, inst.ID))
 			}
+			if l := inst.Limits; l != nil {
+				if l.RequestsPerSecond < 0 {
+					problems = append(problems, fmt.Sprintf("%s instance %q: limits.requests_per_second must not be negative", name, inst.ID))
+				}
+				if l.Burst < 0 {
+					problems = append(problems, fmt.Sprintf("%s instance %q: limits.burst must not be negative", name, inst.ID))
+				}
+				if l.MaxConcurrent < 0 {
+					problems = append(problems, fmt.Sprintf("%s instance %q: limits.max_concurrent must not be negative", name, inst.ID))
+				}
+				if l.Burst > 0 && l.RequestsPerSecond <= 0 {
+					problems = append(problems, fmt.Sprintf(
+						"%s instance %q: limits.burst requires limits.requests_per_second to be greater than zero", name, inst.ID))
+				}
+			}
 		}
 	}
 	seenBindings := map[string]bool{}
@@ -262,6 +340,22 @@ func (c Config) Validate() error {
 			if _, ok := instanceIDs[id]; !ok {
 				problems = append(problems, fmt.Sprintf("binding %q references unknown instance %q", b.ID, id))
 			}
+		}
+	}
+	// Unified tools currently bind exactly one Cloudflare service and one GA4
+	// service (cmd/server builds the adapters from a single service), so the
+	// documented multi-instance path cannot start. Reject it here with an
+	// actionable message instead of failing later in module registration; see
+	// ADR-0018 and docs/configuration.md. Remove this block when the unified
+	// adapters become resolver-aware.
+	if len(c.Bindings) > 0 {
+		if !c.Modules.Magento.Enabled || !c.Modules.Cloudflare.Enabled || !c.Modules.GA4.Enabled {
+			problems = append(problems,
+				"bindings require datasources.magento, datasources.cloudflare and datasources.ga4 to be enabled")
+		} else if len(c.Modules.Cloudflare.Instances) != 1 || len(c.Modules.GA4.Instances) != 1 {
+			problems = append(problems,
+				"bindings currently require exactly one Cloudflare instance and exactly one GA4 instance (ADR-0018); "+
+					"configure one zone and one property, or remove the bindings")
 		}
 	}
 	if len(problems) > 0 {

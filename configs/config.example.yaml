@@ -1,76 +1,83 @@
-# mage2mcp example configuration.
+# mage2mcp development configuration.
 #
-# Copy to config.yaml and fill in ${VAR} references. Never commit real
-# credentials: every credential field is a reference to an environment
-# variable or secret-manager entry.
+# This file is a complete, runnable development configuration: loopback
+# listener, authentication disabled, no upstream data sources, write tools off.
+# It is safe only on a loopback interface and is the file the README quickstart
+# copies. `cp configs/config.example.yaml config.yaml` followed by
+# `./bin/mage2mcp -config config.yaml` starts the gateway as shipped.
+#
+# For a production deployment start from configs/config.production.template.yaml
+# and provide the MAGE2MCP_AUTH_* and MAGE2MCP_DATABASE_URL values. The gateway
+# refuses to start with authentication disabled on a non-loopback listener
+# unless -dev-insecure or MAGE2MCP_DEV_INSECURE=true is set.
 server:
   listen: "127.0.0.1:8080"
-  public_url: "https://mcp.example.com"
   shutdown_grace: 10s
-  max_body_bytes: 1048576
+  # 16 MiB: sized for a maximum-size import (8 MiB decoded -> 11,184,812 bytes
+  # base64 plus the JSON envelope). Lower it only if you do not import; with
+  # tools.writes enabled a value below 12 MiB fails startup validation.
+  max_body_bytes: 16777216
 
 auth:
-  # Authentication is required outside loopback development. The gateway
-  # refuses to start with auth disabled on a non-loopback listener.
-  enabled: true
-  issuer: "${MAGE2MCP_AUTH_ISSUER}"
-  audience: "${MAGE2MCP_AUTH_AUDIENCE}"
-  jwks_url: "${MAGE2MCP_AUTH_JWKS_URL}"
+  # Development only: every MCP request is anonymous. Keep this false only on
+  # loopback. See docs/configuration.md for the production settings and the
+  # MAGE2MCP_DEV_INSECURE warning.
+  enabled: false
+  issuer: ""
+  audience: ""
+  jwks_url: ""
 
 log:
   level: "info"
   format: "json"
 
-# Optional tool surfaces. Write tools stay disabled until the confirmation
-# middleware ships; enable only in a controlled environment.
 tools:
+  # Writes are registered only when true and still require two-step human
+  # confirmation through the admin CLI, which needs database.url.
   writes: false
 
-# Optional PostgreSQL state store. Without it, audit is in memory and lost on
-# restart (development only).
 database:
-  url: "${MAGE2MCP_DATABASE_URL}"
+  # Empty keeps audit, confirmations, and jobs in memory (lost on restart) and
+  # leaves the async import tools unregistered. Set a postgres:// or
+  # postgresql:// URL for durable state.
+  url: ""
   max_conns: 10
 
-
-# Optional cross-source bindings used by unified tools. Each binding names one
-# Magento, one Cloudflare, and one GA4 instance; all three must be enabled.
-bindings:
-  - id: "store-us-analytics"
-    magento: "store-us"
-    cloudflare: "zone-us"
-    ga4: "giztop"
-
+# No data source is enabled in the development example, so the gateway exposes
+# only platform.info. Enable a module and add at least one instance with a
+# credential reference to expose its tools. The full key reference is in
+# docs/configuration.md; configs/config.production.template.yaml has the
+# production-shaped version of this block.
 datasources:
   magento:
     enabled: false
-    instances:
-      - id: "store-us"
-        endpoint: "https://shop.example.com"
-        store_code: "default"
-        # Credential forms:
-        #   bearer:<integration-access-token>            (recommended)
-        #   oauth1:<key>:<secret>:<token>:<token-secret>
-        #   admin:<username>:<password>                   (mints and refreshes an
-        #     admin bearer token automatically; a password may contain colons)
-        #
-        # Security caveat: an admin token inherits the whole ACL role of the
-        # account, which is far more powerful than an integration token. Use a
-        # dedicated API-only admin with a least-privilege role, never a human
-        # administrator. The password stays in process memory and is never
-        # logged or persisted. With 2FA enabled the token endpoint is refused,
-        # so prefer bearer: or oauth1: there.
-        credential: "${MAGENTO_US_CREDENTIAL}"
+    # instances:
+    #   - id: "store-us"
+    #     endpoint: "https://shop.example.com"
+    #     store_code: "default"
+    #     credential: "${MAGENTO_US_CREDENTIAL}"
+    #     # Optional outbound budget for this instance. Omit the block to keep the
+    #     # module default (50 rps, burst 100, 8 concurrent). An explicit
+    #     # all-zero block means unlimited.
+    #     limits:
+    #       requests_per_second: 50
+    #       burst: 100
+    #       max_concurrent: 8
   cloudflare:
     enabled: false
-    instances:
-      - id: "zone-us"
-        account_id: "${CLOUDFLARE_ACCOUNT_ID}"
-        zone_id: "${CLOUDFLARE_ZONE_ID}"
-        credential: "${CLOUDFLARE_API_TOKEN}"
+    # instances:
+    #   - id: "zone-us"
+    #     account_id: "${CLOUDFLARE_ACCOUNT_ID}"
+    #     zone_id: "${CLOUDFLARE_ZONE_ID}"
+    #     credential: "${CLOUDFLARE_API_TOKEN}"
   ga4:
     enabled: false
-    instances:
-      - id: "giztop"
-        property_id: "354542598"
-        credential: "${GA4_SERVICE_ACCOUNT}"
+    # instances:
+    #   - id: "giztop"
+    #     property_id: "123456789"
+    #     credential: "${GA4_SERVICE_ACCOUNT}"
+
+# bindings are intentionally absent: a binding requires all three modules to be
+# enabled, exactly one Cloudflare instance, and exactly one GA4 instance. See
+# docs/configuration.md ("bindings") for the working shape and the current
+# multi-instance limitation.

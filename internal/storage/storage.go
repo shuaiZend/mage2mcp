@@ -130,7 +130,10 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("storage: read %s: %w", name, err)
 		}
-		tx, err := s.pool.Begin(ctx)
+		// Begin on the connection that holds the advisory lock. Taking a second
+		// connection from the pool here would self-deadlock when the pool is
+		// configured with a single connection.
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("storage: begin %s: %w", name, err)
 		}

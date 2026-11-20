@@ -85,6 +85,10 @@ func run() error {
 		auditor = storage.NewAuditRecorder(store)
 		confirmStore = storage.NewConfirmStore(store)
 		importQueue = storage.NewJobQueue(store)
+		// Money-moving tools fail closed without the durable operation ledger:
+		// an unguarded capture, refund or order placement is worse than a
+		// disabled tool.
+		magento.ConfigureOperations(storage.NewOperationLedger(store))
 		logger.Info("durable audit and confirmations enabled", "store", "postgresql")
 	} else {
 		logger.Warn("database.url is not set: audit is in memory and lost on restart")
@@ -98,19 +102,27 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	policy, err := rbac.New([]rbac.Grant{
-		{Role: "viewer", Tool: "*", Scope: rbac.ScopeRead, Effect: rbac.EffectAllow},
-		{Role: "analyst", Tool: "*", Scope: rbac.ScopeRead, Effect: rbac.EffectAllow},
-	})
+	policy, err := rbac.DefaultPolicy()
 	if err != nil {
 		return err
 	}
+	// The operation ledger is the authority on business outcome; the job queue
+	// stays the durable record of execution. Wiring it here means every write
+	// tool is gated at the one middleware choke point.
+	var ledger *storage.OperationLedger
+	if store != nil {
+		ledger = storage.NewOperationLedger(store)
+	}
 	mcpServer, err := server.NewMCP(server.Options{
-		Version:   version,
-		Logger:    logger,
-		Registry:  reg,
-		Authorize: authorizeFunc(cfg, policy),
-		Confirm:   confirmSvc,
+		Version:           version,
+		Logger:            logger,
+		Registry:          reg,
+		Authorize:         authorizeFunc(cfg, policy, logger),
+		Confirm:           confirmSvc,
+		Instances:         configuredInstances(cfg),
+		BeginOperation:    operationBegin(ledger),
+		FinishOperation:   operationFinish(ledger),
+		SelfLedgeredTools: selfLedgeredTools(),
 		Audit: func(ctx context.Context, tool, instance, phase, state, code string) {
 			id, _ := auth.IdentityFromContext(ctx)
 			subject := "anonymous"
@@ -118,9 +130,10 @@ func run() error {
 			if id != nil {
 				subject, class = id.Subject, id.Class
 			}
+			// SEC-06: a denied call is a denial, not an allow.
 			_ = auditor.Record(ctx, audit.Event{
 				Subject: subject, IdentityClass: class, Tool: tool, Instance: instance,
-				Decision: "allow", Phase: phase, State: state, ErrorCode: code,
+				Decision: auditDecision(phase, state), Phase: phase, State: state, ErrorCode: code,
 			})
 		},
 	})
@@ -203,9 +216,15 @@ func configuredInstances(cfg config.Config) map[string][]string {
 		}
 		out[module] = ids
 	}
-	add("magento", cfg.Modules.Magento.Instances)
-	add("cloudflare", cfg.Modules.Cloudflare.Instances)
-	add("ga4", cfg.Modules.GA4.Instances)
+	if cfg.Modules.Magento.Enabled {
+		add("magento", cfg.Modules.Magento.Instances)
+	}
+	if cfg.Modules.Cloudflare.Enabled {
+		add("cloudflare", cfg.Modules.Cloudflare.Instances)
+	}
+	if cfg.Modules.GA4.Enabled {
+		add("ga4", cfg.Modules.GA4.Instances)
+	}
 	return out
 }
 
@@ -223,17 +242,26 @@ func ga4TokenSource(credential string) (ga4.TokenSource, error) {
 }
 
 // authorizeFunc returns nil when authentication is disabled (loopback-only
-// development), so the dev quickstart can call tools without an identity.
-func authorizeFunc(cfg config.Config, policy *rbac.Policy) func(context.Context, string, string) error {
+// development), so the dev quickstart can call tools without an identity. It
+// logs a prominent warning in that case: a silent fail-open is not acceptable.
+//
+// The required scope is supplied by the MCP server from the tool's declared
+// registry permission and is passed straight through — it is never defaulted
+// here, so a viewer grant cannot authorize a write.
+func authorizeFunc(cfg config.Config, policy *rbac.Policy, logger *slog.Logger) func(context.Context, string, string, string) error {
 	if !cfg.Auth.Enabled {
+		if logger != nil {
+			logger.Warn("AUTHORIZATION DISABLED: authentication is off, so every tool call is allowed without a role check; never expose this listener",
+				"auth_enabled", false, "authorization_enabled", false)
+		}
 		return nil
 	}
-	return func(ctx context.Context, tool, instance string) error {
+	return func(ctx context.Context, tool, instance, requiredScope string) error {
 		id, ok := auth.IdentityFromContext(ctx)
 		if !ok {
 			return errs.New(errs.CodeUnauthenticated, "no verified identity")
 		}
-		return policy.Authorize(id, tool, instance, rbac.ScopeRead)
+		return policy.Authorize(id, tool, instance, requiredScope)
 	}
 }
 
@@ -246,7 +274,29 @@ type importWiring struct {
 	Batches magento.ImportBatchReader
 }
 
+// magentoLimits maps a configured per-instance budget onto the Magento client.
+//
+// A nil configuration keeps the module default: an operator who never mentions
+// limits still gets protection from a retry storm. An explicit `limits:` block
+// is honoured verbatim, including an all-zero block, which means unlimited —
+// that is how a deployment opts out.
+func magentoLimits(l *config.InstanceLimits) magento.Limits {
+	if l == nil {
+		return magento.DefaultLimits()
+	}
+	return magento.Limits{
+		RequestsPerSecond: l.RequestsPerSecond,
+		Burst:             l.Burst,
+		MaxConcurrent:     l.MaxConcurrent,
+	}
+}
+
 func registerModules(cfg config.Config, reg *registry.Registry, wirings ...importWiring) error {
+	// The registry is the single write gate: with tools.writes false, Register
+	// rejects every non-read tool, so a module that forgets its own check cannot
+	// leak a write. The import tools are split because their read-only status
+	// tools are useful without writes.
+	reg.SetWritesEnabled(cfg.Tools.Writes)
 	var importQueue magento.ImportQueue
 	var importBatches magento.ImportBatchReader
 	if len(wirings) > 0 {
@@ -260,6 +310,7 @@ func registerModules(cfg config.Config, reg *registry.Registry, wirings ...impor
 		for _, inst := range cfg.Modules.Magento.Instances {
 			settings = append(settings, magento.InstanceSettings{
 				ID: inst.ID, Endpoint: inst.Endpoint, StoreCode: inst.StoreCode, Credential: inst.Credential,
+				Limits: magentoLimits(inst.Limits),
 			})
 		}
 		resolver, err := magento.NewResolverFromSettings(settings)
@@ -275,7 +326,11 @@ func registerModules(cfg config.Config, reg *registry.Registry, wirings ...impor
 			}
 		}
 		if importQueue != nil {
-			if err := magento.RegisterImportJobs(reg, resolver, importQueue, importBatches); err != nil {
+			if cfg.Tools.Writes {
+				if err := magento.RegisterImportJobs(reg, resolver, importQueue, importBatches); err != nil {
+					return err
+				}
+			} else if err := magento.RegisterImportReadTools(reg, resolver, importQueue, importBatches); err != nil {
 				return err
 			}
 		}
@@ -446,4 +501,93 @@ func isLoopbackListen(listen string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// auditDecision maps a middleware phase/state onto the audit_events decision
+// vocabulary. Before this, every row was written as "allow", so a denied call
+// read as an authorized one.
+func auditDecision(phase, state string) string {
+	if phase != "outcome" {
+		// An intent row records that a call was attempted, not that it was
+		// allowed: the decision has not been made yet.
+		return storage.DecisionPending
+	}
+	switch state {
+	case "denied":
+		return "deny"
+	case "succeeded":
+		return "allow"
+	case "failed", "outcome_unknown":
+		return "error"
+	}
+	return "error"
+}
+
+// selfLedgeredTools lists the write tools that already drive their own operation
+// through internal/magento/operations.go. They carry richer entity and money
+// detail than the middleware can derive, so the middleware must not open a
+// second operation for them. Every other write tool is gated at the middleware.
+// This list should shrink to nothing as those tools move onto the gate.
+func selfLedgeredTools() map[string]bool {
+	return map[string]bool{
+		"magento.invoice.create":    true,
+		"magento.invoice.capture":   true,
+		"magento.creditmemo.create": true,
+		"magento.order.create":      true,
+		"magento.order.cancel":      true,
+	}
+}
+
+// operationBegin adapts the storage ledger to the middleware's gate. A nil
+// ledger disables the gate (development without a database).
+func operationBegin(ledger *storage.OperationLedger) func(context.Context, server.OperationRequest) (server.OperationTicket, error) {
+	if ledger == nil {
+		return nil
+	}
+	return func(ctx context.Context, req server.OperationRequest) (server.OperationTicket, error) {
+		ticket, err := ledger.BeginCall(ctx, storage.GateRequest{
+			Operation:      req.Tool,
+			InstanceID:     req.Instance,
+			Subject:        req.Subject,
+			ArgsHash:       req.ArgsHash,
+			IdempotencyKey: req.IdempotencyKey,
+			ConfirmationID: req.ConfirmationID,
+			EntityType:     req.EntityType,
+			EntityID:       req.EntityID,
+			AmountMinor:    req.AmountMinor,
+			Currency:       req.Currency,
+		})
+		return server.OperationTicket{
+			OperationID:  ticket.OperationID,
+			Fence:        ticket.Fence,
+			Decision:     string(ticket.Decision),
+			Attempt:      ticket.Attempt,
+			Replayed:     ticket.Replayed,
+			ReplayResult: ticket.ReplayResult,
+			UpstreamRef:  ticket.UpstreamRef,
+		}, err
+	}
+}
+
+// operationFinish adapts the middleware's outcome onto the ledger transition.
+func operationFinish(ledger *storage.OperationLedger) func(context.Context, server.OperationTicket, server.OperationOutcome) error {
+	if ledger == nil {
+		return nil
+	}
+	return func(ctx context.Context, ticket server.OperationTicket, out server.OperationOutcome) error {
+		return ledger.FinishCall(ctx,
+			storage.GateTicket{
+				OperationID: ticket.OperationID,
+				Fence:       ticket.Fence,
+				Attempt:     ticket.Attempt,
+			},
+			storage.GateOutcome{
+				State:       out.State,
+				ErrorCode:   out.ErrorCode,
+				UpstreamRef: out.UpstreamRef,
+				Result:      out.Result,
+				RetryAfter:  out.RetryAfter,
+				Audit:       out.Audit,
+			})
+	}
 }

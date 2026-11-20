@@ -84,4 +84,65 @@ func TestOrderGeographyTruncation(t *testing.T) {
 	if !geo.Truncated || geo.OrdersScanned != 2 || geo.TotalAvailable != 10 {
 		t.Fatalf("geo = %+v", geo)
 	}
+	// The cap excluded 8 orders and the response must say so.
+	if geo.UnscannedOrders != 8 {
+		t.Fatalf("unscanned_orders = %d, want 8", geo.UnscannedOrders)
+	}
+	if geo.DuplicatesSkipped != 0 {
+		t.Fatalf("duplicates_skipped = %d, want 0", geo.DuplicatesSkipped)
+	}
+}
+
+// TestOrderGeographyCompleteScanReportsNoRemainder pins the other side of the
+// completeness contract: a scan that covered the window reports zero unscanned.
+func TestOrderGeographyCompleteScanReportsNoRemainder(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":3,"items":[
+			{"entity_id":1,"grand_total":10,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"US"}}}]}},
+			{"entity_id":2,"grand_total":20,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"DE"}}}]}},
+			{"entity_id":3,"grand_total":30,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"FR"}}}]}}
+		]}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	from, _ := time.Parse("2006-01-02", "2026-10-21")
+	to, _ := time.Parse("2006-01-02", "2026-11-20")
+	geo, err := svc.OrderGeography(context.Background(), from, to, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if geo.Truncated || geo.UnscannedOrders != 0 {
+		t.Fatalf("truncated = %v unscanned = %d, want a complete scan", geo.Truncated, geo.UnscannedOrders)
+	}
+	if geo.OrdersScanned != 3 || geo.TotalAvailable != 3 || geo.TotalRevenue != 60 {
+		t.Fatalf("geo = %+v", geo)
+	}
+}
+
+// TestOrderGeographyDropsDuplicateOrders proves an order repeated by a shifted
+// page boundary is counted once and the repeat is reported.
+func TestOrderGeographyDropsDuplicateOrders(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":2,"items":[
+			{"entity_id":1,"grand_total":10,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"US"}}}]}},
+			{"entity_id":1,"grand_total":10,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"US"}}}]}},
+			{"entity_id":2,"grand_total":20,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"DE"}}}]}}
+		]}`))
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	from, _ := time.Parse("2006-01-02", "2026-10-21")
+	to, _ := time.Parse("2006-01-02", "2026-11-20")
+	geo, err := svc.OrderGeography(context.Background(), from, to, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if geo.OrdersScanned != 2 || geo.TotalRevenue != 30 {
+		t.Fatalf("geo = %+v, want 2 orders and revenue 30", geo)
+	}
+	if geo.DuplicatesSkipped != 1 {
+		t.Fatalf("duplicates_skipped = %d, want 1", geo.DuplicatesSkipped)
+	}
 }

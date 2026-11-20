@@ -127,6 +127,13 @@ func NewVerifier(cfg Config, logger *slog.Logger) (*Verifier, error) {
 
 // Verify checks the token's algorithm, signature, and claims and returns the
 // caller identity. Every failure is an *errs.Error with CodeUnauthenticated.
+//
+// Role provenance: the identity's roles are the token's `roles` claim verbatim,
+// so the IdP is the role authority. The gateway keeps no subject-to-role map of
+// its own; the integrity of that claim is therefore part of the trust boundary.
+// An IdP that lets a user choose the value of `roles` lets that user choose
+// their gateway role. Authorization is default-deny, so a role the policy does
+// not name grants nothing (see internal/security/rbac).
 func (v *Verifier) Verify(ctx context.Context, rawToken string) (*auth.Identity, error) {
 	if rawToken == "" {
 		return nil, reject(reasonMalformedToken)
@@ -179,6 +186,10 @@ func (v *Verifier) Verify(ctx context.Context, rawToken string) (*auth.Identity,
 }
 
 // tokenClaims is the verified claim set; unknown claims are ignored.
+//
+// Roles is the role-provenance boundary: it is read from the verified token and
+// passed through unchanged. Do not add a subject-to-role mapping here without
+// also changing the documented trust boundary.
 type tokenClaims struct {
 	jwtlib.RegisteredClaims
 	Roles      json.RawMessage `json:"roles"`

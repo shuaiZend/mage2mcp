@@ -10,15 +10,31 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
 
 const (
 	maxOrderItems    = 50
 	maxAddressStreet = 4
 	maxAddressBytes  = 255
+
+	// orderReconcileWindow bounds the order lookup used to resolve an ambiguous
+	// place-order outcome. It is deliberately short: it only has to cover the
+	// seconds between the cart being placed and the reconciliation read.
+	orderReconcileWindow = 15 * time.Minute
+	// reconcileReads is how many times an ambiguous outcome is re-read before an
+	// empty result is treated as proof that nothing was placed. One empty read is
+	// not evidence: a lagging replica would turn it into a duplicate order.
+	reconcileReads = 3
+	// reconciledNotApplied is the ledger error code for an operation that an
+	// ambiguous failure left in doubt and a reconciliation read proved did not
+	// happen. It is not in the taxonomy's ambiguous set, so the ledger accepts it
+	// as a definite failure.
+	reconciledNotApplied = "reconciled_not_applied"
 )
 
 // OrderAddressInput is one billing or shipping address for order creation.
@@ -49,34 +65,87 @@ type CreateOrderInput struct {
 	ShippingCarrierCode string
 	ShippingMethodCode  string
 	PaymentMethod       string
+
+	// IdempotencyKey makes the call replayable: repeating it with the same
+	// arguments returns the recorded order instead of placing a second one.
+	IdempotencyKey string
+	// Instance is the configured instance id recorded in the operation ledger.
+	Instance string
+}
+
+// CreateOrderResult is the recorded outcome of one order placement.
+type CreateOrderResult struct {
+	Order       Order  `json:"order"`
+	OperationID string `json:"operation_id,omitempty"`
+	Replayed    bool   `json:"replayed,omitempty"`
+	// Reconciled reports that an ambiguous place-order failure was resolved by
+	// reading the customer's orders back rather than by trusting the response.
+	Reconciled bool `json:"reconciled,omitempty"`
 }
 
 // CreateOrder places an order through Magento's admin cart flow:
 // customer cart -> items -> shipping information -> order.
 //
 // Totals are always computed by Magento; the tool never accepts client-supplied
-// amounts. Any failure leaves a cart behind (Magento has no rollback for the
-// cart API); the error names the stage so the operator can clean up.
-func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order, error) {
+// amounts. The operation is recorded in the ledger before the cart is created,
+// so a retry with the same idempotency key replays the recorded order instead of
+// placing a second one.
+//
+// An ambiguous place-order outcome (timeout, transport failure, 5xx) does not
+// delete the cart — the cart id is the only handle for reconciliation — and it
+// is resolved by reading the customer's orders back (customer + created_at
+// window + cart total): exactly one match is the order, no match proves the
+// order was not placed, and several matches are recorded as unknown for a human.
+func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*CreateOrderResult, error) {
 	if err := s.requireOrderService(); err != nil {
 		return nil, err
 	}
 	if err := validateCreateOrder(in); err != nil {
 		return nil, err
 	}
+	if in.IdempotencyKey != "" && len(in.IdempotencyKey) > 256 {
+		return nil, invalidf("idempotency_key must be at most 256 characters")
+	}
+	ops, err := configuredOperations()
+	if err != nil {
+		return nil, err
+	}
+	run, begun, err := ops.Begin(ctx, OperationRequest{
+		Tool: "magento.order.create", Instance: s.operationInstanceID(in.Instance),
+		Subject: callerSubject(ctx), IdempotencyKey: in.IdempotencyKey,
+		EntityType: storage.EntityOrder, EntityID: strconv.Itoa(in.CustomerID),
+		// Magento computes the order total; the cart total is read only for
+		// reconciliation, so the intent carries no amount.
+		Args: orderCreateArgsFrom(in),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if begun != nil && begun.Decision == storage.DecisionReplay {
+		var recorded CreateOrderResult
+		if err := Replay(begun, &recorded); err != nil {
+			return nil, err
+		}
+		recorded.Replayed = true
+		return &recorded, nil
+	}
+
 	raw, err := s.client.do(ctx, http.MethodPost, "/customers/"+strconv.Itoa(in.CustomerID)+"/carts", nil, nil)
 	if err != nil {
+		_ = run.Fail(ctx, string(errs.CodeOf(err)))
 		return nil, writeStageError("cart", nil, "", err)
 	}
 	var cartID int
 	if err := json.Unmarshal(raw, &cartID); err != nil {
-		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable cart id").WithCause(err)
+		_ = run.Unknown(ctx, string(errs.CodeUpstreamUnavailable))
+		return nil, operationUnknownError(run.ID(), "order placement", string(errs.CodeUpstreamUnavailable))
 	}
 	for _, item := range in.Items {
 		body := cartItemBody{CartItem: cartItem{
 			SKU: item.SKU, Qty: item.Qty, QuoteID: strconv.Itoa(cartID),
 		}}
 		if _, err := s.client.do(ctx, http.MethodPost, "/carts/"+strconv.Itoa(cartID)+"/items", nil, body); err != nil {
+			_ = run.Fail(ctx, string(errs.CodeOf(err)))
 			return nil, writeStageError("cart_items", nil, item.SKU, err)
 		}
 	}
@@ -87,31 +156,216 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order,
 		ShippingMethodCode:  in.ShippingMethodCode,
 	}}
 	if _, err := s.client.do(ctx, http.MethodPost, "/carts/"+strconv.Itoa(cartID)+"/shipping-information", nil, info); err != nil {
+		_ = run.Fail(ctx, string(errs.CodeOf(err)))
 		return nil, writeStageError("shipping_information", nil, "", err)
 	}
 	orderBody := placeOrderBody{PaymentMethod: paymentMethod{Method: in.PaymentMethod}}
-	raw, err = s.client.do(ctx, http.MethodPost, "/carts/"+strconv.Itoa(cartID)+"/order", nil, orderBody)
-	if err != nil {
+	raw, placeErr := s.client.do(ctx, http.MethodPost, "/carts/"+strconv.Itoa(cartID)+"/order", nil, orderBody)
+	switch classifyOperationError(placeErr) {
+	case operationNotApplied:
+		_ = run.Fail(ctx, string(errs.CodeOf(placeErr)))
 		cleanup := s.cleanupCart(ctx, cartID)
-		if errs.CodeOf(err) == errs.CodeNotFound {
+		if errs.CodeOf(placeErr) == errs.CodeNotFound {
 			return nil, errs.New(errs.CodeUnsupportedCapability,
 				"this Magento instance does not expose the cart place-order route; order creation is unsupported here").
 				WithDetail("stage", "place_order").
 				WithDetail("cart_id", strconv.Itoa(cartID)).
 				WithDetail("cart_cleanup", cleanup)
 		}
-		stageErr := writeStageError("place_order", nil, "", err)
+		stageErr := writeStageError("place_order", nil, "", placeErr)
 		var taxonomy *errs.Error
 		if errors.As(stageErr, &taxonomy) {
 			taxonomy.Details["cart_cleanup"] = cleanup
 		}
 		return nil, stageErr
+	case operationAmbiguous:
+		// The cart is deliberately kept: it is the only handle for reconciliation.
+		return s.reconcilePlacedOrder(ctx, run, in, cartID, placeErr)
 	}
 	var order Order
 	if err := json.Unmarshal(raw, &order); err != nil {
-		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order payload").WithCause(err)
+		_ = run.Unknown(ctx, string(errs.CodeUpstreamUnavailable))
+		return nil, operationUnknownError(run.ID(), "order placement", string(errs.CodeUpstreamUnavailable))
 	}
-	return &order, nil
+	result := &CreateOrderResult{Order: order, OperationID: run.ID()}
+	if err := run.Succeed(ctx, orderRef(order), result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// reconcilePlacedOrder resolves an ambiguous place-order outcome by reading the
+// customer's recent orders back. It never deletes the cart and never retries the
+// placement: the ledger records exactly one of succeeded / failed / unknown.
+//
+// The match is exact, not statistical: a candidate order is ours only when its
+// quote_id equals the cart this operation created. A matching total is not
+// evidence — two orders for the same customer can share a total — so a candidate
+// that cannot be tied to our cart is reported as UNKNOWN with its id, never as a
+// success. An empty read is repeated a bounded number of times; only agreeing
+// empty reads are treated as proof that nothing was placed.
+func (s *Service) reconcilePlacedOrder(ctx context.Context, run *OperationRun, in CreateOrderInput, cartID int, placeErr error) (*CreateOrderResult, error) {
+	upstreamCode := string(errs.CodeOf(placeErr))
+	unknown := func(reason string, details ...string) (*CreateOrderResult, error) {
+		_ = run.Unknown(ctx, upstreamCode)
+		e := operationUnknownError(run.ID(), "order placement", upstreamCode).
+			WithDetail("cart_id", strconv.Itoa(cartID)).
+			WithDetail("reconcile", reason)
+		for i := 0; i+1 < len(details); i += 2 {
+			e = e.WithDetail(details[i], details[i+1])
+		}
+		return nil, e
+	}
+	since := time.Now().UTC().Add(-orderReconcileWindow)
+	var candidates []orderCandidate
+	for attempt := 1; attempt <= reconcileReads; attempt++ {
+		if attempt > 1 {
+			if err := sleepContext(ctx, reconcileBackoff); err != nil {
+				return unknown("the reconciliation read was canceled")
+			}
+		}
+		found, err := s.searchOrderCandidates(ctx, in.CustomerID, since)
+		if err != nil {
+			return unknown("the order search failed")
+		}
+		candidates = found
+		if len(candidates) == 0 {
+			continue
+		}
+		break
+	}
+	if len(candidates) == 0 {
+		// reconcileReads empty reads agree: nothing was placed for this customer
+		// in the window, so the ledger can record a definite failure.
+		if err := run.Fail(ctx, reconciledNotApplied); err != nil {
+			return nil, err
+		}
+		failure := errs.New(errs.CodeOf(placeErr),
+			"the order was not placed: repeated reconciliation reads found no order for the customer, so it is safe to retry with a new idempotency key").
+			WithDetail("operation_id", run.ID()).
+			WithDetail("cart_id", strconv.Itoa(cartID)).
+			WithDetail("upstream_code", upstreamCode)
+		failure.Retryable = true
+		return nil, failure
+	}
+	exact := make([]orderCandidate, 0, 1)
+	for _, candidate := range candidates {
+		if candidate.QuoteID == cartID {
+			exact = append(exact, candidate)
+		}
+	}
+	if len(exact) == 1 {
+		order, err := s.GetOrder(ctx, exact[0].EntityID)
+		if err != nil {
+			return unknown("the matched order could not be read back")
+		}
+		result := &CreateOrderResult{Order: *order, OperationID: run.ID(), Reconciled: true}
+		if err := run.Succeed(ctx, orderRef(*order), result); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		ids = append(ids, strconv.Itoa(candidate.EntityID))
+	}
+	if len(exact) > 1 {
+		return unknown("several orders carry this cart's quote_id; a human must choose",
+			"candidate_order_ids", strings.Join(ids, ","))
+	}
+	return unknown("candidate orders exist but none carries this cart's quote_id; verify before acting",
+		"candidate_order_ids", strings.Join(ids, ","))
+}
+
+// orderCandidate is the reconciliation projection of one order. quote_id is the
+// cart that produced the order: it is the only exact link between a placement and
+// an order.
+type orderCandidate struct {
+	EntityID    int     `json:"entity_id"`
+	IncrementID string  `json:"increment_id"`
+	QuoteID     int     `json:"quote_id"`
+	GrandTotal  float64 `json:"grand_total"`
+	Currency    string  `json:"order_currency_code"`
+	CreatedAt   string  `json:"created_at"`
+	Status      string  `json:"status"`
+}
+
+// orderReconcileFields requests quote_id explicitly: without it the search
+// projection has no cart handle and no order can be tied to this operation.
+const orderReconcileFields = "items[entity_id,increment_id,quote_id,grand_total,order_currency_code,created_at,status]"
+
+// searchOrderCandidates lists the customer's orders created since the given time,
+// with the cart link.
+func (s *Service) searchOrderCandidates(ctx context.Context, customerID int, since time.Time) ([]orderCandidate, error) {
+	query, err := orderSearchCriteria(OrderQuery{
+		CustomerID: customerID, CreatedFrom: since.Format(time.RFC3339), Limit: 20,
+	})
+	if err != nil {
+		return nil, err
+	}
+	query.Set("fields", orderReconcileFields)
+	raw, err := s.client.do(ctx, http.MethodGet, "/orders", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Items []orderCandidate `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order search payload").WithCause(err)
+	}
+	if payload.Items == nil {
+		payload.Items = []orderCandidate{}
+	}
+	return payload.Items, nil
+}
+
+// sleepContext waits for d or until the context is done.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// reconcileBackoff is the pause between reconciliation reads. It is a variable
+// so a test can shrink it without sleeping for seconds.
+var reconcileBackoff = 250 * time.Millisecond
+
+// orderRef is the ledger's upstream reference for an order.
+func orderRef(order Order) string {
+	if order.IncrementID != "" {
+		return "order:" + order.IncrementID
+	}
+	return "order:" + strconv.Itoa(order.EntityID)
+}
+
+// orderCreateArgs is the canonical argument set hashed for replay detection.
+type orderCreateArgs struct {
+	CustomerID          int               `json:"customer_id"`
+	StoreID             int               `json:"store_id"`
+	Items               []OrderItemInput  `json:"items"`
+	BillingAddress      OrderAddressInput `json:"billing_address"`
+	ShippingAddress     OrderAddressInput `json:"shipping_address"`
+	ShippingCarrierCode string            `json:"shipping_carrier_code"`
+	ShippingMethodCode  string            `json:"shipping_method_code"`
+	PaymentMethod       string            `json:"payment_method"`
+}
+
+func orderCreateArgsFrom(in CreateOrderInput) orderCreateArgs {
+	return orderCreateArgs{
+		CustomerID: in.CustomerID, StoreID: in.StoreID, Items: in.Items,
+		BillingAddress: in.BillingAddress, ShippingAddress: in.ShippingAddress,
+		ShippingCarrierCode: in.ShippingCarrierCode, ShippingMethodCode: in.ShippingMethodCode,
+		PaymentMethod: in.PaymentMethod,
+	}
 }
 
 type cartItemBody struct {
@@ -164,6 +418,17 @@ func validateCreateOrder(in CreateOrderInput) error {
 	}
 	if in.StoreID < 0 {
 		return invalidf("store_id must not be negative")
+	}
+	if in.StoreID > 0 {
+		// The cart flow derives the store from the request path
+		// (/rest/{store_code}/V1/...); the cart and order service contracts take
+		// no store id, so accepting one would silently place the order in the
+		// instance's store while the caller believed otherwise.
+		return errs.New(errs.CodeUnsupportedCapability,
+			"store_id cannot be honoured: the store is selected by the instance's store_code").
+			WithDetail("store_id", strconv.Itoa(in.StoreID)).
+			WithDetail("field", "store_id").
+			WithDetail("use_instead", "select an instance whose store_code is the intended store")
 	}
 	if len(in.Items) == 0 {
 		return invalidf("at least one item is required")
