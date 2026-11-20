@@ -4,10 +4,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/shuaiZend/mage2mcp/internal/security/audit"
+	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 )
 
 // The approval CLI had no tests at all. These pin the contract that matters for
@@ -100,4 +104,50 @@ func TestAdminReportsMissingConfig(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error for a missing config file")
 	}
+}
+
+// SEC-04: an approval used to leave no audit trail beyond a hash on the
+// confirmation row. Every approval now records who approved what, on which
+// instance and at which scope.
+func TestRecordApprovalWritesAuditRow(t *testing.T) {
+	fake := &fakeAuditor{}
+	request := &confirm.Request{
+		ID: "conf-1", Tool: "magento.product.delete", Instance: "store-us",
+		Scope: "write", Requester: "agent-a",
+	}
+	if err := recordApproval(context.Background(), fake, request, "reviewer@example.com"); err != nil {
+		t.Fatalf("recordApproval: %v", err)
+	}
+	if fake.calls != 1 {
+		t.Fatalf("audit calls = %d, want 1", fake.calls)
+	}
+	got := fake.last
+	if got.Subject != "reviewer@example.com" || got.Tool != "magento.product.delete" ||
+		got.Instance != "store-us" || got.Scope != "write" {
+		t.Fatalf("event = %+v, want the approval recorded with its tool and instance", got)
+	}
+	if got.Decision != "approve" || got.Phase != "approval" || got.State != "approved" {
+		t.Fatalf("event = %+v, want decision/phase/state set", got)
+	}
+}
+
+// A nil sink or request is not an error: the approval itself already succeeded.
+func TestRecordApprovalToleratesMissingSink(t *testing.T) {
+	if err := recordApproval(context.Background(), nil, &confirm.Request{}, "x"); err != nil {
+		t.Fatalf("recordApproval with no sink: %v", err)
+	}
+	if err := recordApproval(context.Background(), &fakeAuditor{}, nil, "x"); err != nil {
+		t.Fatalf("recordApproval with no request: %v", err)
+	}
+}
+
+type fakeAuditor struct {
+	calls int
+	last  audit.Event
+}
+
+func (f *fakeAuditor) Record(_ context.Context, e audit.Event) error {
+	f.calls++
+	f.last = e
+	return nil
 }

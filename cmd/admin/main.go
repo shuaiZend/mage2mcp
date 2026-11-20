@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
+	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
@@ -92,12 +93,66 @@ func run(args []string, stdout, stderr io.Writer) error {
 		// until when. WritePending renders a bounded, sanitised argument summary.
 		return confirm.WritePending(stdout, requests)
 	case "approve":
-		if err := svc.Approve(ctx, flags.Arg(1), as); err != nil {
+		id := flags.Arg(1)
+		request, err := findPending(ctx, svc, id)
+		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "approved %s by %s\n", flags.Arg(1), as)
+		if err := svc.Approve(ctx, id, as); err != nil {
+			return err
+		}
+		// SEC-04: an approval used to leave no audit trail at all — only a hash on
+		// the confirmation row. Record who approved what, on which instance.
+		if err := recordApproval(ctx, storage.NewAuditRecorder(store), request, as); err != nil {
+			return fmt.Errorf("approved, but the audit row could not be written: %w", err)
+		}
+		fmt.Fprintf(stdout, "approved %s by %s\n", id, as)
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
+}
+
+// findPending returns the pending confirmation with the given id.
+//
+// Looking it up first means an unknown or already-resolved id fails with a clear
+// message instead of a storage error, and gives the audit row the tool and instance
+// it needs.
+func findPending(ctx context.Context, svc *confirm.Service, id string) (*confirm.Request, error) {
+	requests, err := svc.Pending(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, request := range requests {
+		if request.ID == id {
+			return request, nil
+		}
+	}
+	return nil, fmt.Errorf("no pending confirmation with id %s", id)
+}
+
+// approvalAuditor is the audit sink an approval writes to.
+type approvalAuditor interface {
+	Record(ctx context.Context, e audit.Event) error
+}
+
+// recordApproval writes the audit row for one approval.
+//
+// The approver identity is still whatever the operator typed (SEC-04 is only
+// partially closed: the identity is not authenticated), but the decision is now
+// recorded with the tool, instance and scope it applied to.
+func recordApproval(ctx context.Context, auditor approvalAuditor, request *confirm.Request, approver string) error {
+	if auditor == nil || request == nil {
+		return nil
+	}
+	return auditor.Record(ctx, audit.Event{
+		Subject:    approver,
+		Tool:       request.Tool,
+		Instance:   request.Instance,
+		Scope:      request.Scope,
+		Decision:   "approve",
+		Phase:      "approval",
+		State:      "approved",
+		OccurredAt: time.Now().UTC(),
+	})
 }

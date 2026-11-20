@@ -147,7 +147,7 @@ Each is real, was verified, and is **not** fixed in this release.
 
 | ID | Sev | Limitation | Workaround / risk |
 |---|---|---|---|
-| SEC-04 | P1 | The approval CLI trusts a self-asserted `-as` approver identity | CLI requires DB access (root-equivalent). Use a single trusted operator host; the approval trail records what the operator claimed, not a verified identity |
+| SEC-04 | P1 | The approver identity is self-asserted | **Partially closed.** Every approval now writes an audit row (approver, tool, instance, scope) and the CLI validates the id before opening the store. What remains needs an identity source the approver holds — Cloudflare Access assertion, mTLS client cert, or an OS user mapped to a subject — because with a shared database and an operator-run binary, a string can never be verified |
 | SEC-10 | P2 | Bounded upstream error text and the request path reach the agent | Only an already-authorized caller sees it; text is control-character stripped and length-bounded |
 | SEC-15 | FIXED | An MCP session is now bound to the subject that created it | A different subject presenting the id gets 404 (not 403, per the anti-probing rule); an untracked id still falls through to the SDK, which rejects ids it does not know |
 | SEC-17 | P3 | Credentials are inline config strings with no redacting type | Protect the config file by permissions; do not dump config into logs or tickets |
