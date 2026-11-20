@@ -90,6 +90,7 @@ magento.product.tier_prices.set
 magento.product.update
 magento.products.bulk_update
 magento.products.get
+magento.sales.analysis
 magento.sales.summary
 magento.shipment.create
 magento.shipment.email

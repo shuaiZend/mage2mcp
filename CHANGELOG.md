@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `magento.sales.analysis` (read): a PII-free business summary of an order window
+  — orders, revenue, AOV, discounts, shipping, tax, guest share, refunds, daily
+  trend, status/payment/store/currency mix, shipping country, and top SKUs.
+
 ## [0.7.5] - 2026-11-20
 
 Patch release: geography date bounds are split into separate filter groups so
