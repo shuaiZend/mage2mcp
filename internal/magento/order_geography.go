@@ -16,7 +16,7 @@ import (
 const (
 	defaultGeographyOrders = 5000
 	maxGeographyOrders     = 10000
-	geographyPageSize      = 200
+	geographyPageSize      = 500
 )
 
 // CountryStat is the PII-free per-country aggregate of an order window.
@@ -64,9 +64,11 @@ func (s *Service) OrderGeography(ctx context.Context, from, to time.Time, maxOrd
 		query.Set("searchCriteria[filter_groups][0][filters][0][field]", "created_at")
 		query.Set("searchCriteria[filter_groups][0][filters][0][value]", from.UTC().Format("2006-01-02 15:04:05"))
 		query.Set("searchCriteria[filter_groups][0][filters][0][condition_type]", "gteq")
-		query.Set("searchCriteria[filter_groups][0][filters][1][field]", "created_at")
-		query.Set("searchCriteria[filter_groups][0][filters][1][value]", to.UTC().Format("2006-01-02 15:04:05"))
-		query.Set("searchCriteria[filter_groups][0][filters][1][condition_type]", "lt")
+		// Magento drops a filter group that contains two conditions on the same
+		// field, so the upper bound lives in its own group (groups are ANDed).
+		query.Set("searchCriteria[filter_groups][1][filters][0][field]", "created_at")
+		query.Set("searchCriteria[filter_groups][1][filters][0][value]", to.UTC().Format("2006-01-02 15:04:05"))
+		query.Set("searchCriteria[filter_groups][1][filters][0][condition_type]", "lt")
 		query.Set("searchCriteria[sortOrders][0][field]", "created_at")
 		query.Set("searchCriteria[sortOrders][0][direction]", "desc")
 		raw, err := s.client.do(ctx, http.MethodGet, "/orders", query, nil)
