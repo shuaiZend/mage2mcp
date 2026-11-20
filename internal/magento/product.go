@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
@@ -149,6 +150,13 @@ type ProductQuery struct {
 // Service is the read-only Magento product service.
 type Service struct {
 	client *Client
+	// media fingerprints dedupe a repeated upload of the same bytes. The cache is
+	// per-service (one per configured instance) and bounded; it is a best-effort
+	// optimisation, so an entry that has gone stale is verified against the live
+	// gallery before it is reused.
+	mediaMu    sync.Mutex
+	mediaByKey map[string]mediaFingerprint
+	mediaOrder []string
 }
 
 // NewService returns a product service backed by client.

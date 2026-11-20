@@ -524,3 +524,79 @@ func TestUpstreamDiagnosticsStayServerSide(t *testing.T) {
 		t.Fatalf("upstream = %q, want the reason kept for the log", e.Upstream)
 	}
 }
+
+// MAG-15: the integration document promised content-hash deduplication. A repeat of
+// the same bytes with the same roles must not create a second gallery entry.
+func TestUploadMediaDeduplicatesByHash(t *testing.T) {
+	posts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/media"):
+			posts++
+			_, _ = io.WriteString(w, `7`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/media"):
+			_, _ = io.WriteString(w, `[{"id":7,"media_type":"image","file":"/m/new.png","types":["image"]}]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	in := MediaUploadInput{
+		Filename: "new.png", MIMEType: "image/png", DataBase64: onePixelPNGBase64,
+		Types: []string{"image"},
+	}
+	first, err := svc.UploadMedia(context.Background(), "SKU-1", in)
+	if err != nil {
+		t.Fatalf("first upload: %v", err)
+	}
+	second, err := svc.UploadMedia(context.Background(), "SKU-1", in)
+	if err != nil {
+		t.Fatalf("second upload: %v", err)
+	}
+	if posts != 1 {
+		t.Fatalf("POSTs = %d, want the repeat skipped by content hash", posts)
+	}
+	if second.ID != first.ID || !second.Deduplicated {
+		t.Fatalf("second = %+v, want the recorded entry marked deduplicated", second)
+	}
+}
+
+// Different bytes must still upload: the hash is over the content, not the name.
+func TestUploadMediaDifferentBytesAreNotDeduplicated(t *testing.T) {
+	posts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/media"):
+			posts++
+			_, _ = io.WriteString(w, fmt.Sprint(10+posts))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/media"):
+			_, _ = io.WriteString(w, `[{"id":11,"media_type":"image","file":"/m/a.png","types":[]}]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	base := MediaUploadInput{Filename: "a.png", MIMEType: "image/png", Types: []string{"image"}}
+	first := base
+	first.DataBase64 = onePixelPNGBase64
+	if _, err := svc.UploadMedia(context.Background(), "SKU-1", first); err != nil {
+		t.Fatalf("first upload: %v", err)
+	}
+	second := base
+	second.DataBase64 = otherPNGBase64
+	if _, err := svc.UploadMedia(context.Background(), "SKU-1", second); err != nil {
+		t.Fatalf("second upload: %v", err)
+	}
+	if posts != 2 {
+		t.Fatalf("POSTs = %d, want 2 for different content", posts)
+	}
+}
+
+// otherPNGBase64 is a different 1x1 PNG, used to prove the hash is over content.
+const otherPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="

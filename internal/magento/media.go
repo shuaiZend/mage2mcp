@@ -4,11 +4,14 @@ package magento
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -25,6 +28,9 @@ type MediaEntry struct {
 	Disabled  bool     `json:"disabled"`
 	Types     []string `json:"types"`
 	File      string   `json:"file"`
+	// Deduplicated reports that this upload matched an existing entry by content
+	// hash, so no new entry was created.
+	Deduplicated bool `json:"deduplicated,omitempty"`
 	// DemotedFrom lists the entries that lost a role to this one. Magento moves
 	// `image` silently, so the caller is told which base image was replaced.
 	DemotedFrom []int `json:"demoted_from,omitempty"`
@@ -90,6 +96,20 @@ func (s *Service) UploadMedia(ctx context.Context, sku string, in MediaUploadInp
 	if err != nil {
 		return nil, err
 	}
+	// Content-hash dedupe: a repeat of the same bytes with the same roles must not
+	// create a second gallery entry. The cache is best-effort, so a hit is confirmed
+	// against the live gallery before it is reused.
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	key := mediaKey(sku, hash, in.Types)
+	if cached, ok := s.fingerprintFor(key); ok {
+		if entry, found := s.galleryEntry(ctx, sku, cached.entryID); found {
+			entry.DemotedFrom = s.clearPreviousRoleHolders(ctx, sku, entry.ID, in.Types, s.gallerySnapshot(ctx, sku))
+			entry.Deduplicated = true
+			return &entry, nil
+		}
+		s.forgetFingerprint(key)
+	}
 	entry := mediaUploadEntry{
 		MediaType: "image",
 		Label:     in.Label,
@@ -139,7 +159,33 @@ func (s *Service) UploadMedia(ctx context.Context, sku string, in MediaUploadInp
 	if galleryErr == nil {
 		created.DemotedFrom = s.clearPreviousRoleHolders(ctx, sku, created.ID, in.Types, gallery)
 	}
+	if created.ID > 0 {
+		s.rememberFingerprint(key, mediaFingerprint{entryID: created.ID, file: created.File})
+	}
 	return &created, nil
+}
+
+// galleryEntry returns one gallery entry by id, reporting whether it still exists.
+func (s *Service) galleryEntry(ctx context.Context, sku string, entryID int) (MediaEntry, bool) {
+	entries, err := s.ProductMedia(ctx, sku)
+	if err != nil {
+		return MediaEntry{}, false
+	}
+	for _, entry := range entries {
+		if entry.ID == entryID {
+			return entry, true
+		}
+	}
+	return MediaEntry{}, false
+}
+
+// gallerySnapshot returns the gallery, or nil when it cannot be read.
+func (s *Service) gallerySnapshot(ctx context.Context, sku string) []MediaEntry {
+	entries, err := s.ProductMedia(ctx, sku)
+	if err != nil {
+		return nil
+	}
+	return entries
 }
 
 // clearPreviousRoleHolders removes the roles just granted to entryID from every
@@ -429,4 +475,56 @@ func (s *Service) MediaTypes(ctx context.Context, attributeSetName string) ([]Me
 		types = []MediaType{}
 	}
 	return types, nil
+}
+
+// mediaFingerprint is the cached identity of an uploaded gallery entry.
+type mediaFingerprint struct {
+	entryID int
+	file    string
+}
+
+// maxMediaFingerprints bounds the dedupe cache. It is an optimisation, not a
+// record: eviction only costs a redundant upload.
+const maxMediaFingerprints = 1024
+
+// mediaKey identifies one upload by content and roles, so a repeat with the same
+// bytes and the same roles can be skipped and a repeat with different roles can be
+// applied to the existing entry.
+func mediaKey(sku, hash string, roles []string) string {
+	sorted := append([]string(nil), roles...)
+	sort.Strings(sorted)
+	return sku + "|" + hash + "|" + strings.Join(sorted, ",")
+}
+
+// fingerprintFor returns the cached entry for this upload, if any.
+func (s *Service) fingerprintFor(key string) (mediaFingerprint, bool) {
+	s.mediaMu.Lock()
+	defer s.mediaMu.Unlock()
+	entry, ok := s.mediaByKey[key]
+	return entry, ok
+}
+
+// rememberFingerprint records a successful upload.
+func (s *Service) rememberFingerprint(key string, entry mediaFingerprint) {
+	s.mediaMu.Lock()
+	defer s.mediaMu.Unlock()
+	if s.mediaByKey == nil {
+		s.mediaByKey = make(map[string]mediaFingerprint, 16)
+	}
+	if _, exists := s.mediaByKey[key]; !exists {
+		s.mediaOrder = append(s.mediaOrder, key)
+		if len(s.mediaOrder) > maxMediaFingerprints {
+			oldest := s.mediaOrder[0]
+			s.mediaOrder = s.mediaOrder[1:]
+			delete(s.mediaByKey, oldest)
+		}
+	}
+	s.mediaByKey[key] = entry
+}
+
+// forgetFingerprint drops a cache entry whose gallery entry is gone.
+func (s *Service) forgetFingerprint(key string) {
+	s.mediaMu.Lock()
+	defer s.mediaMu.Unlock()
+	delete(s.mediaByKey, key)
 }

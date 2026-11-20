@@ -103,7 +103,7 @@ wiring is reverted.
 | MAG-12 | P2 | **FIXED** | `t28` — fractional quantity refused with a typed error | `t28` |
 | MAG-13 | P2 | **FIXED** | `t16` — page-capped reads cannot drive a write | `t25` pass |
 | MAG-14 | P1 | **FIXED** | `t10` — integer entry id accepted; fixtures corrected | `t15` pass |
-| MAG-15 | P2 | PARTIAL | The role move is now explicit: an upload clears `image`/`small_image`/`thumbnail` on the previous holders and returns `demoted_from`. Content hashing and crash-resume remain PLANNED and are documented as such | `TestUploadMediaClearsPreviousRoleHolder` |
+| MAG-15 | P2 | FIXED | Content-hash dedupe implemented (bounded in-process cache, verified against the live gallery), role transfer explicit, and the integration document no longer claims crash resume | `TestUploadMediaDeduplicatesByHash` |
 | MAG-16 | P2 | **FIXED** | Fallback no longer fabricates an option: an unconfirmed write returns `conflict`, an unreadable read-back returns `upstream_unavailable` | `TestCreateProductOptionDoesNotFabricateOnMissingReadBack`, `TestCreateProductOptionReadBackFailureIsNotSuccess` |
 | MAG-17 | P2 | FIXED | Stage errors now carry `upstream_status`, `upstream_message` (bounded) and `store_code`, and a stage failure is never retryable | `TestStageErrorPreservesUpstreamDiagnostics` |
 | MAG-18 | P2 | **FIXED** | `t30` — 5xx on a non-idempotent write is UNKNOWN, not retryable | `t38` |

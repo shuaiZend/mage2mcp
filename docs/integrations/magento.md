@@ -412,10 +412,17 @@ product.
 gateway never hardcodes them. Assigning `image` to a second entry silently moves the role, so the gateway clears the
 role on the previous holder first.
 
-**Deduplication and failure.** Decoded bytes are hashed (SHA-256) and tracked as
-`sku → hash → entryId`; a repeat with the same hash and roles is skipped, a repeat with different roles updates the existing entry.
-Magento creates entry and file together, so a failed upload leaves no partial entry, and a crash between create
-and role assignment resumes from the recorded `entryId`.
+**Deduplication and failure.** Decoded bytes are hashed (SHA-256) and remembered as
+`sku → hash → roles → entryId`. A repeat with the same hash and roles is skipped and returns the recorded entry with
+`deduplicated: true`; a repeat with different roles updates the existing entry instead of creating a second one. The
+record is a **bounded in-process cache**, not a durable one: a hit is verified against the live gallery before it is
+reused, so a stale entry costs a redundant upload rather than a wrong answer, and a restart simply forgets the
+fingerprints. Magento creates entry and file together, so a failed upload leaves no partial entry.
+
+**No crash resume across restarts.** If the process dies between creating an entry and assigning its roles, the entry
+exists without them and a later retry uploads again. Making that resume would need the fingerprint to be durable,
+which this layer deliberately does not depend on; recover by listing the gallery (`magento.product.media`) and setting
+the roles with `magento.product.media.update`.
 
 **No external URL fetching.** It would turn a product write into an SSRF primitive and make the write
 non-reproducible. Any future URL-import tool must reuse the section 2.4 host validation and stay disabled by
