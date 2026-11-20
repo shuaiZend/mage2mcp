@@ -228,9 +228,9 @@ const (
 	// (11184812 = 4*ceil(8 MiB/3)) so the schema, the decoder, and the HTTP body
 	// cap agree; TestImportLimitsAgreeAcrossPackages fails if they drift.
 	importStartSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
-		"format": {"type": "string", "enum": ["csv", "json"]},
-		"data_base64": {"type": "string", "maxLength": 11184812},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id the import runs against."},
+		"format": {"type": "string", "enum": ["csv", "json"], "description": "Payload encoding: csv with a header row, or a json array of objects."},
+		"data_base64": {"type": "string", "maxLength": 11184812, "description": "The import payload, base64 encoded. At most 8 MiB decoded."},
 		"update_existing": {"type": "boolean", "default": false},
 		"idempotency_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$", "description": "Optional deduplication key; a repeated key returns the original job id."},
 		"confirmation_id": {"type": "string", "maxLength": 128}

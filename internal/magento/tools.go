@@ -1615,9 +1615,9 @@ const (
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	mediaGetSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
-		"sku": {"type": "string", "pattern": "` + skuInputPattern + `"},
-		"media_id": {"type": "integer", "minimum": 1}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product whose gallery entry is read."},
+		"media_id": {"type": "integer", "minimum": 1, "description": "Gallery entry id, as returned by product.media or product.media.upload. It is not the file name."}
 	}, "required": ["instance", "sku", "media_id"], "additionalProperties": false}`
 )
 
