@@ -110,6 +110,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newStockStatusBatchTool(lookup), newTierPricesTool(lookup),
 		newInventorySourcesTool(lookup), newInventoryStocksTool(lookup), newMediaGetTool(lookup),
 		newOrderSummaryTool(lookup), newProductOptionsTool(lookup), newMediaTypesTool(lookup),
+		newCustomerGroupsTool(lookup), newTaxClassesTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1713,6 +1714,79 @@ func newMediaTypesTool(lookup serviceLookup) registry.Tool {
 					return nil, mediaTypesOutput{}, err
 				}
 				return nil, mediaTypesOutput{Types: types}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	customerGroupsToolName  = "magento.customer.groups"
+	customerGroupsToolTitle = "List Magento customer groups"
+
+	customerGroupsToolDescription = "Lists customer groups (GET /rest/{store_code}/V1/customerGroups) with id, code, and tax class id, " +
+		"which the customer write tools accept as group_id. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	taxClassesToolName  = "magento.tax.classes"
+	taxClassesToolTitle = "List Magento tax classes"
+
+	taxClassesToolDescription = "Lists tax classes (GET /rest/{store_code}/V1/taxClasses) with id, name, and type, " +
+		"which product writes accept as tax_class_id. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	customerGroupsSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"}
+	}, "required": ["instance"], "additionalProperties": false}`
+)
+
+type customerGroupsOutput struct {
+	Groups []CustomerGroup `json:"groups"`
+}
+
+type taxClassesOutput struct {
+	Classes []TaxClass `json:"classes"`
+}
+
+func newCustomerGroupsTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(customerGroupsToolName, customerGroupsToolTitle, customerGroupsToolDescription)
+	t.Capability = "magento.customer.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(customerGroupsToolName, customerGroupsToolTitle, customerGroupsToolDescription, customerGroupsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
+				Instance string `json:"instance"`
+			}) (*mcp.CallToolResult, customerGroupsOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, customerGroupsOutput{}, err
+				}
+				groups, err := svc.CustomerGroups(ctx)
+				if err != nil {
+					return nil, customerGroupsOutput{}, err
+				}
+				return nil, customerGroupsOutput{Groups: groups}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newTaxClassesTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(taxClassesToolName, taxClassesToolTitle, taxClassesToolDescription)
+	t.Capability = "magento.product.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(taxClassesToolName, taxClassesToolTitle, taxClassesToolDescription, customerGroupsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
+				Instance string `json:"instance"`
+			}) (*mcp.CallToolResult, taxClassesOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, taxClassesOutput{}, err
+				}
+				classes, err := svc.TaxClasses(ctx)
+				if err != nil {
+					return nil, taxClassesOutput{}, err
+				}
+				return nil, taxClassesOutput{Classes: classes}, nil
 			})
 		return nil
 	}

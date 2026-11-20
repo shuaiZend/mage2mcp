@@ -28,6 +28,7 @@ magento.customer.addresses.delete
 magento.customer.addresses.update
 magento.customer.create
 magento.customer.get
+magento.customer.groups
 magento.customer.search
 magento.customer.update
 magento.import.batch
@@ -93,3 +94,4 @@ magento.shipment.create
 magento.shipment.email
 magento.shipment.get
 magento.shipment.list
+magento.tax.classes

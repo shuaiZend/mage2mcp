@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Reference reads: `magento.customer.groups` (customer group ids for customer
+  writes) and `magento.tax.classes` (tax class ids for product writes).
+
 ### Fixed
 
 - Production read-only acceptance against `www.giztop.com` found four endpoint
