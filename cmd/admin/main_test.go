@@ -5,6 +5,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/shuaiZend/mage2mcp/internal/security/auth"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,4 +152,72 @@ func (f *fakeAuditor) Record(_ context.Context, e audit.Event) error {
 	f.calls++
 	f.last = e
 	return nil
+}
+
+// SEC-04: with authentication configured the approver proves who they are with the
+// same verifier the gateway uses, so the recorded identity is not self-asserted.
+func TestResolveApproverUsesTheVerifiedSubject(t *testing.T) {
+	verifier := &fakeVerifier{subject: "reviewer@example.com"}
+	approver, err := resolveApprover(context.Background(), verifier, "token-abc", "", io.Discard)
+	if err != nil {
+		t.Fatalf("resolveApprover: %v", err)
+	}
+	if approver != "reviewer@example.com" {
+		t.Fatalf("approver = %q, want the verified subject", approver)
+	}
+	if verifier.calls != 1 {
+		t.Fatalf("verifier calls = %d, want 1", verifier.calls)
+	}
+}
+
+// A -as that contradicts the token is refused: silently preferring one or the other
+// would let an operator record an identity the token does not support.
+func TestResolveApproverRejectsContradictingFlag(t *testing.T) {
+	verifier := &fakeVerifier{subject: "reviewer@example.com"}
+	if _, err := resolveApprover(context.Background(), verifier, "token-abc", "someone-else", io.Discard); err == nil {
+		t.Fatal("want an error when -as contradicts the verified subject")
+	}
+}
+
+// With authentication enabled an approval without a token is refused rather than
+// falling back to the self-asserted string.
+func TestResolveApproverRequiresTokenWhenAuthEnabled(t *testing.T) {
+	verifier := &fakeVerifier{subject: "reviewer@example.com"}
+	_, err := resolveApprover(context.Background(), verifier, "", "reviewer@example.com", io.Discard)
+	if err == nil {
+		t.Fatal("want an error when auth is enabled and no token is supplied")
+	}
+	if !strings.Contains(err.Error(), "MAGE2MCP_ADMIN_TOKEN") {
+		t.Fatalf("err = %v, want it to name how to supply the token", err)
+	}
+}
+
+// Without an identity provider the identity is still accepted, but the fallback is
+// labelled as unverified instead of being presented as fact.
+func TestResolveApproverWarnsWhenUnverified(t *testing.T) {
+	var warn bytes.Buffer
+	approver, err := resolveApprover(context.Background(), nil, "", "operator", &warn)
+	if err != nil {
+		t.Fatalf("resolveApprover: %v", err)
+	}
+	if approver != "operator" {
+		t.Fatalf("approver = %q", approver)
+	}
+	if !strings.Contains(warn.String(), "not verified") {
+		t.Fatalf("warning = %q, want it to say the identity is unverified", warn.String())
+	}
+}
+
+type fakeVerifier struct {
+	subject string
+	err     error
+	calls   int
+}
+
+func (f *fakeVerifier) Verify(context.Context, string) (*auth.Identity, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &auth.Identity{Subject: f.subject}, nil
 }

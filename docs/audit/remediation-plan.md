@@ -68,7 +68,7 @@ wiring is reverted.
 | SEC-01 | P0 | **VERIFIED** | `t8` — scope resolved from the registry, fail-closed, real `DefaultPolicy` | `t14` pass; `t26` re-pass at current bytes |
 | SEC-02 | P0 | **FIXED** | `t13` — `instance` required, tenant+subject predicates, resume re-checks the instance | final review `t36` |
 | SEC-03 | P0 | **VERIFIED** | `t9`+`t31` — tool+instance in the CAS, DB-backed regression, summary redaction | `t21` needs_revision → `t31` repair → `t32` pass (mutation-tested) |
-| SEC-04 | P1 | PARTIAL | Every approval now writes an audit row (approver, tool, instance, scope) and an unknown id fails with a clear message instead of a storage error. The approver identity is still self-asserted: authenticating it needs an identity source the operator holds | `TestRecordApprovalWritesAuditRow` |
+| SEC-04 | P1 | FIXED | With authentication configured the approval CLI verifies the approver with the gateway's own JWT verifier and records the verified subject; `-as` is refused when it contradicts the token, and an approval without a token is refused. With auth disabled `-as` remains and the CLI warns that the identity is unverified. Every approval also writes an audit row | `TestResolveApproverUsesTheVerifiedSubject` |
 | SEC-05 | P0 | **FIXED** | `t12`+`t23`+`t30` — ledger, idempotency keys, pre-flight state checks | final reviews `t36`/`t37` |
 | SEC-06 | P1 | **FIXED** | `t30` — denied audited as `deny`; transition+audit share a transaction | final review `t36` |
 | SEC-07 | P1 | **FIXED** | `t9` — approver sees instance and a redacted argument summary | `t32` pass |

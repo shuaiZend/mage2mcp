@@ -10,8 +10,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/shuaiZend/mage2mcp/internal/security/auth"
+	"github.com/shuaiZend/mage2mcp/internal/security/jwt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
@@ -32,9 +35,11 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("mage2mcp-admin", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	var configPath, as string
+	var configPath, as, tokenFile string
 	flags.StringVar(&configPath, "config", "config.yaml", "path to the YAML configuration")
-	flags.StringVar(&as, "as", "", "approver identity (email or subject); required for approve")
+	flags.StringVar(&as, "as", "", "approver identity; only used when authentication is disabled")
+	flags.StringVar(&tokenFile, "token-file", "",
+		"file holding the approver's bearer token; required for approve when auth is enabled")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -94,19 +99,35 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return confirm.WritePending(stdout, requests)
 	case "approve":
 		id := flags.Arg(1)
+		// SEC-04: with authentication configured, the approver proves who they are
+		// with the same verifier the gateway uses, and the verified subject is what
+		// gets recorded. The -as flag is only a fallback for a deployment with no
+		// identity provider, where it is a self-assertion and is labelled as one.
+		verifier, err := adminVerifier(cfg)
+		if err != nil {
+			return err
+		}
+		token, err := readApproverToken(tokenFile)
+		if err != nil {
+			return err
+		}
+		approver, err := resolveApprover(ctx, verifier, token, as, stderr)
+		if err != nil {
+			return err
+		}
 		request, err := findPending(ctx, svc, id)
 		if err != nil {
 			return err
 		}
-		if err := svc.Approve(ctx, id, as); err != nil {
+		if err := svc.Approve(ctx, id, approver); err != nil {
 			return err
 		}
 		// SEC-04: an approval used to leave no audit trail at all — only a hash on
 		// the confirmation row. Record who approved what, on which instance.
-		if err := recordApproval(ctx, storage.NewAuditRecorder(store), request, as); err != nil {
+		if err := recordApproval(ctx, storage.NewAuditRecorder(store), request, approver); err != nil {
 			return fmt.Errorf("approved, but the audit row could not be written: %w", err)
 		}
-		fmt.Fprintf(stdout, "approved %s by %s\n", id, as)
+		fmt.Fprintf(stdout, "approved %s by %s\n", id, approver)
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
@@ -155,4 +176,73 @@ func recordApproval(ctx context.Context, auditor approvalAuditor, request *confi
 		State:      "approved",
 		OccurredAt: time.Now().UTC(),
 	})
+}
+
+// tokenVerifier is the subset of jwt.Verifier an approval needs.
+type tokenVerifier interface {
+	Verify(ctx context.Context, rawToken string) (*auth.Identity, error)
+}
+
+// adminVerifier builds the verifier the gateway uses, so an approval is checked
+// against the same identity provider. It returns nil when authentication is
+// disabled, which is the only case where a self-asserted identity is accepted.
+func adminVerifier(cfg config.Config) (tokenVerifier, error) {
+	if !cfg.Auth.Enabled {
+		return nil, nil
+	}
+	verifier, err := jwt.NewVerifier(jwt.Config{
+		Issuer:   cfg.Auth.Issuer,
+		Audience: cfg.Auth.Audience,
+		JWKSURL:  cfg.Auth.JWKSURL,
+	}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
+	}
+	return verifier, nil
+}
+
+// readApproverToken returns the approver's bearer token.
+//
+// The token comes from a file so it never appears in a process listing, which is
+// what a flag would do.
+func readApproverToken(path string) (string, error) {
+	if path == "" {
+		if token := strings.TrimSpace(os.Getenv("MAGE2MCP_ADMIN_TOKEN")); token != "" {
+			return token, nil
+		}
+		return "", nil
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- the operator names the file on the command line
+	if err != nil {
+		return "", fmt.Errorf("read token file: %w", err)
+	}
+	return strings.TrimSpace(string(raw)), nil
+}
+
+// resolveApprover returns the identity to record for an approval.
+//
+// With a verifier the subject is taken from the verified token and the -as flag
+// may not contradict it. Without one the identity is whatever the operator typed,
+// and that is stated on stderr rather than silently accepted as fact.
+func resolveApprover(ctx context.Context, verifier tokenVerifier, token, as string, warn io.Writer) (string, error) {
+	if verifier != nil {
+		if token == "" {
+			return "", fmt.Errorf("authentication is enabled, so an approval needs the approver's token: set MAGE2MCP_ADMIN_TOKEN or pass -token-file")
+		}
+		identity, err := verifier.Verify(ctx, token)
+		if err != nil {
+			return "", fmt.Errorf("approver token rejected: %w", err)
+		}
+		if as != "" && as != identity.Subject {
+			return "", fmt.Errorf("-as %q does not match the verified subject %q", as, identity.Subject)
+		}
+		return identity.Subject, nil
+	}
+	if as == "" {
+		return "", fmt.Errorf("-as <approver identity> is required")
+	}
+	if warn != nil {
+		fmt.Fprintf(warn, "warning: authentication is disabled, so %q is a self-asserted approver identity and is not verified\n", as)
+	}
+	return as, nil
 }

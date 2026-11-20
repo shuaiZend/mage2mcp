@@ -21,6 +21,24 @@ async import tools are not registered, the five self-ledgered money tools fail
 closed (no ledger), and writes cannot be approved (the admin CLI requires the
 database). Audit is lost on restart. That mode is for local development only.
 
+### Approving as a verified human
+
+The approval CLI records **who approved**, so with authentication configured the
+approver has to prove it. It reuses the gateway's own verifier, so there is no second
+identity provider to set up:
+
+```bash
+# The token goes in a file (or MAGE2MCP_ADMIN_TOKEN), never a flag: a flag would
+# put it in the process listing.
+mage2mcp-admin -config config.yaml -token-file /run/secrets/approver.jwt approve <id>
+```
+
+The recorded subject is the one in the verified token, and `-as` is refused if it
+contradicts that token. With `auth.enabled: false` there is no identity provider to
+verify against, so `-as` is still accepted — and the CLI prints a warning saying the
+identity is self-asserted and unverified. That warning is the difference between a
+documented development mode and a silent hole.
+
 **Hard requirements for a write-enabled deployment:** `database.url` must be set,
 and `server.max_body_bytes` must be at least 12 MiB (the default is 16 MiB). The
 gateway fails configuration validation at startup if writes are enabled with a
