@@ -9,7 +9,7 @@ mage2mcp 是一个独立的 [Model Context Protocol](https://modelcontextprotoco
 > 审计、Prometheus 指标，以及 Magento 商品、Cloudflare 分析/安全、GA4 流量与元数据的
 > 只读工具与统一流量对比。一个网关可同时服务多个 Magento 店铺、Cloudflare zone 与
 > GA4 属性，并具备按实例的授权与审计；可选 PostgreSQL 持久化、审计与任务队列构成
-> 完整部署（无 Redis）。写操作需要两步人工审批。[v0.7.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.0)
+> 完整部署（无 Redis）。写操作需要两步人工审批。[v0.7.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.1)
 > 是首个公开预发布版本（签名产物、SBOM、多架构镜像），接口在 1.0 之前仍可能通过 ADR 变更。
 
 ## 当前已有的内容
