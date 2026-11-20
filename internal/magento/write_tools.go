@@ -244,23 +244,23 @@ type productWriteOutput struct {
 }
 
 type configurableCreateOutput struct {
-	Parent        Product   `json:"parent"`
-	Children      []Product `json:"children"`
-	ParentInStock bool      `json:"parent_in_stock"`
+	Parent        Product   `json:"parent" jsonschema:"The configurable parent product that was created."`
+	Children      []Product `json:"children" jsonschema:"The variant products created and linked to the parent. May be shorter than requested when the create stopped at a failed stage."`
+	ParentInStock bool      `json:"parent_in_stock" jsonschema:"Whether the parent reports in stock. Read parent_stock_source before trusting it: an unobserved read is not an out-of-stock."`
 	// ParentStockSource states how parent_in_stock was derived (the observed
 	// child source items, or "unobserved: <code>" when the read failed). Without
 	// it an unobserved stock read is indistinguishable from an observed
 	// out-of-stock at the agent boundary.
-	ParentStockSource string `json:"parent_stock_source,omitempty"`
+	ParentStockSource string `json:"parent_stock_source,omitempty" jsonschema:"How parent_in_stock was derived: the observed child source items, or \"unobserved: <code>\" when the read failed. An unobserved read is not an out-of-stock."`
 
 	// Execution record: an agent can tell a completed create from a partial one
 	// and act on the failure without another read.
-	OperationID     string              `json:"operation_id,omitempty"`
-	Outcome         ConfigurableOutcome `json:"outcome,omitempty"`
-	Stages          []ConfigurableStage `json:"stages,omitempty"`
-	CompletedStages []string            `json:"completed_stages,omitempty"`
-	FailedStage     string              `json:"failed_stage,omitempty"`
-	OrphanSKUs      []string            `json:"orphan_skus,omitempty"`
+	OperationID     string              `json:"operation_id,omitempty" jsonschema:"Ledger operation id. Pass it back as operation_id to resume a partial create instead of starting over."`
+	Outcome         ConfigurableOutcome `json:"outcome,omitempty" jsonschema:"completed or partial. A partial create has already written products and is not rolled back."`
+	Stages          []ConfigurableStage `json:"stages,omitempty" jsonschema:"Per-stage record of what ran and what it produced, in order."`
+	CompletedStages []string            `json:"completed_stages,omitempty" jsonschema:"Names of the stages that finished, so a resume knows where to continue."`
+	FailedStage     string              `json:"failed_stage,omitempty" jsonschema:"Stage that failed, when outcome is partial."`
+	OrphanSKUs      []string            `json:"orphan_skus,omitempty" jsonschema:"SKUs that exist in Magento but are not linked to the parent. Delete them or link them before retrying, or the retry will collide."`
 }
 
 type configurableAddChildOutput struct {
@@ -973,10 +973,10 @@ type invoiceCreateInput struct {
 }
 
 type invoiceCreateOutput struct {
-	Invoice     Invoice `json:"invoice"`
-	Captured    bool    `json:"captured"`
-	OperationID string  `json:"operation_id,omitempty"`
-	Replayed    bool    `json:"replayed,omitempty"`
+	Invoice     Invoice `json:"invoice" jsonschema:"The created invoice. Its entity_id is what capture and credit memo take."`
+	Captured    bool    `json:"captured" jsonschema:"True when the invoice was captured at creation. False means it exists but no money has been taken."`
+	OperationID string  `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
+	Replayed    bool    `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so no second invoice was created."`
 }
 
 func newInvoiceCreateTool(lookup serviceLookup) registry.Tool {
@@ -1077,10 +1077,10 @@ type creditmemoCreateInput struct {
 }
 
 type creditmemoCreateOutput struct {
-	Creditmemo  Creditmemo `json:"creditmemo"`
-	InvoiceID   int        `json:"invoice_id"`
-	OperationID string     `json:"operation_id,omitempty"`
-	Replayed    bool       `json:"replayed,omitempty"`
+	Creditmemo  Creditmemo `json:"creditmemo" jsonschema:"The created credit memo, which is the refund record."`
+	InvoiceID   int        `json:"invoice_id" jsonschema:"Invoice the refund was issued against."`
+	OperationID string     `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
+	Replayed    bool       `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so the customer was not refunded twice."`
 }
 
 func newShipmentCreateTool(lookup serviceLookup) registry.Tool {
@@ -1493,10 +1493,10 @@ type invoiceCaptureInput struct {
 }
 
 type invoiceCaptureOutput struct {
-	InvoiceID   int    `json:"invoice_id"`
-	Captured    bool   `json:"captured"`
-	OperationID string `json:"operation_id,omitempty"`
-	Replayed    bool   `json:"replayed,omitempty"`
+	InvoiceID   int    `json:"invoice_id" jsonschema:"Invoice the capture was attempted for."`
+	Captured    bool   `json:"captured" jsonschema:"True when the money was taken. False with no error means the store accepted the call but reported no capture."`
+	OperationID string `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome. A capture that returned operation_unknown may still have moved money."`
+	Replayed    bool   `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so money was not taken twice."`
 }
 
 type orderEmailInput struct {
@@ -1663,10 +1663,12 @@ type orderCreateInput struct {
 }
 
 type orderCreateOutput struct {
-	Order       Order  `json:"order"`
-	OperationID string `json:"operation_id,omitempty"`
-	Replayed    bool   `json:"replayed,omitempty"`
-	Reconciled  bool   `json:"reconciled,omitempty"`
+	Order Order `json:"order" jsonschema:"The placed order. Its entity_id is what every downstream invoice, shipment and credit memo call takes."`
+	// OperationID names the ledger row for this placement. Keep it: it is how an
+	// unknown outcome is polled and how a reconciliation is traced.
+	OperationID string `json:"operation_id,omitempty" jsonschema:"Ledger operation id. Absent only when no durable ledger is configured. Poll it after an operation_unknown."`
+	Replayed    bool   `json:"replayed,omitempty" jsonschema:"True when this call returned a previously recorded result for the same idempotency_key, so no second order was placed."`
+	Reconciled  bool   `json:"reconciled,omitempty" jsonschema:"True when the placement's response was lost and the order was found by reading the customer's recent orders. The order is real; it was confirmed rather than acknowledged."`
 }
 
 func (a orderAddressWire) toInput() OrderAddressInput {
@@ -1800,17 +1802,17 @@ type inventoryTransferInput struct {
 }
 
 type inventoryTransferOutput struct {
-	TransferID  string `json:"transfer_id"`
-	SKU         string `json:"sku"`
-	FromSource  string `json:"from_source"`
-	ToSource    string `json:"to_source"`
-	Quantity    int    `json:"quantity"`
-	FromBefore  int    `json:"from_before"`
-	FromAfter   int    `json:"from_after"`
-	ToBefore    int    `json:"to_before"`
-	ToAfter     int    `json:"to_after"`
-	Outcome     string `json:"outcome"`
-	Transferred bool   `json:"transferred"`
+	TransferID  string `json:"transfer_id" jsonschema:"Identifier of this transfer, for correlating the before/after readings."`
+	SKU         string `json:"sku" jsonschema:"Product whose stock moved."`
+	FromSource  string `json:"from_source" jsonschema:"Source the units left."`
+	ToSource    string `json:"to_source" jsonschema:"Source the units arrived at."`
+	Quantity    int    `json:"quantity" jsonschema:"Whole units requested. Compare from_before/from_after to see what actually moved."`
+	FromBefore  int    `json:"from_before" jsonschema:"Physical quantity at from_source read immediately before the write."`
+	FromAfter   int    `json:"from_after" jsonschema:"Physical quantity at from_source read back after the write."`
+	ToBefore    int    `json:"to_before" jsonschema:"Physical quantity at to_source read immediately before the write."`
+	ToAfter     int    `json:"to_after" jsonschema:"Physical quantity at to_source read back after the write."`
+	Outcome     string `json:"outcome" jsonschema:"applied, needs_verification or failed. needs_verification means the write returned but the read-back did not confirm it, so check the quantities before retrying."`
+	Transferred bool   `json:"transferred" jsonschema:"True only when the read-back shows both sources at the expected quantities."`
 }
 
 func newInventoryTransferTool(lookup serviceLookup) registry.Tool {

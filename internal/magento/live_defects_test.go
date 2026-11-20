@@ -671,3 +671,28 @@ func TestTransferQuantityStatesWhichNumberItIs(t *testing.T) {
 		t.Fatal("transfer quantity must state that it moves physical, not salable, stock")
 	}
 }
+
+// MCP-08: the money-path outputs carry flags an agent must interpret before it can
+// trust a result — replayed (nothing new happened), reconciled (the order is real
+// but was confirmed by reading back), outcome (a partial create already wrote
+// products). An undocumented flag is a guess.
+func TestMoneyPathOutputsDocumentTheirFlags(t *testing.T) {
+	for name, typ := range map[string]any{
+		"orderCreateOutput":        orderCreateOutput{},
+		"invoiceCreateOutput":      invoiceCreateOutput{},
+		"invoiceCaptureOutput":     invoiceCaptureOutput{},
+		"creditmemoCreateOutput":   creditmemoCreateOutput{},
+		"inventoryTransferOutput":  inventoryTransferOutput{},
+		"configurableCreateOutput": configurableCreateOutput{},
+	} {
+		schema, err := jsonschema.ForType(reflect.TypeOf(typ), nil)
+		if err != nil {
+			t.Fatalf("%s: infer schema: %v", name, err)
+		}
+		for field, prop := range schema.Properties {
+			if strings.TrimSpace(prop.Description) == "" {
+				t.Errorf("%s.%s has no description", name, field)
+			}
+		}
+	}
+}

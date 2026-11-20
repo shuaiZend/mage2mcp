@@ -163,7 +163,7 @@ wiring is reverted.
 | MCP-05 | P2 | **FIXED** (`t19`) — declared timeout enforced as a deadline |
 | MCP-06 | P2 | **FIXED** (`t18`) — 55 write disclosures, test-enforced |
 | MCP-07 | P2 | PARTIAL — the write schemas the audit named now document their required fields (product.create, inventory.transfer, the order address), including which number `quantity` moves. The four import tools the finding says lack `instance` already carry it, so that part is stale. 169 undocumented required properties elsewhere remain |
-| MCP-08 | P2 | PARTIAL — the `Product` and `Order` projections every read tool returns now describe all 36 of their properties, and `inventory.sources` reports `total`/`truncated` (`TestProductAndOrderOutputsCarryDescriptions`). The remaining output types and a common envelope are still open |
+| MCP-08 | P2 | PARTIAL — `Product`, `Order` and the six money-path outputs (order create, invoice create/capture, credit memo, inventory transfer, configurable create) now describe every field, including the `replayed`, `reconciled` and `outcome` flags an agent must interpret before trusting a result; `inventory.sources` reports `total`/`truncated`. 140 of 177 output fields across the remaining 92 types are still undocumented, and there is no common envelope |
 | MCP-09 | P2 | **FIXED** (`t18`+`t19`) — one envelope shape, code once, no SQLSTATE leak |
 | MCP-10 | P3 | DEFER — naming register recorded |
 | QA-01 | P2 | **FIXED** — `local-ci.sh` runs the suite with `-json` and fails on any skipped test, so the durability layer can no longer be skipped silently |
