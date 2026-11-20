@@ -151,7 +151,18 @@ func TestJobQueueLifecycle(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	queue := NewJobQueue(store)
-	id, err := queue.Enqueue(ctx, jobs.Task{Kind: jobs.TypeNoop, Payload: []byte(`{"message":"hi"}`), MaxAttempts: 2})
+	// Claim has no task-id predicate, so a job left queued by an earlier run would be
+	// claimed instead and the assertion below would fail for a reason that has nothing
+	// to do with the code under test. Pushing leftovers aside removes that order
+	// dependence (QA-10); the queue names themselves are fixed by a CHECK constraint.
+	if _, err := store.pool.Exec(ctx,
+		`UPDATE jobs SET scheduled_at = now() + interval '1 hour'
+		 WHERE state = 'queued' AND scheduled_at <= now()`); err != nil {
+		t.Fatalf("defer leftover jobs: %v", err)
+	}
+	id, err := queue.Enqueue(ctx, jobs.Task{
+		Kind: jobs.TypeNoop, Payload: []byte(`{"message":"hi"}`), MaxAttempts: 2,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,30 +386,34 @@ func TestPruneImportBatches(t *testing.T) {
 	}
 }
 
-func TestPruneImportBatchesNotOpen(t *testing.T) {
+// A nil receiver is not a closed store: this covers the nil guard, and the name now
+// says so (QA-09). The real close path is TestImportBatchStoreAfterClose.
+func TestPruneImportBatchesNilStore(t *testing.T) {
 	var store *Store
 	if _, err := store.PruneImportBatches(context.Background(), time.Now()); err == nil {
-		t.Fatal("pruning a closed store must fail")
+		t.Fatal("pruning a nil store must fail")
 	}
 }
 
-func TestImportBatchStoreClosed(t *testing.T) {
+// This exercises the nil-receiver guards, not behaviour after Close. The name says so
+// now, and TestImportBatchStoreAfterClose covers the real close path (QA-09).
+func TestImportBatchNilStore(t *testing.T) {
 	var store *Store
 	ctx := context.Background()
 	if _, err := store.CreateImportBatch(ctx, "i", "", "csv", nil); err == nil {
-		t.Fatal("create on a closed store must fail")
+		t.Fatal("create on a nil store must fail")
 	}
 	if err := store.FinishImportBatch(ctx, "i", &jobs.ImportBatchResult{}, "failed", ""); err == nil {
-		t.Fatal("finish on a closed store must fail")
+		t.Fatal("finish on a nil store must fail")
 	}
 	if _, err := store.GetImportBatchByJob(ctx, "i", "", ""); err == nil {
-		t.Fatal("get-by-job on a closed store must fail")
+		t.Fatal("get-by-job on a nil store must fail")
 	}
 	if _, err := store.ListImportBatches(ctx, "i", 10); err == nil {
-		t.Fatal("list on a closed store must fail")
+		t.Fatal("list on a nil store must fail")
 	}
 	if _, err := store.GetImportBatch(ctx, "i", "", ""); err == nil {
-		t.Fatal("get on a closed store must fail")
+		t.Fatal("get on a nil store must fail")
 	}
 }
 

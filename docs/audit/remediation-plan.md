@@ -293,8 +293,8 @@ These were present in the audit reports but had never been entered in this plan,
 | QA-02 | P3 | DEFER | `go test -cover ./...` and `make cover` fail on the pinned toolchain | limitations |
 | QA-07 | P3 | DEFER | Coverage targets in the testing strategy are missed and unenforced | limitations |
 | QA-08 | P3 | DEFER | The testing strategy describes suites that do not exist | limitations |
-| QA-09 | P3 | DEFER | Two storage tests are mislabelled: they exercise a nil store, not a closed one | limitations |
-| QA-10 | P3 | DEFER | The job queue lifecycle test claims an arbitrary default-queue job | limitations |
+| QA-09 | P3 | FIXED | The two tests that claimed to cover a closed store are renamed to what they exercise (a nil receiver), and `TestImportBatchStoreAfterClose` covers the real close path | `TestImportBatchStoreAfterClose` |
+| QA-10 | P3 | FIXED | The lifecycle test defers any job an earlier run left queued, removing its order dependence, and a new test asserts that eight concurrent claims produce exactly one winner | `TestJobQueueConcurrentClaimHasOneWinner` |
 
 | REL-17 | P3 | ALREADY-FIXED | Recorded in the reliability review as fixed before the audit closed | `docs/audit/reliability-review.md` |
 | REL-18 | P3 | ALREADY-FIXED | Recorded in the reliability review as fixed before the audit closed | `docs/audit/reliability-review.md` |

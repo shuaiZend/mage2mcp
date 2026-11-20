@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -115,5 +116,82 @@ func TestFinishImportBatchWritesEveryFailure(t *testing.T) {
 	}
 	if stored != rows {
 		t.Fatalf("after re-run stored failures = %d, want %d (upsert, not duplicate)", stored, rows)
+	}
+}
+
+// QA-10: the lifecycle test claimed from the shared "default" queue and asserted on a
+// specific task id, so it passed only while no other default-queue job was queued. This
+// exercises the property that actually matters — two concurrent claims of the same job
+// yield exactly one winner — which nothing covered before.
+func TestJobQueueConcurrentClaimHasOneWinner(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	queue := NewJobQueue(store)
+	// Queue names are fixed by a CHECK constraint, so isolation comes from deferring
+	// whatever an earlier test left queued.
+	if _, err := store.pool.Exec(ctx,
+		`UPDATE jobs SET scheduled_at = now() + interval '1 hour'
+		 WHERE state = 'queued' AND scheduled_at <= now()`); err != nil {
+		t.Fatalf("defer leftover jobs: %v", err)
+	}
+
+	id, err := queue.Enqueue(ctx, jobs.Task{
+		Kind: jobs.TypeNoop, Payload: []byte(`{}`), MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	const racers = 8
+	results := make(chan *jobs.Task, racers)
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			claimed, err := queue.Claim(ctx, []string{"default"}, time.Minute)
+			if err != nil {
+				t.Errorf("Claim: %v", err)
+				return
+			}
+			results <- claimed
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	winners := 0
+	for claimed := range results {
+		if claimed != nil && claimed.ID == id {
+			winners++
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("winners = %d, want exactly one claim of the job", winners)
+	}
+}
+
+// QA-09: the two tests that claimed to cover a closed store only exercised a nil
+// receiver, so a use-after-close regression would have passed. This opens a real store,
+// closes it, and asserts every path refuses.
+func TestImportBatchStoreAfterClose(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	store.Close()
+
+	if _, err := store.CreateImportBatch(ctx, "i", "", "csv", nil); err == nil {
+		t.Fatal("create after Close must fail")
+	}
+	if err := store.FinishImportBatch(ctx, "i", &jobs.ImportBatchResult{}, "failed", ""); err == nil {
+		t.Fatal("finish after Close must fail")
+	}
+	if _, err := store.ListImportBatches(ctx, "i", 10); err == nil {
+		t.Fatal("list after Close must fail")
+	}
+	if _, err := store.GetImportBatch(ctx, "i", "", ""); err == nil {
+		t.Fatal("get after Close must fail")
+	}
+	if _, err := store.PruneImportBatches(ctx, time.Now()); err == nil {
+		t.Fatal("prune after Close must fail")
 	}
 }
