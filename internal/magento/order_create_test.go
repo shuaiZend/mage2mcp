@@ -5,6 +5,7 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -103,5 +104,43 @@ func TestCreateOrderValidation(t *testing.T) {
 		if _, err := svc.CreateOrder(ctx, in); errs.CodeOf(err) != errs.CodeInvalidArgument {
 			t.Fatalf("case %d: err = %v", i, err)
 		}
+	}
+}
+
+func TestCreateOrderUnsupportedPlacementCleansCart(t *testing.T) {
+	var deleted bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/customers/7/carts":
+			_, _ = w.Write([]byte(`42`))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/carts/42/items":
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/carts/42/shipping-information":
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/carts/42/order":
+			http.NotFound(w, r)
+		case r.Method == http.MethodDelete && r.URL.Path == "/rest/default/V1/carts/42":
+			deleted = true
+			_, _ = w.Write([]byte(`true`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	_, err := svc.CreateOrder(context.Background(), validOrderInput())
+	if errs.CodeOf(err) != errs.CodeUnsupportedCapability {
+		t.Fatalf("err = %v", err)
+	}
+	var taxonomy *errs.Error
+	if !errors.As(err, &taxonomy) {
+		t.Fatal("not a taxonomy error")
+	}
+	if taxonomy.Details["cart_cleanup"] != "deleted" || taxonomy.Details["stage"] != "place_order" {
+		t.Fatalf("details = %+v", taxonomy.Details)
+	}
+	if !deleted {
+		t.Fatal("cart was not cleaned up")
 	}
 }

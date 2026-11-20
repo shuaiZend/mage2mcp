@@ -34,7 +34,7 @@ Common behavior:
 | `magento.product.search` | read | 30s | Search by name/SKU/type/status plus price and creation windows |
 | `magento.import.validate` | read | 30s | CSV/JSON preview with per-row errors plus bounded SEO/content warnings; never writes |
 | `magento.category.get` | read | 30s | One category by id |
-| `magento.category.tree` | read | 30s | Category subtree under a root, flattened depth-first (depth 1-5) |
+| `magento.category.tree` | read | 30s | Category subtree under a root, flattened depth-first under `categories` (depth 1-5) |
 | `magento.category.products` | read | 30s | Products assigned to a category, paginated |
 | `magento.store.configs` | read | 30s | Store views with locale, currencies, timezone, base URL |
 | `magento.categories.flat` | read | 30s | Category id/parent/name/level/path rows for SKU mapping |
@@ -75,7 +75,7 @@ Common behavior:
 | `magento.order.hold` | write + confirmation | 60s | Places an order on hold |
 | `magento.order.unhold` | write + confirmation | 60s | Releases an order hold |
 | `magento.order.cancel` | destructive + confirmation | 60s | Cancels a cancellable order; irreversible |
-| `magento.category.create` | write + confirmation | 60s | Creates a category under a parent |
+| `magento.category.create` | write + confirmation | 60s | Creates a category under a parent; optional `url_key` is sent as a custom attribute |
 | `magento.category.update` | write + confirmation | 60s | Partial update of name/active/position/menu visibility |
 | `magento.category.delete` | destructive + confirmation | 60s | Deletes a category and its subtree; products lose the assignment but are not deleted |
 | `magento.category.assign_product` | write + confirmation | 60s | Links a product to a category |

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-20
+
+Write-verification release: fixes W1–W6, W9, W11, W12 from the Magento demo
+verification, adds upstream validation messages and actionable capability
+errors, and renames the category tree output key.
+
+### Fixed
+
+- Write verification defects W1–W6, W9, W11, W12:
+  media upload and attribute-option create accept Magento's scalar ids and no
+  longer report failure after a successful write; media update sends a complete
+  entry (`media_type`, `file`) and accepts a boolean acknowledgement; upstream
+  400/422 messages are surfaced as `details.upstream_message`; a missing
+  place-order route returns `unsupported_capability` with a best-effort cart
+  cleanup; missing customer-address routes return `unsupported_capability` with
+  guidance; `category.create` accepts `url_key` via `custom_attributes`;
+  `inventory.assign` defaults `status` to 1; minimal CSV imports succeed.
+- `category.tree` returns its list under `categories` instead of `roots`.
+
 ## [0.8.1] - 2026-11-20
 
 Patch release: structured tool-error envelopes (G12) and a documentation refresh.
@@ -607,7 +626,8 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.9.0
 [0.8.1]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.1
 [0.8.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.0
 [0.7.6]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.6

@@ -434,7 +434,11 @@ func importAttributeSetID(row ImportRow) (int, error) {
 func importErrorMessage(err error) string {
 	var typed *errs.Error
 	if errors.As(err, &typed) {
-		return string(typed.Code) + ": " + typed.Message
+		message := string(typed.Code) + ": " + typed.Message
+		if upstream := typed.Details["upstream_message"]; upstream != "" {
+			message += " (" + upstream + ")"
+		}
+		return message
 	}
 	return "internal error"
 }

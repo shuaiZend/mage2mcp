@@ -136,8 +136,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxDrainBytes))
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
-		return nil, statusError(method, path, resp.StatusCode)
+		return nil, statusError(method, path, resp.StatusCode, body, c.StoreCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
@@ -157,7 +158,7 @@ func transportError(ctx context.Context, err error) error {
 	e.Retryable = true
 	return e.WithOp(op).WithCause(err)
 }
-func statusError(method, path string, status int) error {
+func statusError(method, path string, status int, body []byte, storeCode string) error {
 	code, message, retryable := errs.CodeUpstreamUnavailable, "Magento returned an unexpected HTTP status", false
 	switch {
 	case status == http.StatusUnauthorized:
@@ -173,7 +174,7 @@ func statusError(method, path string, status int) error {
 	case status == http.StatusTooManyRequests:
 		code, message, retryable = errs.CodeRateLimited, "Magento is rate limiting requests", true
 	case status == http.StatusBadRequest, status == http.StatusUnprocessableEntity:
-		code, message = errs.CodeValidationFailed, "Magento rejected the request as invalid"
+		code, message = errs.CodeValidationFailed, "Magento rejected the request as invalid; verify store_code and field values"
 	case status >= 500:
 		code, message, retryable = errs.CodeUpstreamUnavailable, "Magento is unavailable", true
 	}
@@ -181,7 +182,38 @@ func statusError(method, path string, status int) error {
 	e.Retryable = retryable
 	e = e.WithOp("magento " + method + " " + path)
 	e = e.WithDetail("upstream_status", strconv.Itoa(status))
+	if storeCode != "" {
+		e = e.WithDetail("store_code", storeCode)
+	}
+	if upstream := upstreamMessage(body); upstream != "" {
+		e = e.WithDetail("upstream_message", upstream)
+	}
 	return e
+}
+
+// upstreamMessage extracts Magento's validation message without echoing request
+// parameters, strips control characters, and bounds the length.
+func upstreamMessage(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.Message == "" {
+		return ""
+	}
+	clean := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, payload.Message)
+	clean = strings.TrimSpace(clean)
+	if runes := []rune(clean); len(runes) > 300 {
+		clean = string(runes[:300])
+	}
+	return clean
 }
 func invalidf(format string, args ...any) error {
 	return errs.New(errs.CodeInvalidArgument, fmt.Sprintf(format, args...))

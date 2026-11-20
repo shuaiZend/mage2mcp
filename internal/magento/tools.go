@@ -487,7 +487,7 @@ type categoryTreeInput struct {
 }
 
 type categoryTreeOutput struct {
-	Roots []Category `json:"roots"`
+	Categories []Category `json:"categories"`
 }
 
 type attributeSetsInput struct {
@@ -542,11 +542,11 @@ func newCategoryTreeTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, categoryTreeOutput{}, err
 				}
-				roots, err := svc.CategoryTree(ctx, rootID, in.Depth)
+				categories, err := svc.CategoryTree(ctx, rootID, in.Depth)
 				if err != nil {
 					return nil, categoryTreeOutput{}, err
 				}
-				return nil, categoryTreeOutput{Roots: roots}, nil
+				return nil, categoryTreeOutput{Categories: categories}, nil
 			})
 		return nil
 	}

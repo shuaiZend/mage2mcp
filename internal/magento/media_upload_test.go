@@ -193,3 +193,58 @@ func TestMediaTypes(t *testing.T) {
 		t.Fatalf("validation err = %v", err)
 	}
 }
+
+func TestUploadMediaScalarResponse(t *testing.T) {
+	var paths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/products/SKU-1/media":
+			_, _ = w.Write([]byte(`"3422"`))
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/products/SKU-1/media":
+			_, _ = w.Write([]byte(`[{"id":3422,"media_type":"image","label":"Demo","position":1,"types":["image"],"file":"/m/d/demo.png"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	entry, err := svc.UploadMedia(context.Background(), "SKU-1", MediaUploadInput{
+		Filename: "demo.png", MIMEType: "image/png", DataBase64: "aGk=", Label: "Demo", Position: 1, Types: []string{"image"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.ID != 3422 || entry.File != "/m/d/demo.png" || entry.Label != "Demo" {
+		t.Fatalf("entry = %+v", entry)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("paths = %v", paths)
+	}
+}
+
+func TestUpdateMediaSendsCompleteEntry(t *testing.T) {
+	var body mediaUpdateBody
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"id":9,"media_type":"image","file":"/m/d/demo.png","label":"Old","position":1,"types":["image"]}`))
+		case http.MethodPut:
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &body)
+			_, _ = w.Write([]byte(`{"id":9,"label":"New","position":2,"types":["image","thumbnail"],"file":"/m/d/demo.png"}`))
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	label := "New"
+	position := 2
+	if _, err := svc.UpdateMedia(context.Background(), "SKU-1", 9, MediaUpdateInput{Label: &label, Position: &position, Types: []string{"image", "thumbnail"}}); err != nil {
+		t.Fatal(err)
+	}
+	if body.Entry.MediaType != "image" || body.Entry.File != "/m/d/demo.png" {
+		t.Fatalf("entry = %+v", body.Entry)
+	}
+}

@@ -5,6 +5,7 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -91,7 +92,20 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order,
 	orderBody := placeOrderBody{PaymentMethod: paymentMethod{Method: in.PaymentMethod}}
 	raw, err = s.client.do(ctx, http.MethodPost, "/carts/"+strconv.Itoa(cartID)+"/order", nil, orderBody)
 	if err != nil {
-		return nil, writeStageError("place_order", nil, "", err)
+		cleanup := s.cleanupCart(ctx, cartID)
+		if errs.CodeOf(err) == errs.CodeNotFound {
+			return nil, errs.New(errs.CodeUnsupportedCapability,
+				"this Magento instance does not expose the cart place-order route; order creation is unsupported here").
+				WithDetail("stage", "place_order").
+				WithDetail("cart_id", strconv.Itoa(cartID)).
+				WithDetail("cart_cleanup", cleanup)
+		}
+		stageErr := writeStageError("place_order", nil, "", err)
+		var taxonomy *errs.Error
+		if errors.As(stageErr, &taxonomy) {
+			taxonomy.Details["cart_cleanup"] = cleanup
+		}
+		return nil, stageErr
 	}
 	var order Order
 	if err := json.Unmarshal(raw, &order); err != nil {
@@ -212,4 +226,12 @@ func validateOrderAddress(field string, address OrderAddressInput) error {
 		}
 	}
 	return nil
+}
+
+// cleanupCart best-effort deletes an abandoned cart after a failed placement.
+func (s *Service) cleanupCart(ctx context.Context, cartID int) string {
+	if _, err := s.client.do(ctx, http.MethodDelete, "/carts/"+strconv.Itoa(cartID), nil, nil); err != nil {
+		return "failed: " + string(errs.CodeOf(err))
+	}
+	return "deleted"
 }
