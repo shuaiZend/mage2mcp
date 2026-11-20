@@ -325,7 +325,7 @@ func registerModules(cfg config.Config, reg *registry.Registry, wirings ...impor
 		settings := make([]magento.InstanceSettings, 0, len(cfg.Modules.Magento.Instances))
 		for _, inst := range cfg.Modules.Magento.Instances {
 			settings = append(settings, magento.InstanceSettings{
-				ID: inst.ID, Endpoint: inst.Endpoint, StoreCode: inst.StoreCode, Credential: inst.Credential,
+				ID: inst.ID, Endpoint: inst.Endpoint, StoreCode: inst.StoreCode, Credential: inst.Credential.Reveal(),
 				Limits: magentoLimits(inst.Limits),
 			})
 		}
@@ -356,7 +356,7 @@ func registerModules(cfg config.Config, reg *registry.Registry, wirings ...impor
 		for _, inst := range cfg.Modules.Cloudflare.Instances {
 			client, err := cloudflare.NewClient(cloudflare.Config{
 				APIBaseURL: "https://api.cloudflare.com/client/v4",
-				APIToken:   inst.Credential, ZoneID: inst.ZoneID, AccountID: inst.AccountID,
+				APIToken:   inst.Credential.Reveal(), ZoneID: inst.ZoneID, AccountID: inst.AccountID,
 			})
 			if err != nil {
 				return fmt.Errorf("cloudflare %s: %w", inst.ID, err)
@@ -383,7 +383,7 @@ func registerModules(cfg config.Config, reg *registry.Registry, wirings ...impor
 	if cfg.Modules.GA4.Enabled {
 		services := make(map[string]*ga4.Service, len(cfg.Modules.GA4.Instances))
 		for _, inst := range cfg.Modules.GA4.Instances {
-			tokenSource, err := ga4TokenSource(inst.Credential)
+			tokenSource, err := ga4TokenSource(inst.Credential.Reveal())
 			if err != nil {
 				return fmt.Errorf("ga4 %s: %w", inst.ID, err)
 			}

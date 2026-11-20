@@ -126,7 +126,7 @@ type Instance struct {
 	AccountID  string `yaml:"account_id"`
 	ZoneID     string `yaml:"zone_id"`
 	PropertyID string `yaml:"property_id"`
-	Credential string `yaml:"credential"`
+	Credential Secret `yaml:"credential"`
 	// Limits is the outbound request budget for this instance. Nil means the
 	// module default; the Magento module applies a generous default so an
 	// unconfigured deployment is still protected from a retry storm.
@@ -284,7 +284,7 @@ func (c Config) Validate() error {
 				problems = append(problems, fmt.Sprintf("%s: duplicate instance id %q", name, inst.ID))
 			}
 			seen[inst.ID] = true
-			if inst.Credential == "" {
+			if inst.Credential.Empty() {
 				problems = append(problems, fmt.Sprintf("%s instance %q has no credential reference", name, inst.ID))
 			}
 			if l := inst.Limits; l != nil {
@@ -363,3 +363,31 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+
+// Secret is a credential that redacts itself in every formatting path.
+//
+// Instance.Credential used to be a plain string, so `fmt.Sprintf("%+v", cfg)` — a
+// debug print, a panic value, a support bundle — printed every bearer token and
+// admin password. The logger's key-based redaction only covers slog attributes, not
+// a struct formatted with %+v, so the type has to be the defence.
+//
+// Call Reveal to obtain the value. There is deliberately no implicit conversion.
+type Secret string
+
+// redacted is what every formatting path returns.
+const redacted = "[REDACTED]"
+
+// String implements fmt.Stringer.
+func (s Secret) String() string { return redacted }
+
+// GoString implements fmt.GoStringer, which %#v uses.
+func (s Secret) GoString() string { return redacted }
+
+// MarshalJSON redacts the value so a config dump cannot leak it either.
+func (s Secret) MarshalJSON() ([]byte, error) { return []byte(`"` + redacted + `"`), nil }
+
+// Reveal returns the credential itself. Call it only where the value is used.
+func (s Secret) Reveal() string { return string(s) }
+
+// Empty reports whether the credential is unset.
+func (s Secret) Empty() bool { return len(s) == 0 }

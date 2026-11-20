@@ -3,6 +3,8 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -543,5 +545,37 @@ func TestValidateInstanceLimits(t *testing.T) {
 				t.Fatalf("Validate() = nil, want an error for %+v", tc.lim)
 			}
 		})
+	}
+}
+
+// SEC-17: a credential was a plain string, so fmt.Sprintf("%+v", cfg) — a debug
+// print, a panic value, a support bundle — printed every token and admin password.
+// The logger's key-based redaction only covers slog attributes.
+func TestConfigFormattingNeverPrintsACredential(t *testing.T) {
+	const secret = "super-secret-bearer-token"
+	cfg := Default()
+	cfg.Modules.Magento.Enabled = true
+	cfg.Modules.Magento.Instances = []Instance{{
+		ID: "store-us", Endpoint: "https://shop.example.com",
+		StoreCode: "default", Credential: Secret(secret),
+	}}
+
+	for _, format := range []string{"%v", "%+v", "%#v", "%s"} {
+		rendered := fmt.Sprintf(format, cfg)
+		if strings.Contains(rendered, secret) {
+			t.Fatalf("%s leaked the credential:\n%s", format, rendered)
+		}
+	}
+	// JSON dumps go through MarshalJSON.
+	raw, err := json.Marshal(cfg.Modules.Magento.Instances[0])
+	if err != nil {
+		t.Fatalf("marshal instance: %v", err)
+	}
+	if strings.Contains(string(raw), secret) {
+		t.Fatalf("JSON leaked the credential: %s", raw)
+	}
+	// The value is still available where it is actually used.
+	if cfg.Modules.Magento.Instances[0].Credential.Reveal() != secret {
+		t.Fatal("Reveal must return the credential")
 	}
 }

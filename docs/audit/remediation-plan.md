@@ -81,7 +81,7 @@ wiring is reverted.
 | SEC-14 | P2 | **FIXED** | `t9` — canonical hashing and integer precision preserved | `t32` |
 | SEC-15 | P2 | FIXED | An MCP session is bound to the subject that created it; a different subject presenting the id gets 404, not 403 | `TestSessionIsBoundToItsCreator` |
 | SEC-16 | P3 | **FIXED** | `t19` — `platform.info` is a first-class registry tool | final review `t39` |
-| SEC-17 | P3 | DEFER | Inline credential strings, no redacting type | limitations |
+| SEC-17 | P3 | FIXED | `Instance.Credential` is a `Secret` whose `String`/`GoString`/`MarshalJSON` all redact, so `%v`, `%+v`, `%#v` and a JSON dump cannot print a token; the value is read through `Reveal` where it is used | `TestConfigFormattingNeverPrintsACredential` |
 | SEC-18 | P3 | **FIXED** | `t17`/`t27` — size checked before decode | `t39` |
 | SEC-19 | P2 | **FIXED** (merged) | `t11` — every job transition is guarded | `t38` pass on fencing |
 

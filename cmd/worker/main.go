@@ -71,7 +71,7 @@ func run() error {
 		settings := make([]magento.InstanceSettings, 0, len(cfg.Modules.Magento.Instances))
 		for _, inst := range cfg.Modules.Magento.Instances {
 			settings = append(settings, magento.InstanceSettings{
-				ID: inst.ID, Endpoint: inst.Endpoint, StoreCode: inst.StoreCode, Credential: inst.Credential,
+				ID: inst.ID, Endpoint: inst.Endpoint, StoreCode: inst.StoreCode, Credential: inst.Credential.Reveal(),
 			})
 		}
 		magentoResolver, err = magento.NewResolverFromSettings(settings)
