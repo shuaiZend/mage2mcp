@@ -295,6 +295,12 @@ The two open P2 items are bounded and were accepted by the audit, not overlooked
 
 The third partial item, `PERF-16`, is a performance optimisation, not a behavioural
 defect.
+
+Each of the three has a note laying out the options and their costs, so the remaining
+work is a choice rather than an open question:
+[`rel-16-design-options.md`](rel-16-design-options.md),
+[`mcp-08-envelope-options.md`](mcp-08-envelope-options.md),
+[`perf-16-options.md`](perf-16-options.md).
 `PERF-16`'s bulk update and bulk attribute-option paths now fan out under a bound; the
 configurable children path is deliberately left sequential because it fails fast on the
 first child error and reports that one SKU. Running children concurrently would make
