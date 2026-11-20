@@ -26,24 +26,30 @@ func (s *Store) CreateImportBatch(ctx context.Context, instanceID, jobID, format
 	}
 	var id string
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO import_batches (instance_id, job_id, format, state, payload)
-		SELECT $1, NULLIF($2,'')::uuid, $3, 'running', $4
+		INSERT INTO import_batches (instance_id, job_id, format, state, payload, lease_expires_at, attempt)
+		SELECT $1, NULLIF($2,'')::uuid, $3, 'running', $4, now() + $5::interval, 1
 		WHERE NOT EXISTS (
 			SELECT 1 FROM import_batches
 			WHERE job_id = NULLIF($2,'')::uuid AND state = 'running')
-		RETURNING id::text`, instanceID, jobID, format, payload).Scan(&id)
+		RETURNING id::text`, instanceID, jobID, format, payload, ImportBatchLease.String()).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("storage: create import batch: %w", err)
 	}
-	// The job already has an open batch: resume it.
+	// The job already has an open batch: resume it and take the lease over. Without
+	// the renewal a retry would inherit an expiring lease and could be reaped while
+	// it is still working.
 	if err := s.pool.QueryRow(ctx, `
-		SELECT id::text FROM import_batches
-		WHERE job_id = NULLIF($1,'')::uuid AND state = 'running'
-		ORDER BY created_at DESC, id DESC
-		LIMIT 1`, jobID).Scan(&id); err != nil {
+		UPDATE import_batches
+		SET lease_expires_at = now() + $2::interval, attempt = attempt + 1, updated_at = now()
+		WHERE id = (
+			SELECT id FROM import_batches
+			WHERE job_id = NULLIF($1,'')::uuid AND state = 'running'
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1)
+		RETURNING id::text`, jobID, ImportBatchLease.String()).Scan(&id); err != nil {
 		return "", fmt.Errorf("storage: resume import batch: %w", err)
 	}
 	return id, nil
@@ -62,7 +68,7 @@ func (s *Store) FinishImportBatch(ctx context.Context, id string, result *jobs.I
 	if _, err := tx.Exec(ctx, `
 		UPDATE import_batches SET state = $2, total = $3, processed = $4, created = $5,
 			updated = $6, skipped = $7, failed = $8, error_code = NULLIF($9,''),
-			updated_at = now(), finished_at = now()
+			updated_at = now(), finished_at = now(), lease_expires_at = NULL
 		WHERE id = $1::uuid`, id, state, result.Total, result.Processed, result.Created,
 		result.Updated, result.Skipped, result.Failed, errorCode); err != nil {
 		return fmt.Errorf("storage: update import batch: %w", err)
@@ -230,6 +236,42 @@ func (s *Store) PruneImportBatches(ctx context.Context, olderThan time.Time) (in
 	tag, err := s.pool.Exec(ctx, `DELETE FROM import_batches WHERE created_at < $1`, olderThan)
 	if err != nil {
 		return 0, fmt.Errorf("storage: prune import batches: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ImportBatchLease is how long an opened batch stays owned by the worker that
+// created it. It is deliberately generous: an 8 MiB import is hundreds of
+// upstream calls, and reaping a batch that is still working would report a live
+// import as failed. The reaper also requires that no live job still claims the
+// batch, so a slow-but-alive worker is never reaped.
+const ImportBatchLease = 30 * time.Minute
+
+// ReapImportBatches marks running batches whose lease expired and whose owning job
+// is no longer live as failed, and returns how many were recovered.
+//
+// This is the exit a crashed worker never reaches: without it a batch stays
+// 'running' forever and magento.import.batches cannot tell a dead import from a
+// live one.
+func (s *Store) ReapImportBatches(ctx context.Context) (int64, error) {
+	if s == nil || s.pool == nil {
+		return 0, fmt.Errorf("storage: not open")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE import_batches b
+		SET state = 'failed', error_code = 'worker_lost', updated_at = now(),
+		    finished_at = now(), lease_expires_at = NULL
+		WHERE b.state = 'running'
+		  AND b.lease_expires_at IS NOT NULL
+		  AND b.lease_expires_at < now()
+		  -- A live job still owns the batch: the worker is alive, just slow.
+		  AND NOT EXISTS (
+			SELECT 1 FROM jobs j
+			WHERE j.id = b.job_id
+			  AND j.state IN ('queued','running','canceling')
+			  AND j.lease_expires_at > now())`)
+	if err != nil {
+		return 0, fmt.Errorf("storage: reap import batches: %w", err)
 	}
 	return tag.RowsAffected(), nil
 }

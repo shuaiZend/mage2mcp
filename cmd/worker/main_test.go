@@ -105,6 +105,10 @@ type fakePruner struct {
 	calls   int
 }
 
+// ReapImportBatches satisfies importBatchPruner; the pruning tests do not exercise
+// the reaper, but the interface is shared.
+func (f *fakePruner) ReapImportBatches(context.Context) (int64, error) { return 0, nil }
+
 func (f *fakePruner) PruneImportBatches(context.Context, time.Time) (int64, error) {
 	f.calls++
 	if f.onCall != nil {

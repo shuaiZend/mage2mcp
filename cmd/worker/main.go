@@ -165,6 +165,7 @@ func run() error {
 	worker.Handle(jobs.TypeReconcile, newReconcileHandler(ledger, magentoObserver(magentoResolver), logger))
 	go enqueueReconcileLoop(ctx, queue, logger)
 	go pruneImportBatches(ctx, store, logger)
+	go reapImportBatches(ctx, store, logger)
 	logger.Info("worker starting", "version", version, "queue", "postgresql")
 	if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -361,6 +362,33 @@ func enqueueReconcileLoop(ctx context.Context, queue *storage.JobQueue, logger *
 type importBatchPruner interface {
 	PruneImportBatches(ctx context.Context, olderThan time.Time) (int64, error)
 	PruneJobs(ctx context.Context, olderThan time.Time) (int64, error)
+	ReapImportBatches(ctx context.Context) (int64, error)
+}
+
+// reapImportBatches recovers batches orphaned by a crashed worker. A batch is
+// opened 'running' and only FinishImportBatch closes it, so a SIGKILL leaves it
+// running forever and magento.import.batches reports an import that is not
+// happening. The lease is short enough to recover promptly and long enough that a
+// healthy but slow import is never mistaken for a dead one; ReapImportBatches also
+// requires that no live job still claims the batch.
+func reapImportBatches(ctx context.Context, store importBatchPruner, logger *slog.Logger) {
+	const interval = 5 * time.Minute
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		reaped, err := store.ReapImportBatches(ctx)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			logger.Error("import batch recovery failed", "err", err)
+		case reaped > 0:
+			logger.Warn("recovered import batches left running by a dead worker", "count", reaped)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func pruneImportBatches(ctx context.Context, store importBatchPruner, logger *slog.Logger) {

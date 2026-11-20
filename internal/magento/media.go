@@ -25,6 +25,9 @@ type MediaEntry struct {
 	Disabled  bool     `json:"disabled"`
 	Types     []string `json:"types"`
 	File      string   `json:"file"`
+	// DemotedFrom lists the entries that lost a role to this one. Magento moves
+	// `image` silently, so the caller is told which base image was replaced.
+	DemotedFrom []int `json:"demoted_from,omitempty"`
 }
 
 // ProductMedia lists the media gallery of one product.
@@ -102,6 +105,13 @@ func (s *Service) UploadMedia(ctx context.Context, sku string, in MediaUploadInp
 		return nil, err
 	}
 	var created MediaEntry
+	// The gallery is read at most once and reused: it resolves the created entry
+	// after a scalar response and finds the previous holders of a role.
+	var gallery []MediaEntry
+	var galleryErr error
+	if len(raw) > 0 || len(in.Types) > 0 {
+		gallery, galleryErr = s.ProductMedia(ctx, sku)
+	}
 	if len(raw) > 0 {
 		id, scalar, err := decodeMediaEntryID(raw)
 		if err != nil {
@@ -111,22 +121,62 @@ func (s *Service) UploadMedia(ctx context.Context, sku string, in MediaUploadInp
 			// Resolve the gallery entry so the caller sees the stored file,
 			// label, position, and roles rather than an echo of the request.
 			created = MediaEntry{ID: id, MediaType: "image", Label: in.Label, Position: in.Position, Types: in.Types}
-			if entries, listErr := s.ProductMedia(ctx, sku); listErr == nil {
-				for _, entry := range entries {
-					if entry.ID == id {
-						created = entry
-						break
-					}
+			for _, entry := range gallery {
+				if entry.ID == id {
+					created = entry
+					break
 				}
 			}
-			return &created, nil
-		}
-		if err := json.Unmarshal(raw, &created); err != nil {
+		} else if err := json.Unmarshal(raw, &created); err != nil {
 			return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable media payload").WithCause(err)
 		}
 	}
 	_ = content
+	// Assigning `image` to a second entry silently moves the role: Magento does not
+	// report that the previous holder was demoted, so the operator loses a base
+	// image without being told. Clear the role on the previous holders explicitly
+	// and hand the caller their ids.
+	if galleryErr == nil {
+		created.DemotedFrom = s.clearPreviousRoleHolders(ctx, sku, created.ID, in.Types, gallery)
+	}
 	return &created, nil
+}
+
+// clearPreviousRoleHolders removes the roles just granted to entryID from every
+// other entry of the product, so the demotion is explicit and reported instead of
+// silent. Failures are not fatal: the upload succeeded, and the caller learns that
+// the cleanup did not complete from the returned slice being partial.
+func (s *Service) clearPreviousRoleHolders(ctx context.Context, sku string, entryID int, roles []string, entries []MediaEntry) []int {
+	if len(roles) == 0 || len(entries) == 0 {
+		return nil
+	}
+	wanted := make(map[string]struct{}, len(roles))
+	for _, role := range roles {
+		wanted[role] = struct{}{}
+	}
+	var demoted []int
+	for _, entry := range entries {
+		if entry.ID == entryID {
+			continue
+		}
+		kept := make([]string, 0, len(entry.Types))
+		var dropped bool
+		for _, role := range entry.Types {
+			if _, clash := wanted[role]; clash {
+				dropped = true
+				continue
+			}
+			kept = append(kept, role)
+		}
+		if !dropped {
+			continue
+		}
+		if _, err := s.UpdateMedia(ctx, sku, entry.ID, MediaUpdateInput{Types: kept}); err != nil {
+			continue
+		}
+		demoted = append(demoted, entry.ID)
+	}
+	return demoted
 }
 
 // decodeMediaEntryID extracts the new gallery entry id from a

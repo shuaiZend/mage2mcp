@@ -390,3 +390,49 @@ func TestStageErrorBoundsUpstreamMessage(t *testing.T) {
 		t.Fatalf("upstream_message length = %d, want it bounded", got)
 	}
 }
+
+// MAG-15: assigning `image` to a second entry moves the role silently in Magento,
+// so the previous base image is demoted without the operator being told. The
+// upload must clear the role on the previous holder and report which entry lost it.
+func TestUploadMediaClearsPreviousRoleHolder(t *testing.T) {
+	var putPaths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/media"):
+			// Magento returns the new entry id as a scalar.
+			_, _ = io.WriteString(w, `7`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/media"):
+			_, _ = io.WriteString(w, `[
+				{"id":3,"media_type":"image","file":"/a/old.jpg","types":["image","small_image"]},
+				{"id":7,"media_type":"image","file":"/a/new.jpg","types":["image"]}]`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/media/3"):
+			// UpdateMedia reads the entry before writing it.
+			_, _ = io.WriteString(w, `{"id":3,"media_type":"image","file":"/a/old.jpg","types":["image","small_image"]}`)
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/media/3"):
+			putPaths = append(putPaths, r.URL.Path)
+			_, _ = io.WriteString(w, `{"id":3,"types":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	entry, err := svc.UploadMedia(context.Background(), "SKU-1", MediaUploadInput{
+		Filename: "new.png", MIMEType: "image/png", DataBase64: onePixelPNGBase64,
+		Types: []string{"image"},
+	})
+	if err != nil {
+		t.Fatalf("UploadMedia: %v", err)
+	}
+	if len(putPaths) != 1 {
+		t.Fatalf("PUT calls = %v, want the previous holder cleared once", putPaths)
+	}
+	if len(entry.DemotedFrom) != 1 || entry.DemotedFrom[0] != 3 {
+		t.Fatalf("demoted_from = %v, want [3] so the operator learns which base image was replaced", entry.DemotedFrom)
+	}
+}
+
+// onePixelPNGBase64 is a 1x1 PNG, enough for the upload validation path.
+const onePixelPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="

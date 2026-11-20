@@ -103,7 +103,7 @@ wiring is reverted.
 | MAG-12 | P2 | **FIXED** | `t28` — fractional quantity refused with a typed error | `t28` |
 | MAG-13 | P2 | **FIXED** | `t16` — page-capped reads cannot drive a write | `t25` pass |
 | MAG-14 | P1 | **FIXED** | `t10` — integer entry id accepted; fixtures corrected | `t15` pass |
-| MAG-15 | P2 | DEFER | Media dedupe/ledger | limitations |
+| MAG-15 | P2 | PARTIAL | The role move is now explicit: an upload clears `image`/`small_image`/`thumbnail` on the previous holders and returns `demoted_from`. Content hashing and crash-resume remain PLANNED and are documented as such | `TestUploadMediaClearsPreviousRoleHolder` |
 | MAG-16 | P2 | **FIXED** | Fallback no longer fabricates an option: an unconfirmed write returns `conflict`, an unreadable read-back returns `upstream_unavailable` | `TestCreateProductOptionDoesNotFabricateOnMissingReadBack`, `TestCreateProductOptionReadBackFailureIsNotSuccess` |
 | MAG-17 | P2 | FIXED | Stage errors now carry `upstream_status`, `upstream_message` (bounded) and `store_code`, and a stage failure is never retryable | `TestStageErrorPreservesUpstreamDiagnostics` |
 | MAG-18 | P2 | **FIXED** | `t30` — 5xx on a non-idempotent write is UNKNOWN, not retryable | `t38` |
@@ -131,7 +131,7 @@ wiring is reverted.
 | REL-09 | P2 | **VERIFIED** | `t11` — bounded, ordered, `SKIP LOCKED` recovery | `t38` |
 | REL-10 | P2 | **VERIFIED** | `t11` — recovery respects `max_attempts` | `t38` |
 | REL-11 | P2 | **FIXED** | A retried job resumes its open batch instead of opening a second one; the by-job lookup orders by `created_at DESC, id DESC` | `TestCreateImportBatchResumesOpenBatch` |
-| REL-12 | P2 | DEFER | `import_batches` has no lease | limitations |
+| REL-12 | P2 | FIXED | `import_batches` carries a lease and attempt; `ReapImportBatches` marks a batch whose lease expired and whose job is no longer live as `failed/worker_lost` | `TestReapImportBatchesRecoversOrphanedRunningBatch` |
 | REL-13 | P2 | **VERIFIED** | `t11` — lookup matches the real unique index | `t38` |
 | REL-14 | P2 | **VERIFIED** | `t11` — Cancel reports only real transitions | `t38` |
 | REL-15 | P2 | **VERIFIED** | `t11` — suite is repeatable on a dirty database | `t38` (ran twice) |

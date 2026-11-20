@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
 	"github.com/shuaiZend/mage2mcp/internal/magento"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
@@ -47,10 +49,30 @@ func reconcileStore(t *testing.T) (*storage.Store, *storage.OperationLedger) {
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	// Each test uses its own instance and leaves nothing due for reconciliation:
-	// resolved rows are terminal and deferred rows carry a backoff, so no cleanup
-	// is needed (and the store does not expose raw SQL to the worker).
+	// ClaimReconcilable is global: it returns the oldest due unknown operation in
+	// the schema, whatever test created it. A deferred row from an earlier run
+	// stays unknown and becomes due again, so without this the handler spends its
+	// batch on leftovers and the test's own operations are never reached.
+	pushDueOperationsAside(t, url)
 	return store, storage.NewOperationLedger(store)
+}
+
+// pushDueOperationsAside makes every pre-existing unknown operation not due, so a
+// test observes only the operations it created.
+func pushDueOperationsAside(t *testing.T, url string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect for cleanup: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	if _, err := conn.Exec(ctx,
+		`UPDATE operations SET reconcile_after = now() + interval '1 hour'
+		 WHERE state = 'unknown'`); err != nil {
+		t.Fatalf("defer leftover unknown operations: %v", err)
+	}
 }
 
 // unknownOperation seeds one operation and drives it to unknown.
