@@ -63,7 +63,11 @@ analysis in Phase 3 and are not required for local development.
 The official MCP Go SDK v1.8.0 declares `go 1.25.0`, and the planned direct
 dependencies require Go 1.26, so **Go 1.26 is the hard minimum** (see
 [ADR-0013](docs/adr/0013-go-toolchain-floor.md)). Go 1.27.x is the current toolchain;
-CI tests both Go 1.26.x and Go 1.27.x. An older local Go installation can still build the project when toolchain
+Run `scripts/local-ci.sh` before pushing: it executes gofmt, vet, race tests,
+golangci-lint, documentation checks, and actionlint/shellcheck when installed.
+GitHub CI is manual and release-time only, so the local run is the contract.
+
+CI (when dispatched) tests Go 1.27.x. An older local Go installation can still build the project when toolchain
 auto-download is enabled:
 
 ```bash

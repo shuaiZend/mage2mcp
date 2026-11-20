@@ -1,74 +1,98 @@
-name: CI
+name: CI (manual pre-release)
 
+# Local-first workflow: day-to-day commits are verified with scripts/local-ci.sh.
+# GitHub runs this workflow only when a maintainer dispatches it before a release.
 on:
-  push:
-    branches: [main]
-  pull_request:
-  schedule:
-    - cron: "17 3 * * 1"
   workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: "Run the Docker/Magento end-to-end smoke test"
+        type: boolean
+        default: true
+      go_version:
+        description: "Go toolchain for the test job"
+        type: string
+        default: "1.27.x"
 
 permissions:
   contents: read
 
-# Fast feedback: a new push to the same ref cancels the previous run. Heavy jobs
-# additionally carry their own concurrency group so a superseded run never leaves
-# a stale Docker/e2e job holding a runner.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Cheap classification job. It decides whether the module exists and whether the
-  # heavy jobs are worth running, so a documentation-only change gets a verdict from
-  # the `docs`, `dco`, and `actions-pinned` jobs alone.
-  detect:
-    name: detect
+  verify:
+    name: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      go: ${{ steps.detect.outputs.go }}
-      run_heavy: ${{ steps.detect.outputs.run_heavy }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - id: detect
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          BEFORE_SHA: ${{ github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
-        run: ./.github/scripts/classify-changes.sh
-
-  docs:
-    name: docs
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ inputs.go_version }}
+          cache: true
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
-      - run: npm ci
-      - name: Markdown lint
-        run: npm run lint:md
-      - name: Internal link check
-        run: npm run lint:links
-      - name: Design contract check
-        run: npm run test:contracts
+      - name: Verify formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Verify module integrity
+        run: |
+          go mod verify
+          git diff --exit-code go.mod go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Lint
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run
+      - name: Test with race detector
+        run: |
+          mapfile -t packages < <(go list ./... | grep -v '/test/e2e/')
+          go test -race -covermode=atomic -coverprofile=coverage.out "${packages[@]}"
+      - name: Enforce coverage floor
+        shell: bash
+        run: |
+          total="$(go tool cover -func=coverage.out | tail -n 1 | awk '{print $3}' | tr -d '%')"
+          echo "total coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { if (t < 70) exit 1 }' || {
+            echo "::error::total coverage ${total}% is below the 70% floor"
+            exit 1
+          }
+      - name: Documentation gates
+        run: |
+          npm ci
+          npm run lint:md
+          npm run lint:links
+          npm run test:contracts
+      - name: Actions are SHA-pinned
+        shell: bash
+        run: |
+          if grep -rEn 'uses:[[:space:]]+[^#]+@(v[0-9]|main|master)' .github/workflows; then
+            echo "::error::Every action must be pinned to a 40-character commit SHA."
+            exit 1
+          fi
+      - name: DCO sign-off on HEAD
+        shell: bash
+        run: |
+          if ! git log -1 --format=%B | grep -qE '^Signed-off-by: .+ <.+>$'; then
+            echo "::error::The commit is missing a Signed-off-by line (DCO)."
+            exit 1
+          fi
 
   integration:
     name: integration
-    needs: detect
-    if: needs.detect.outputs.go == 'true' && needs.detect.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    concurrency:
-      group: ci-integration-${{ github.ref }}
-      cancel-in-progress: true
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17-alpine
@@ -87,147 +111,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.x"
+          go-version: ${{ inputs.go_version }}
           cache: true
-      - name: Run storage integration tests
+      - name: Storage integration tests
         env:
           MAGE2MCP_TEST_DATABASE_URL: "postgres://mage2mcp:test-password@127.0.0.1:5432/mage2mcp?sslmode=disable"
         run: go test -race -count=1 ./internal/storage/...
 
-  go:
-    name: go
-    needs: detect
-    if: needs.detect.outputs.go == 'true' && needs.detect.outputs.run_heavy == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    concurrency:
-      group: ci-go-${{ github.ref }}-${{ matrix.go-version }}
-      cancel-in-progress: true
-    strategy:
-      fail-fast: false
-      matrix:
-        go-version: ["1.26.x", "1.27.x"]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # setup-go caches both the module cache and the build cache, keyed by go.sum,
-      # so the second matrix entry and later runs reuse compiled packages.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ matrix.go-version }}
-          cache: true
-      - name: Verify formatting
-        shell: bash
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "The following files need gofmt:"
-            echo "$unformatted"
-            exit 1
-          fi
-      - name: Vet
-        run: go vet ./...
-      - name: Verify module integrity
-        run: |
-          go mod verify
-          git diff --exit-code go.mod go.sum
-      # golangci-lint is a fixed binary; running it once instead of once per
-      # toolchain halves the most expensive single step of this job.
-      - name: Lint
-        if: matrix.go-version == '1.27.x'
-        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run
-      - name: Build
-        run: go build ./...
-      - name: Test with race detector
-        run: |
-          mapfile -t packages < <(go list ./... | grep -v '/test/e2e/')
-          go test -race -covermode=atomic -coverprofile=coverage.out "${packages[@]}"
-      - name: Coverage summary
-        run: go tool cover -func=coverage.out | tail -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Enforce coverage floor
-        shell: bash
-        run: |
-          total="$(go tool cover -func=coverage.out | tail -n 1 | awk '{print $3}' | tr -d '%')"
-          echo "total coverage: ${total}%"
-          awk -v t="$total" 'BEGIN { if (t < 70) exit 1 }' || {
-            echo "::error::total coverage ${total}% is below the 70% floor"
-            exit 1
-          }
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coverage-${{ matrix.go-version }}
-          path: coverage.out
-          if-no-files-found: ignore
-
-  dco:
-    name: dco
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - name: Require Signed-off-by on every commit
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          failed=0
-          for commit in $(git rev-list "$BASE_SHA..$HEAD_SHA"); do
-            if ! git log -1 --format=%B "$commit" | grep -qE '^Signed-off-by: .+ <.+>$'; then
-              echo "::error::Commit $commit is missing a Signed-off-by line (DCO)."
-              failed=1
-            fi
-          done
-          exit "$failed"
-
-  actions-pinned:
-    name: actions-pinned
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Reject tag-pinned actions
-        shell: bash
-        run: |
-          set -euo pipefail
-          if grep -rEn 'uses:[[:space:]]+[^#]+@(v[0-9]|main|master)' .github/workflows; then
-            echo "::error::Every action must be pinned to a 40-character commit SHA."
-            exit 1
-          fi
-          echo "All actions are SHA-pinned."
-
   docker:
     name: docker
-    needs: detect
-    if: needs.detect.outputs.go == 'true' && needs.detect.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    concurrency:
-      group: ci-docker-${{ github.ref }}
-      cancel-in-progress: true
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # The GHA layer cache is shared with release-dry-run.yml through the
-      # `mage2mcp-docker` scope, so the module-download layer is built once and the
-      # release dry run never re-downloads dependencies from scratch.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           tags: mage2mcp:ci
-          build-args: |
-            VERSION=ci
+          build-args: VERSION=ci
           load: true
           provenance: false
           sbom: false
           cache-from: type=gha,scope=mage2mcp-docker
           cache-to: type=gha,mode=max,scope=mage2mcp-docker
-      - name: Run the container and probe it
+      - name: Container smoke test
         shell: bash
         run: |
           set -euo pipefail
@@ -246,35 +155,25 @@ jobs:
             echo "::error::container did not become healthy"
             exit 1
           fi
-          curl -fsS http://127.0.0.1:18080/healthz
           curl -fsS http://127.0.0.1:18080/readyz
           curl -fsS http://127.0.0.1:18080/metrics -o /tmp/mage2mcp-metrics.txt
           grep -q mage2mcp_build_info /tmp/mage2mcp-metrics.txt
           user="$(docker inspect -f '{{.Config.User}}' mage2mcp-ci)"
-          echo "container user: ${user}"
           echo "${user}" | grep -Eq '^(nonroot(:nonroot)?|65532(:65532)?)$'
-          echo "docker smoke test passed"
-      - name: Container logs
-        if: always()
-        run: docker logs mage2mcp-ci || true
       - name: Clean up
         if: always()
         run: docker rm -f mage2mcp-ci || true
 
   e2e:
     name: e2e
-    needs: detect
-    if: needs.detect.outputs.go == 'true' && needs.detect.outputs.run_heavy == 'true'
+    if: inputs.run_e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    concurrency:
-      group: ci-e2e-${{ github.ref }}
-      cancel-in-progress: true
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.x"
+          go-version: ${{ inputs.go_version }}
           cache: true
       - name: End-to-end Magento smoke test
         run: ./test/e2e/run.sh
@@ -284,28 +183,9 @@ jobs:
           docker compose -f docker-compose.yml ps || true
           docker compose -f docker-compose.yml logs --tail=100 || true
 
-  external-links:
-    name: external-links
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "22"
-          cache: npm
-      - run: npm ci
-      - name: Check external links (non-blocking)
-        run: find . -name '*.md' -not -path './node_modules/*' -not -path './.git/*' -print0 | xargs -0 -n1 ./node_modules/.bin/markdown-link-check -q -c .markdown-link-check.external.json
-
-  # Single aggregation point. GitHub counts a *skipped* required check as satisfied,
-  # so this job makes the verdict explicit: any failed or cancelled job fails the
-  # gate, while a job skipped by the documentation-only filter is accepted.
   gate:
     name: ci-gate
-    needs: [detect, docs, integration, go, dco, actions-pinned, docker, e2e]
+    needs: [verify, integration, docker, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

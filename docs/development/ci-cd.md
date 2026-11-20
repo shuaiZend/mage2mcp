@@ -9,24 +9,35 @@ section below are authoritative.
 [Threat model](../security/threat-model.md),
 [ADR-0007](../adr/0007-multi-agent-development.md).
 
-## Current state (v0.9.x)
+## Current state (v0.11.x): local-first, release-time CI
 
-- `ci.yml`: `detect`/`classify` → `docs`, `dco`, `actions-pinned`, `go` (1.26.x +
-  1.27.x), `integration`, `docker`, `e2e`, `external-links` (advisory), and a
-  `ci-gate` job that fails on any failed/cancelled job and treats skipped jobs as
-  not applicable. Docs-only changes run only the lightweight jobs; the classifier
-  fails safe to the full set on schedules, manual runs, unknown base SHAs, and
-  non-allowlisted paths.
-- Caching: `setup-go` module/build cache on every Go job; one shared buildx layer
-  cache (`mage2mcp-docker`) reused by the `docker` and `release-dry-run` jobs;
-  golangci-lint runs on the 1.27 leg only.
-- `security.yml`: `detect`, `gitleaks`, `govulncheck`, `gosec`, `scorecard`.
-- `release.yml`: `verify` (tag commit checks green) → `publish` (binaries, SBOM,
-  checksums, cosign, multi-arch image, GitHub release) behind the `release`
-  environment with a required reviewer.
-- Required checks on `main`: docs, dco, actions-pinned, go 1.26/1.27, gosec,
-  govulncheck, gitleaks, dependency-review, integration, docker, release-dry-run.
-  `ci-gate` is a candidate to become the single required check.
+Day-to-day commits are verified locally with `scripts/local-ci.sh`; GitHub does
+**not** run tests on push or pull request.
+
+- `ci.yml` (manual `workflow_dispatch` only): `verify` (gofmt, go mod verify, vet,
+  golangci-lint, race tests, 70% coverage floor, docs lint/links/contracts,
+  actions-pinned, DCO on HEAD), `integration` (PostgreSQL storage tests), `docker`
+  (build + container smoke test), optional `e2e` (default on), and `ci-gate`.
+- `security.yml`: weekly schedule + manual dispatch (gitleaks, govulncheck, gosec,
+  scorecard); no per-commit runs.
+- `dependency-review.yml`: only runs on dependabot PRs.
+- `release.yml`: on a `v*` tag, `verify` checks the tag is on `main`, runs gofmt,
+  vet, `go test -race`, `go mod verify`, govulncheck, and builds the release
+  binaries; `publish` (release environment, required reviewer) signs, attests,
+  publishes the multi-arch image and the GitHub release.
+- The old `release-dry-run.yml` was removed; the release `verify` job builds the
+  same artifacts without publishing.
+- Branch ruleset: no required status checks (nothing runs per commit) and no
+  mandatory approval for the solo maintainer; PRs remain required with linear
+  history.
+
+### Before a release
+
+```bash
+scripts/local-ci.sh          # local gates
+gh workflow run ci.yml       # optional: full GitHub pre-release run
+git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+```
 
 This document describes what CI proves, what it does not yet prove, and how the
 pipeline may change. It is normative: a workflow that contradicts it is a bug in one

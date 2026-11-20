@@ -1,15 +1,16 @@
 # Release checklist
 
 The release workflow (`.github/workflows/release.yml`) runs on a `v*` tag and is
-split into a read-only **verify** job and a restricted **publish** job. The dry
-run (`.github/workflows/release-dry-run.yml`) exercises the same build script
-without signing or publishing.
+split into a read-only **verify** job (tests, vet, formatting, build) and a
+restricted **publish** job. Day-to-day commits are verified locally with
+`scripts/local-ci.sh`; GitHub CI is manual and release-time only.
 
 ## Before tagging
 
-- [ ] `main` is green: docs, dco, actions-pinned, go 1.26/1.27, gosec,
-      govulncheck, gitleaks, dependency-review, integration.
-- [ ] `release-dry-run` passed on the target commit.
+- [ ] `scripts/local-ci.sh` passed on the target commit.
+- [ ] Optional full pre-release run: `gh workflow run ci.yml` and wait for
+      `ci-gate` to pass.
+- [ ] Weekly security workflow is green (or run it manually).
 - [ ] `CHANGELOG.md` has an entry for the version with breaking changes and
       migration notes called out.
 - [ ] Configuration additions are documented in `docs/configuration.md`.

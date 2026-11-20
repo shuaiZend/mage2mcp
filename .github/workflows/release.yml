@@ -29,22 +29,17 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-      - name: Verify the commit passed CI
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify formatting
+        shell: bash
         run: |
-          set -euo pipefail
-          # Exclude this workflow's own check runs (verify/publish): they are
-          # created by the tag push itself and would otherwise count as pending.
-          conclusion=$(gh api "repos/${{ github.repository }}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
-            --jq '[.check_runs[]
-                   | select(.name != "verify" and .name != "publish")
-                   | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")
-                   ] | length')
-          if [ "$conclusion" != "0" ]; then
-            echo "::error::The tagged commit has failing or pending checks."
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files need gofmt:"
+            echo "$unformatted"
             exit 1
           fi
+      - name: Vet
+        run: go vet ./...
       - name: Verify module integrity
         run: go mod verify
       - name: Test
