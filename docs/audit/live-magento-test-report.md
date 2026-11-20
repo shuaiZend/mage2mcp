@@ -263,3 +263,39 @@ operations resolved (seven to `failed`, one to `reconciliation_inconclusive`).
 
 This is the strongest argument for running the live harness with a worker: the
 unit tests, the contract tests and the first live run all passed without it.
+
+## 10. Re-verification after the full fix set
+
+The whole remediation series was re-run against the same store once more, from a
+binary built at the final commit of that work, to check that eight rounds of changes
+had not regressed anything on a real store.
+
+| Run | Pass | Soft | Fail | Skipped |
+|---|---|---|---|---|
+| Baseline v0.11.1 | 78 | 17 | 2 | 26 |
+| After the live-defect fixes | 82 | 16 | 1 | 24 |
+| After the full fix set (re-run) | **82** | 16 | 1 | 24 |
+
+Identical to the previous run, so the later changes — session binding, metrics
+authorisation, readiness that consults the store, upstream text moved server-side,
+batched import lookups, explicit media role transfer — introduced no live
+regression. The one remaining hard failure is still the store's missing
+custom-option route, which is an environment limitation rather than a gateway
+defect.
+
+The deployment was also checked at the endpoint level after the re-deploy:
+
+```text
+/readyz  200 {"status":"ready","tools":102}
+/healthz 200
+/metrics 200        (authentication disabled in this test deployment)
+```
+
+`/readyz` answering 200 here is meaningful: the readiness check now pings the
+database, so the 200 says the store is reachable, not merely that the process
+started.
+
+One case, `magento.import.resume`, flips between `pass` and `soft-fail` across runs
+because its outcome depends on whether the job it resumes happens to have failed
+rows. It is marked soft for that reason; the variance is in the fixture, not in the
+gateway.
