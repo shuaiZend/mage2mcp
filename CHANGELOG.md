@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-20
+
+Patch release: structured tool-error envelopes (G12) and a documentation refresh.
+
 ### Fixed
 
 - G12: every tool now returns a structured error envelope
@@ -603,7 +607,8 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.1
 [0.8.0]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.0
 [0.7.6]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.6
 [0.7.5]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.5
