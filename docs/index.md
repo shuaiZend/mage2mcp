@@ -32,7 +32,8 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Configuration](configuration.md) | Every configuration key, default, and environment override |
 | [Compatibility](compatibility.md) | Supported components, interface stability promises, version support |
 | [Production acceptance](operations/production-acceptance.md) | Read-only acceptance against a live Magento instance and the fixes it produced |
-| [v0.7.5 release notes](releases/v0.7.5.md) | Highlights, breaking changes, upgrade and verification checklist |
+| [v0.7.6 release notes](releases/v0.7.6.md) | Highlights, breaking changes, upgrade and verification checklist |
+| [v0.7.5 release notes](releases/v0.7.5.md) | Previous release notes |
 | [v0.7.4 release notes](releases/v0.7.4.md) | Previous release notes |
 | [v0.7.3 release notes](releases/v0.7.3.md) | Previous release notes |
 | [v0.7.2 release notes](releases/v0.7.2.md) | Previous release notes |
