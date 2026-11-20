@@ -110,7 +110,7 @@ wiring is reverted.
 | MAG-19 | P2 | **FIXED** | `store_id` is refused with `unsupported_capability` instead of being silently dropped; the store is selected by the instance's `store_code` | `TestCreateOrderRejectsStoreID` (asserts zero upstream calls) |
 | MAG-20 | P1 | FIXED | Addresses carry `region_id`; Magento rejects Polish addresses without it, so order creation could not succeed | `TestOrderAddressCarriesRegionID` |
 | MAG-21 | P2 | FIXED | `writableTypeIDs` and the schema enum now offer only `simple`/`virtual`; the other types are refused with the missing capability named | `TestCreateProductRejectsBundleAndDownloadable` |
-| MAG-22 | P3 | DEFER | Grouped product creation | limitations |
+| MAG-22 | P3 | DOC | Grouped product creation is not implemented; `writableTypeIDs` and the create schema offer only simple and virtual, and grouped products remain readable. A capability gap recorded as such rather than a defect | `TestCreateProductRejectsBundleAndDownloadable` |
 | MAG-23 | P1 | FIXED | A `live` workflow starts the gateway against a real store and runs the read matrix; 12 recorded payloads are replayed in `verify` so real shapes stay under regression without an environment | `.github/workflows/live.yml` (verified on Actions run 44796533194 and locally against the demo store: 43 pass, 0 fail), `TestConformanceProductList`. Precondition: the live job needs `MAGENTO_ENDPOINT`/`MAGENTO_CREDENTIAL` secrets, and skips with a summary note without them |
 | MAG-24 | P3 | DOC | Configurable price relationship | `t34` |
 | MAG-25 | P3 | DOC | Capability matrix said sales read-only | `t33` |
@@ -165,7 +165,7 @@ wiring is reverted.
 | MCP-07 | P2 | **FIXED** — every required input property carries a description: 229 across the standalone schemas, plus product.create/update and configurable.create asserted at runtime. The four import tools the finding says lack `instance` already carried it; the remaining unannotated properties are optional |
 | MCP-08 | P2 | **PARTIAL** — every output property of every registered tool now carries a description, enforced at registration by `requireDescribedOutput`, and `inventory.sources` reports `total`/`truncated`. A common output envelope (instance, request id) is still absent |
 | MCP-09 | P2 | **FIXED** (`t18`+`t19`) — one envelope shape, code once, no SQLSTATE leak |
-| MCP-10 | P3 | DEFER — naming register recorded |
+| MCP-10 | P3 | **FIXED** — the naming exceptions are recorded as a register in `docs/mcp-tools.md` with the reason each stays; renaming is a breaking change that needs a deprecation cycle, not a cleanup pass |
 | QA-01 | P2 | **FIXED** — `local-ci.sh` runs the suite with `-json` and fails on any skipped test, so the durability layer can no longer be skipped silently |
 | QA-03 | P2 | **FIXED** — `go test -count=2 ./internal/storage/` passes; the non-repeatable queries now order deterministically |
 | QA-04 | P2 | **FIXED** — `cmd/admin` has tests covering the usage contract, the ordering fix and the approval audit row |

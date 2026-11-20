@@ -49,6 +49,21 @@ Rules enforced by `internal/mcp/registry`:
 - No version suffix; no instance-specific name. Instances are a parameter.
 - Names are stable once released; a rename requires a deprecation cycle.
 
+### Naming register: the recorded exceptions
+
+The grammar above is a guideline, and a few shipped names do not follow it. They are
+listed here rather than renamed: every tool name is a public contract, so a rename is
+a breaking change for every client and needs a deprecation cycle, not a cleanup pass.
+This register is the record MCP-10 asked for.
+
+| Exception | Names | Why it stays |
+|---|---|---|
+| Singular/plural split | `magento.attribute.sets` next to `magento.attributes.*`; `magento.categories.flat` next to `magento.category.*`; `magento.products.get`/`.bulk_update` next to `magento.product.*`; `magento.orders.geography` next to `magento.order.*` | The plural forms read as collection operations and the singular ones as single-resource operations. Both readings are defensible; changing either breaks clients. |
+| Four segments | `magento.attributes.options.create`, `.bulk_create`, `.delete`; `magento.product.media.*`; `magento.product.options.*`; `magento.product.links.*`; `magento.product.tier_prices.*`; `magento.configurable.*` | These address a sub-resource of a resource, and a three-segment name would have to flatten the distinction (for example `magento.media.upload` would lose which product it belongs to). |
+| Verb placement | `magento.product.links.add`/`.remove`/`.bulk` versus `magento.product.links` | The bare form lists, the suffixed forms mutate. Consistent with `product.options` / `product.options.create`. |
+
+A future major version may normalise these; until then this table is the contract.
+
 ## 3. Tool definition fields
 
 | Field | Required | Rule enforced by the registry |
