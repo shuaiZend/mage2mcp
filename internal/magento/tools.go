@@ -111,6 +111,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newInventorySourcesTool(lookup), newInventoryStocksTool(lookup), newMediaGetTool(lookup),
 		newOrderSummaryTool(lookup), newProductOptionsTool(lookup), newMediaTypesTool(lookup),
 		newCustomerGroupsTool(lookup), newTaxClassesTool(lookup), newOrderGeographyTool(lookup),
+		newSalesAnalysisTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1845,6 +1846,64 @@ func newOrderGeographyTool(lookup serviceLookup) registry.Tool {
 					return nil, orderGeographyOutput{}, err
 				}
 				return nil, orderGeographyOutput{Geography: *geography}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	salesAnalysisToolName  = "magento.sales.analysis"
+	salesAnalysisToolTitle = "Magento business analysis"
+
+	salesAnalysisToolDescription = "Aggregates an order window into business metrics: orders, revenue, AOV, discounts, shipping, tax, " +
+		"guest share, refunds, daily trend, status/payment/store/currency mix, shipping country, and top SKUs. " +
+		"Only aggregates are returned; customer PII never enters the result. Scans at most 20,000 orders and reports truncation. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	salesAnalysisSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
+		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD."},
+		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD."},
+		"max_orders": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 10000}
+	}, "required": ["instance", "from", "to"], "additionalProperties": false}`
+)
+
+type salesAnalysisInput struct {
+	Instance  string `json:"instance"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	MaxOrders int    `json:"max_orders"`
+}
+
+type salesAnalysisOutput struct {
+	Analysis SalesAnalysis `json:"analysis"`
+}
+
+func newSalesAnalysisTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(salesAnalysisToolName, salesAnalysisToolTitle, salesAnalysisToolDescription)
+	t.Capability = "magento.order.read"
+	t.Timeout = 120 * time.Second
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(salesAnalysisToolName, salesAnalysisToolTitle, salesAnalysisToolDescription, salesAnalysisSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in salesAnalysisInput) (*mcp.CallToolResult, salesAnalysisOutput, error) {
+				from, err := parseSummaryTime(in.From, "from")
+				if err != nil {
+					return nil, salesAnalysisOutput{}, err
+				}
+				to, err := parseSummaryTime(in.To, "to")
+				if err != nil {
+					return nil, salesAnalysisOutput{}, err
+				}
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, salesAnalysisOutput{}, err
+				}
+				analysis, err := svc.AnalyzeSales(ctx, from, to, in.MaxOrders)
+				if err != nil {
+					return nil, salesAnalysisOutput{}, err
+				}
+				return nil, salesAnalysisOutput{Analysis: *analysis}, nil
 			})
 		return nil
 	}

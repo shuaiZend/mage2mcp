@@ -101,6 +101,7 @@ Common behavior:
 | `magento.shipment.get` | read | 30s | One shipment by id |
 | `magento.creditmemo.list` | read | 30s | Credit memos of one order |
 | `magento.creditmemo.get` | read | 30s | One credit memo by id |
+| `magento.sales.analysis` | read | 120s | Business summary: KPIs, daily trend, status/payment/store mix, country, top SKUs (aggregates only) |
 | `magento.sales.summary` | read | 30s | Per-day order count, grand-total revenue, and item quantity over a bounded window (max 1000 orders, truncation reported) |
 | `magento.product.create` | write + confirmation | 60s | Simple/virtual/downloadable/bundle create with EAV attributes plus description, short_description, url_key, meta_title, meta_keywords, meta_description (SEO guidance in the schema) |
 | `magento.product.update` | write + confirmation | 60s | Merge update of provided fields, including SEO/content fields and category/website reassignment |
