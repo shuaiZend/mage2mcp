@@ -26,4 +26,4 @@ for target in $TARGETS; do
   done
 done
 
-echo "built $(ls -1 "$OUTDIR" | wc -l | tr -d ' ') artifacts in $OUTDIR"
+echo "built $(find "$OUTDIR" -maxdepth 1 -type f | wc -l | tr -d ' ') artifacts in $OUTDIR"
