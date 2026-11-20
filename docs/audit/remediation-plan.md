@@ -275,3 +275,28 @@ Those two findings are the argument for the review gate existing at all.
 | 2026-11-20 | Initial plan from the three completed domain audits. |
 | 2026-11-20 | Full plan with all seven areas, outcomes, and the two review findings that changed the result. |
 | 2026-11-20 | Final: all eight P0s verified, consolidated review `t52` PASS, test-isolation defect fixed, gate deterministic. |
+
+### Findings triaged late
+
+These were present in the audit reports but had never been entered in this plan, so the ledger was understating the remaining work. All are P3.
+
+| ID | Severity | Status | Detail | Evidence |
+|---|---|---|---|---|
+| PERF-15 | P3 | DEFER | `inventory.status_batch` issues one request per SKU; Magento exposes no batch status endpoint, so this needs a different query shape | limitations |
+| PERF-16 | P3 | DEFER | Bulk write paths are N sequential round-trips; batching needs the async bulk endpoint | limitations |
+| PERF-17 | P3 | DEFER | `FinishImportBatch` writes one round-trip per failed row | limitations |
+| PERF-18 | P3 | DEFER | Import status polling reads and discards the payload column | limitations |
+| PERF-19 | P3 | DEFER | Retry is a fixed 5-second re-run, no exponential or jitter | limitations |
+| PERF-20 | P3 | FIXED | The admin-token refresh is single-flight: waiters block on the in-flight refresh instead of on the mutex, so one slow token fetch no longer queues every request of the instance behind it | `TestAdminTokenRefreshIsSingleFlight` |
+| PERF-21 | P3 | DEFER | Invoice/shipment/credit-memo list queries stop at 100 rows with no pagination | limitations |
+| PERF-22 | P3 | DEFER | The import payload is parsed twice per execution | limitations |
+| QA-02 | P3 | DEFER | `go test -cover ./...` and `make cover` fail on the pinned toolchain | limitations |
+| QA-07 | P3 | DEFER | Coverage targets in the testing strategy are missed and unenforced | limitations |
+| QA-08 | P3 | DEFER | The testing strategy describes suites that do not exist | limitations |
+| QA-09 | P3 | DEFER | Two storage tests are mislabelled: they exercise a nil store, not a closed one | limitations |
+| QA-10 | P3 | DEFER | The job queue lifecycle test claims an arbitrary default-queue job | limitations |
+
+| REL-17 | P3 | ALREADY-FIXED | Recorded in the reliability review as fixed before the audit closed | `docs/audit/reliability-review.md` |
+| REL-18 | P3 | ALREADY-FIXED | Recorded in the reliability review as fixed before the audit closed | `docs/audit/reliability-review.md` |
+| REL-19 | P3 | ALREADY-FIXED | `canceling` is a real job state with a lease invariant | `internal/storage/migrations/000005_job_fencing.up.sql` |
+| REL-20 | P3 | ALREADY-FIXED | Recorded in the reliability review as fixed before the audit closed | `docs/audit/reliability-review.md` |

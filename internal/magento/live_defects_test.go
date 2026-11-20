@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -759,5 +760,63 @@ func TestReadToolsDeriveTheirCapabilityFromTheNamespace(t *testing.T) {
 		if got := toolMetadata(tool, "t", "d").Capability; got != want {
 			t.Errorf("%s capability = %q, want %q", tool, got, want)
 		}
+	}
+}
+
+// PERF-20: Token() used to hold the signer mutex across the token HTTP request, so
+// every concurrent request of an instance blocked behind one token fetch — a slow
+// token endpoint queued a whole worker's traffic behind it. The refresh is now
+// single-flight: waiters block on the in-flight refresh, and only one fetch happens.
+func TestAdminTokenRefreshIsSingleFlight(t *testing.T) {
+	var fetches int
+	var mu sync.Mutex
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		fetches++
+		mu.Unlock()
+		time.Sleep(200 * time.Millisecond) // a slow token endpoint
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `"token-1"`)
+	}))
+	defer ts.Close()
+
+	signer, err := NewAdminTokenSigner("demo_admin", "demo_admin123")
+	if err != nil {
+		t.Fatalf("NewAdminTokenSigner: %v", err)
+	}
+	if err := signer.Bind(ts.URL, "default"); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	const goroutines = 20
+	start := time.Now()
+	var wg sync.WaitGroup
+	errsCh := make(chan error, goroutines)
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := signer.tokenFor(context.Background()); err != nil {
+				errsCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errsCh)
+	for err := range errsCh {
+		t.Fatalf("Token: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	mu.Lock()
+	got := fetches
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("token fetches = %d, want 1 for %d concurrent callers", got, goroutines)
+	}
+	// Serialized callers would take goroutines*200ms. One fetch plus the waiters
+	// finishing should be well under a second.
+	if elapsed > 2*time.Second {
+		t.Fatalf("elapsed = %v, want the callers to share one fetch", elapsed)
 	}
 }

@@ -47,11 +47,15 @@ type AdminTokenSigner struct {
 	username string
 	password string
 
-	mu         sync.Mutex
-	baseURL    string
-	storeCode  string
-	token      string
-	expiresAt  time.Time
+	mu        sync.Mutex
+	baseURL   string
+	storeCode string
+	token     string
+	expiresAt time.Time
+	// refreshing is closed when an in-flight refresh finishes. Waiters block on it
+	// instead of on the mutex, so one slow token fetch does not queue every request
+	// of the instance behind it.
+	refreshing chan struct{}
 	ttl        time.Duration
 	skew       time.Duration
 	now        func() time.Time
@@ -170,9 +174,12 @@ func (s *AdminTokenSigner) Sign(req *http.Request) error {
 	return nil
 }
 
-// tokenFor returns a cached token or mints a new one. The mutex is held across
-// the token request so a burst of calls mints exactly one token instead of one
-// per in-flight request.
+// tokenFor returns a cached token or mints a new one.
+//
+// A burst of calls mints exactly one token: the first caller starts the refresh and
+// the rest wait on it. They wait on a channel rather than on the mutex, because
+// holding the mutex across the token request serialized every request of the
+// instance behind one fetch.
 func (s *AdminTokenSigner) tokenFor(ctx context.Context) (string, error) {
 	if s == nil {
 		return "", errs.New(errs.CodeInternal, "Magento admin token signer is not configured")
@@ -180,8 +187,6 @@ func (s *AdminTokenSigner) tokenFor(ctx context.Context) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.baseURL == "" || s.storeCode == "" {
 		return "", errs.New(errs.CodeInternal, "Magento admin token signer is not bound to an instance")
 	}
@@ -189,19 +194,62 @@ func (s *AdminTokenSigner) tokenFor(ctx context.Context) (string, error) {
 	if now == nil {
 		now = time.Now
 	}
+	// The fast path holds the mutex only long enough to read the cached value.
+	s.mu.Lock()
 	if s.token != "" && now().Before(s.expiresAt.Add(-s.skew)) {
-		return s.token, nil
+		cached := s.token
+		s.mu.Unlock()
+		return cached, nil
 	}
+	// A refresh is already in flight: wait for it rather than starting a second one.
+	// Holding the mutex across the HTTP call serialized every request of the
+	// instance behind one token fetch, so a slow token endpoint queued a whole
+	// worker's traffic behind it.
+	wait := s.refreshing
+	s.mu.Unlock()
+	if wait != nil {
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return "", errs.New(errs.CodeUpstreamTimeout, "the admin token refresh did not finish before the deadline")
+		}
+		s.mu.Lock()
+		cached := s.token
+		s.mu.Unlock()
+		if cached != "" {
+			return cached, nil
+		}
+		return "", errs.New(errs.CodeUnauthenticated, "the admin token refresh failed; re-authentication is required")
+	}
+
+	s.mu.Lock()
+	if s.token != "" && now().Before(s.expiresAt.Add(-s.skew)) {
+		// Another goroutine refreshed while we waited for the lock.
+		cached := s.token
+		s.mu.Unlock()
+		return cached, nil
+	}
+	done := make(chan struct{})
+	s.refreshing = done
+	s.mu.Unlock()
+
 	token, err := s.fetchToken(ctx)
+
+	s.mu.Lock()
+	s.refreshing = nil
+	if err == nil {
+		ttl := s.ttl
+		if ttl <= 0 {
+			ttl = DefaultAdminTokenTTL
+		}
+		s.token = token
+		s.expiresAt = now().Add(ttl)
+	}
+	s.mu.Unlock()
+	close(done)
 	if err != nil {
 		return "", err
 	}
-	ttl := s.ttl
-	if ttl <= 0 {
-		ttl = DefaultAdminTokenTTL
-	}
-	s.token = token
-	s.expiresAt = now().Add(ttl)
 	return token, nil
 }
 
