@@ -86,6 +86,12 @@ func parseLevel(level string) slog.Level {
 // nested inside slog.Group values, so checking the key alone covers nested
 // secrets. The groups argument is unused.
 func redactAttr(_ []string, a slog.Attr) slog.Attr {
+	// A boolean can never be a credential, and redacting one hides operational
+	// state an operator needs: `authorization_enabled=false` used to be printed
+	// as "[REDACTED]" because its key contains "authorization".
+	if a.Value.Kind() == slog.KindBool {
+		return a
+	}
 	if isSecretKey(a.Key) {
 		return slog.String(a.Key, redacted)
 	}

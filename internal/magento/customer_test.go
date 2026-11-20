@@ -332,6 +332,8 @@ func TestUpdateCustomerAddressValidation(t *testing.T) {
 	}
 }
 
+// A store that exposes neither the dedicated address route nor a readable
+// customer still gets the actionable capability error, not a bare not_found.
 func TestCreateCustomerAddressUnsupportedRoute(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
@@ -343,6 +345,6 @@ func TestCreateCustomerAddressUnsupportedRoute(t *testing.T) {
 		City: "London", Postcode: "N1", CountryID: "GB", Telephone: "123",
 	})
 	if errs.CodeOf(err) != errs.CodeUnsupportedCapability {
-		t.Fatalf("err = %v", err)
+		t.Fatalf("err = %v, want unsupported_capability", err)
 	}
 }

@@ -189,3 +189,30 @@ func TestNewLoggerLevelNames(t *testing.T) {
 		})
 	}
 }
+
+// LIVE-6: a boolean attribute is never a credential, so redaction must not hide
+// it. `authorization_enabled` was previously printed as "[REDACTED]" because its
+// key contains "authorization", which hid whether authorization was on.
+func TestLoggerDoesNotRedactBooleanOperationalFlags(t *testing.T) {
+	var buf bytes.Buffer
+	logger := NewLogger("info", "json", &buf)
+	logger.Warn("authorization state", "authorization_enabled", false, "auth_enabled", false)
+	out := buf.String()
+	if strings.Contains(out, `"authorization_enabled":"[REDACTED]"`) {
+		t.Fatalf("boolean flag was redacted: %s", out)
+	}
+	if !strings.Contains(out, `"authorization_enabled":false`) {
+		t.Fatalf("boolean flag missing from output: %s", out)
+	}
+}
+
+// A string value under the same key is still redacted: the exemption is for the
+// value type, not for the key.
+func TestLoggerStillRedactsStringUnderAuthKey(t *testing.T) {
+	var buf bytes.Buffer
+	logger := NewLogger("info", "json", &buf)
+	logger.Warn("auth", "authorization", "Bearer abc123")
+	if !strings.Contains(buf.String(), "[REDACTED]") {
+		t.Fatalf("string credential was not redacted: %s", buf.String())
+	}
+}

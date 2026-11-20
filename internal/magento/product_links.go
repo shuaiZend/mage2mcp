@@ -73,7 +73,7 @@ func (s *Service) AddProductLink(ctx context.Context, in ProductLinkInput) error
 	if err := validateProductLink(in); err != nil {
 		return err
 	}
-	body := productLinkBody{Entity: in}
+	body := productLinkBody{Items: []ProductLinkInput{in}}
 	_, err := s.client.do(ctx, http.MethodPost, "/products/"+url.PathEscape(in.SKU)+"/links", nil, body)
 	return err
 }
@@ -101,8 +101,12 @@ func (s *Service) RemoveProductLink(ctx context.Context, sku, linkType, linkedSK
 	return err
 }
 
+// productLinkBody wraps one link in the array shape the endpoint expects.
+//
+// POST /products/{sku}/links takes `{"items": [...]}`; sending `{"entity": ...}`
+// is rejected with `"%fieldName" is required` naming `items`.
 type productLinkBody struct {
-	Entity ProductLinkInput `json:"entity"`
+	Items []ProductLinkInput `json:"items"`
 }
 
 func validateProductLink(in ProductLinkInput) error {

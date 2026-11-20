@@ -1613,6 +1613,7 @@ const (
 			"city": {"type": "string", "minLength": 1, "maxLength": 255},
 			"postcode": {"type": "string", "minLength": 1, "maxLength": 255},
 			"country_id": {"type": "string", "pattern": "^[A-Z]{2}$"},
+			"region_id": {"type": "integer", "minimum": 1, "description": "Numeric region (state/province) id. Magento requires it for countries that have a region directory (Poland among them) and rejects the address otherwise."},
 			"telephone": {"type": "string", "minLength": 1, "maxLength": 255},
 			"region": {"type": "string", "maxLength": 255}
 		}}`
@@ -1642,6 +1643,7 @@ type orderAddressWire struct {
 	CountryID string   `json:"country_id"`
 	Telephone string   `json:"telephone"`
 	Region    string   `json:"region"`
+	RegionID  int      `json:"region_id"`
 }
 
 type orderCreateInput struct {
@@ -2251,6 +2253,7 @@ const (
 		"country_id": {"type": "string", "pattern": "^[A-Z]{2}$"},
 		"telephone": {"type": "string", "minLength": 1, "maxLength": 255},
 		"region": {"type": "string", "maxLength": 255},
+		"region_id": {"type": "integer", "minimum": 1, "description": "Numeric region (state/province) id. Magento requires it for countries that have a region directory (Poland among them)."},
 		"default_billing": {"type": "boolean", "default": false},
 		"default_shipping": {"type": "boolean", "default": false}
 	}, "required": ["instance", "customer_id", "firstname", "lastname", "street", "city", "postcode", "country_id", "telephone"], "additionalProperties": false}`
@@ -2271,6 +2274,7 @@ type customerAddressCreateInput struct {
 	CountryID       string   `json:"country_id"`
 	Telephone       string   `json:"telephone"`
 	Region          string   `json:"region"`
+	RegionID        int      `json:"region_id"`
 	DefaultBilling  bool     `json:"default_billing"`
 	DefaultShipping bool     `json:"default_shipping"`
 }
@@ -2301,7 +2305,7 @@ func newCustomerAddressCreateTool(lookup serviceLookup) registry.Tool {
 				address, err := svc.CreateCustomerAddress(ctx, in.CustomerID, CustomerAddressInput{
 					Firstname: in.Firstname, Lastname: in.Lastname, Street: in.Street,
 					City: in.City, Postcode: in.Postcode, CountryID: in.CountryID,
-					Telephone: in.Telephone, Region: in.Region,
+					Telephone: in.Telephone, Region: in.Region, RegionID: in.RegionID,
 					DefaultBilling: in.DefaultBilling, DefaultShipping: in.DefaultShipping,
 				})
 				if err != nil {
@@ -2354,6 +2358,7 @@ const (
 		"country_id": {"type": "string", "pattern": "^[A-Z]{2}$"},
 		"telephone": {"type": "string", "minLength": 1, "maxLength": 255},
 		"region": {"type": "string", "maxLength": 255},
+		"region_id": {"type": "integer", "minimum": 1, "description": "Numeric region (state/province) id, required by Magento for countries with a region directory."},
 		"default_billing": {"type": "boolean"},
 		"default_shipping": {"type": "boolean"}
 	}, "required": ["instance", "customer_id", "address_id"], "additionalProperties": false}`
@@ -2371,6 +2376,7 @@ type customerAddressUpdateInput struct {
 	CountryID       *string   `json:"country_id"`
 	Telephone       *string   `json:"telephone"`
 	Region          *string   `json:"region"`
+	RegionID        *int      `json:"region_id"`
 	DefaultBilling  *bool     `json:"default_billing"`
 	DefaultShipping *bool     `json:"default_shipping"`
 }
@@ -2391,7 +2397,7 @@ func newCustomerAddressUpdateTool(lookup serviceLookup) registry.Tool {
 				address, err := svc.UpdateCustomerAddress(ctx, in.CustomerID, in.AddressID, CustomerAddressUpdateInput{
 					Firstname: in.Firstname, Lastname: in.Lastname, Street: in.Street,
 					City: in.City, Postcode: in.Postcode, CountryID: in.CountryID,
-					Telephone: in.Telephone, Region: in.Region,
+					Telephone: in.Telephone, Region: in.Region, RegionID: in.RegionID,
 					DefaultBilling: in.DefaultBilling, DefaultShipping: in.DefaultShipping,
 				})
 				if err != nil {

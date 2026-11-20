@@ -3,6 +3,7 @@
 package magento
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -579,11 +580,35 @@ func (s *Service) CreateSource(ctx context.Context, in InventorySourceInput) (*I
 	if err != nil {
 		return nil, err
 	}
+	// A successful create answers with an empty array (`[]`) or no body at all,
+	// not with the created object. Treating that as an unreadable payload told the
+	// caller the create had failed when the source now exists, so an empty answer
+	// is success and the source is read back by code.
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("[]")) || bytes.Equal(trimmed, []byte("null")) {
+		return s.sourceByCode(ctx, in.SourceCode)
+	}
 	var source InventorySource
-	if err := json.Unmarshal(raw, &source); err != nil {
+	if err := json.Unmarshal(trimmed, &source); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable inventory-source payload").WithCause(err)
 	}
 	return &source, nil
+}
+
+// sourceByCode reads one source back after a create that returned no body.
+func (s *Service) sourceByCode(ctx context.Context, code string) (*InventorySource, error) {
+	sources, err := s.Sources(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range sources {
+		if sources[i].SourceCode == code {
+			return &sources[i], nil
+		}
+	}
+	return nil, errs.New(errs.CodeUpstreamUnavailable,
+		"Magento accepted the inventory-source create but the source is not listed; verify it before retrying").
+		WithDetail("source_code", code)
 }
 
 // LinkStockSource attaches a source to a stock with

@@ -202,3 +202,41 @@ in a specific, reproducible way that the contract tests could not see.
 
 See [`live-magento-defects.md`](live-magento-defects.md) for the defect list and
 fix proposals.
+
+## 9. Fix verification (same day, second and third runs)
+
+After the defects were fixed, the same harness was re-run against a **second
+gateway container** on the same server (`m2m-fixed`, port `127.0.0.1:18081`,
+same network, database, config and demo store) built from the patched tree. The
+production container was left untouched.
+
+| Run | Pass | Soft | Fail | Skipped |
+|---|---|---|---|---|
+| Baseline v0.11.1 | 78 | 17 | 2 | 26 |
+| After the fixes | **81** | 17 | **1** | **24** |
+
+Per-defect outcome:
+
+| Defect | Before | After |
+|---|---|---|
+| LIVE-1 order placement method | `unsupported_capability`, no order created | **order created on the real store** (`entity_id 3`, `grand_total 29.5`); the call itself now reports `operation_unknown` — see LIVE-7 |
+| LIVE-2 `links.add` body | `validation_failed` | **pass** |
+| LIVE-3 `inventory.source_create` | `upstream_unavailable` | **pass** |
+| LIVE-4 `customer.addresses.create` | `unsupported_capability` | **pass** |
+| LIVE-5 `total_count` projections | `total: 0`, `truncated: false` | **`order.search` / `customer.search` / `sales.summary` pass** |
+| LIVE-6 log redaction | `authorization_enabled: "[REDACTED]"` | **`authorization_enabled: false`** in the startup log |
+| MAG-20 `region_id` | not expressible | **expressible**; verified as the only remaining blocker for PL addresses, then fixed |
+
+The single remaining hard failure is `magento.product.options.create`, which is the
+store limitation described in §5 (the demo exposes no custom-option route), not a
+gateway defect.
+
+**Still open**: LIVE-7, the reconciliation gap that reports a successfully placed
+order as `operation_unknown`. The order *is* created; the ledger refuses to guess,
+which is the safe behaviour, but an operator has to reconcile by hand. That is why
+`order-write` still shows 0 pass: the case asserts a placed order, and the gateway
+cannot yet confirm it.
+
+The 24 skipped cases remain dependants of that confirmation, so the invoice,
+shipment and credit-memo domains are still unexercised. Fixing LIVE-7 is what
+unlocks them.

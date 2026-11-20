@@ -29,7 +29,7 @@ const (
 	// reconcileReads is how many times an ambiguous outcome is re-read before an
 	// empty result is treated as proof that nothing was placed. One empty read is
 	// not evidence: a lagging replica would turn it into a duplicate order.
-	reconcileReads = 3
+	reconcileReads = 6
 	// reconciledNotApplied is the ledger error code for an operation that an
 	// ambiguous failure left in doubt and a reconciliation read proved did not
 	// happen. It is not in the taxonomy's ambiguous set, so the ledger accepts it
@@ -47,6 +47,10 @@ type OrderAddressInput struct {
 	CountryID string   `json:"country_id"`
 	Telephone string   `json:"telephone"`
 	Region    string   `json:"region,omitempty"`
+	// RegionID is the numeric region (state/province) id. Magento requires it for
+	// countries that have a region directory — Poland among them — and rejects the
+	// address with `"regionId" is required` without it.
+	RegionID int `json:"region_id,omitempty"`
 }
 
 // OrderItemInput is one line to add to the cart.
@@ -160,7 +164,10 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Create
 		return nil, writeStageError("shipping_information", nil, "", err)
 	}
 	orderBody := placeOrderBody{PaymentMethod: paymentMethod{Method: in.PaymentMethod}}
-	raw, placeErr := s.client.do(ctx, http.MethodPost, "/carts/"+strconv.Itoa(cartID)+"/order", nil, orderBody)
+	// Magento's salesOrderManagementV1 places an order with PUT; POST is not a
+	// route at all and returns 404, which used to be reported as "the store does
+	// not expose the cart place-order route".
+	raw, placeErr := s.client.do(ctx, http.MethodPut, "/carts/"+strconv.Itoa(cartID)+"/order", nil, orderBody)
 	switch classifyOperationError(placeErr) {
 	case operationNotApplied:
 		_ = run.Fail(ctx, string(errs.CodeOf(placeErr)))
@@ -337,7 +344,12 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 
 // reconcileBackoff is the pause between reconciliation reads. It is a variable
 // so a test can shrink it without sleeping for seconds.
-var reconcileBackoff = 250 * time.Millisecond
+//
+// A real store commits the order slightly after the HTTP response is lost, so the
+// window has to outlast that lag: with reconcileReads reads this covers about
+// 2.5 seconds, which was enough on a slow demo store where the order appeared
+// roughly a second after the failed call.
+var reconcileBackoff = 500 * time.Millisecond
 
 // orderRef is the ledger's upstream reference for an order.
 func orderRef(order Order) string {
@@ -398,6 +410,7 @@ type addressPayload struct {
 	CountryID string   `json:"country_id"`
 	Telephone string   `json:"telephone"`
 	Region    string   `json:"region,omitempty"`
+	RegionID  int      `json:"region_id,omitempty"`
 }
 
 func (a OrderAddressInput) toPayload() addressPayload {

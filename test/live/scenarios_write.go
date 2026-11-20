@@ -576,8 +576,9 @@ func writeCases() []Case {
 				return map[string]any{
 					"instance": instance(), "customer_id": e.Int("cust_id"),
 					"firstname": "MCPTEST", "lastname": "Customer",
-					"street": []string{"1 MCPTEST Street"}, "city": "Warsaw",
-					"postcode": "00-001", "country_id": "PL", "telephone": "500600700",
+					"street": []string{"1 MCPTEST Street"}, "city": "Wrocław",
+					"postcode": "50-001", "country_id": "PL", "region_id": 997,
+					"telephone":       "500600700",
 					"default_billing": true, "default_shipping": true,
 				}, nil
 			}, Need: []string{"cust_id"},
@@ -625,8 +626,9 @@ func writeCases() []Case {
 			Args: func(e *Env) (map[string]any, error) {
 				address := map[string]any{
 					"firstname": "MCPTEST", "lastname": "Customer",
-					"street": []string{"1 MCPTEST Street"}, "city": "Warsaw",
-					"postcode": "00-001", "country_id": "PL", "telephone": "500600700",
+					"street": []string{"1 MCPTEST Street"}, "city": "Wrocław",
+					"postcode": "50-001", "country_id": "PL", "region_id": 997,
+					"telephone": "500600700",
 				}
 				return map[string]any{
 					"instance": instance(), "customer_id": e.Int("cust_id"),
@@ -661,8 +663,9 @@ func writeCases() []Case {
 			Args: func(e *Env) (map[string]any, error) {
 				address := map[string]any{
 					"firstname": "MCPTEST", "lastname": "Customer",
-					"street": []string{"1 MCPTEST Street"}, "city": "Warsaw",
-					"postcode": "00-001", "country_id": "PL", "telephone": "500600700",
+					"street": []string{"1 MCPTEST Street"}, "city": "Wrocław",
+					"postcode": "50-001", "country_id": "PL", "region_id": 997,
+					"telephone": "500600700",
 				}
 				return map[string]any{
 					"instance": instance(), "customer_id": e.Int("cust_id"),

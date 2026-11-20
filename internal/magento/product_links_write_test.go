@@ -35,9 +35,17 @@ func TestAddProductLink(t *testing.T) {
 	if method != http.MethodPost || path != "/rest/default/V1/products/SKU-1/links" {
 		t.Fatalf("request = %s %s", method, path)
 	}
-	if body.Entity.SKU != "SKU-1" || body.Entity.LinkType != "related" ||
-		body.Entity.LinkedProductSKU != "SKU-2" || body.Entity.Position != 3 {
-		t.Fatalf("body = %+v", body)
+	// The endpoint takes an items array. Asserting the wire shape is the point of
+	// this test: the previous version asserted an `entity` object, which is what
+	// the gateway sent and what a real Magento rejects with
+	// `"%fieldName" is required` naming `items`.
+	if len(body.Items) != 1 {
+		t.Fatalf("body = %+v, want one element in items", body)
+	}
+	item := body.Items[0]
+	if item.SKU != "SKU-1" || item.LinkType != "related" ||
+		item.LinkedProductSKU != "SKU-2" || item.Position != 3 {
+		t.Fatalf("items[0] = %+v", item)
 	}
 }
 

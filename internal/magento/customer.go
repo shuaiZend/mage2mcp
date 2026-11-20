@@ -5,6 +5,7 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -80,7 +81,9 @@ func (s *Service) SearchCustomers(ctx context.Context, email string, limit, offs
 	query.Set("searchCriteria[filter_groups][0][filters][0][field]", "email")
 	query.Set("searchCriteria[filter_groups][0][filters][0][value]", email)
 	query.Set("searchCriteria[filter_groups][0][filters][0][condition_type]", "eq")
-	query.Set("fields", "items[id,group_id,website_id,store_id,created_in,created_at,updated_at]")
+	// total_count is part of the projection: without it Magento omits the field
+	// and the reported total is always 0.
+	query.Set("fields", "items[id,group_id,website_id,store_id,created_in,created_at,updated_at],total_count")
 	raw, err := s.client.do(ctx, http.MethodGet, "/customers/search", query, nil)
 	if err != nil {
 		return nil, 0, err
@@ -303,14 +306,17 @@ func validateCustomerName(field, value string) error {
 // CustomerAddressInput is one address to create for a customer. PII is accepted
 // because an address requires it; the response is the PII-safe projection.
 type CustomerAddressInput struct {
-	Firstname       string
-	Lastname        string
-	Street          []string
-	City            string
-	Postcode        string
-	CountryID       string
-	Telephone       string
-	Region          string
+	Firstname string
+	Lastname  string
+	Street    []string
+	City      string
+	Postcode  string
+	CountryID string
+	Telephone string
+	Region    string
+	// RegionID is the numeric region id Magento requires for countries with a
+	// region directory.
+	RegionID        int
 	DefaultBilling  bool
 	DefaultShipping bool
 }
@@ -335,14 +341,94 @@ func (s *Service) CreateCustomerAddress(ctx context.Context, customerID int, in 
 	body := customerAddressBody{Address: customerAddressPayload{
 		CustomerID: customerID, Firstname: in.Firstname, Lastname: in.Lastname,
 		Street: in.Street, City: in.City, Postcode: in.Postcode, CountryID: in.CountryID,
-		Telephone: in.Telephone, Region: in.Region,
+		Telephone: in.Telephone, Region: in.Region, RegionID: in.RegionID,
 		DefaultBilling: in.DefaultBilling, DefaultShipping: in.DefaultShipping,
 	}}
 	raw, err := s.client.do(ctx, http.MethodPost, "/customers/"+strconv.Itoa(customerID)+"/addresses", nil, body)
-	if err != nil {
-		return nil, addressRouteError(err, "creation")
+	if err == nil {
+		return decodeCustomerAddress(raw)
 	}
-	return decodeCustomerAddress(raw)
+	if errs.CodeOf(err) != errs.CodeNotFound {
+		return nil, err
+	}
+	// Not every build exposes a dedicated address route. The supported fallback is
+	// to PUT the customer with the new address appended, which is what the old
+	// error message told the operator to do by hand.
+	created, fallbackErr := s.createAddressViaCustomerUpdate(ctx, customerID, body.Address)
+	if fallbackErr != nil && errs.CodeOf(fallbackErr) == errs.CodeNotFound {
+		// Both the dedicated route and the customer read are missing: report the
+		// actionable capability error rather than a bare not_found.
+		return nil, addressRouteError(fallbackErr, "creation")
+	}
+	return created, fallbackErr
+}
+
+// createAddressViaCustomerUpdate adds an address by updating the customer, for
+// instances that do not expose a customer-address create route.
+//
+// The customer is round-tripped as a generic object so every field the store
+// returned is preserved; only addresses is appended to.
+func (s *Service) createAddressViaCustomerUpdate(ctx context.Context, customerID int, address customerAddressPayload) (*CustomerAddress, error) {
+	path := "/customers/" + strconv.Itoa(customerID)
+	raw, err := s.client.do(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var current map[string]any
+	if err := json.Unmarshal(raw, &current); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable customer payload").WithCause(err)
+	}
+	existing, _ := current["addresses"].([]any)
+	// The update body must carry the identity fields the service contract requires.
+	for key, value := range map[string]any{
+		"id": customerID, "website_id": current["website_id"],
+		"email": current["email"], "firstname": current["firstname"], "lastname": current["lastname"],
+	} {
+		if _, ok := current[key]; !ok && value != nil {
+			current[key] = value
+		}
+	}
+	current["id"] = customerID
+	current["addresses"] = append(existing, map[string]any{
+		"firstname": address.Firstname, "lastname": address.Lastname,
+		"street": address.Street, "city": address.City, "postcode": address.Postcode,
+		"country_id": address.CountryID, "telephone": address.Telephone,
+		"region": address.Region, "default_billing": address.DefaultBilling,
+		"default_shipping": address.DefaultShipping,
+	})
+	if _, err := s.client.do(ctx, http.MethodPut, path, nil, map[string]any{"customer": current}); err != nil {
+		return nil, err
+	}
+	// Read back and return the address the store assigned, identified by the
+	// fields we sent plus the largest id among matches.
+	raw, err = s.client.do(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var updated struct {
+		Addresses []map[string]any `json:"addresses"`
+	}
+	if err := json.Unmarshal(raw, &updated); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable customer payload").WithCause(err)
+	}
+	bestID := 0
+	for _, candidate := range updated.Addresses {
+		if fmt.Sprint(candidate["city"]) != address.City {
+			continue
+		}
+		if id, ok := candidate["id"].(float64); ok && int(id) > bestID {
+			bestID = int(id)
+		}
+	}
+	if bestID == 0 {
+		return nil, errs.New(errs.CodeUpstreamUnavailable,
+			"Magento accepted the address but the customer does not list it; verify before retrying").
+			WithDetail("customer_id", strconv.Itoa(customerID))
+	}
+	return &CustomerAddress{
+		ID: bestID, CountryID: address.CountryID, Region: address.Region,
+		DefaultBilling: address.DefaultBilling, DefaultShipping: address.DefaultShipping,
+	}, nil
 }
 
 // DeleteCustomerAddress removes an address with DELETE /addresses/{id}.
@@ -374,6 +460,7 @@ type customerAddressPayload struct {
 	CountryID       string   `json:"country_id,omitempty"`
 	Telephone       string   `json:"telephone,omitempty"`
 	Region          string   `json:"region,omitempty"`
+	RegionID        int      `json:"region_id,omitempty"`
 	DefaultBilling  bool     `json:"default_billing,omitempty"`
 	DefaultShipping bool     `json:"default_shipping,omitempty"`
 }
@@ -406,6 +493,7 @@ type CustomerAddressUpdateInput struct {
 	CountryID       *string
 	Telephone       *string
 	Region          *string
+	RegionID        *int
 	DefaultBilling  *bool
 	DefaultShipping *bool
 }

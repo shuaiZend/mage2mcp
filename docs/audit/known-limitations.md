@@ -41,6 +41,14 @@ placement. Two consequences:
   on a standard Magento 2 instance, because order placement uses `POST` where
   Magento requires `PUT`.
 
+The defects it found were fixed and re-verified the same day against a second
+container built from the patched tree: `links.add`, `inventory.source_create`,
+`customer.addresses.create`, the `total_count` projections, log redaction and
+`region_id` now pass on the real store, and order placement now creates an order
+(the method was wrong). One gap remains open — LIVE-7, where a successfully placed
+order is still reported `operation_unknown` because reconciliation misses an order
+that commits just after the failed call.
+
 That run is manual and is not part of CI. It narrows the risk; it does not close
 it.
 

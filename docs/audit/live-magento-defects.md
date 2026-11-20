@@ -14,14 +14,16 @@ not taken on trust.
 
 ## Summary
 
-| ID | Severity | Area | Defect | Fix size |
-|---|---|---|---|---|
-| LIVE-1 | **P1** | order | Order placement uses `POST`; Magento requires `PUT` | one word |
-| LIVE-2 | P2 | catalog | `product.links.add` sends `entity`; the contract wants `items` | small |
-| LIVE-3 | P2 | inventory | `inventory.source_create` cannot parse a successful `[]` response | small |
-| LIVE-4 | P2 | customer | `customer.addresses.create` gives up instead of using the working `PUT /customers/{id}` fallback | medium |
-| LIVE-5 | **P1** | reporting | `total_count` is omitted from three `fields` projections, so `total` is always 0 and `sales.summary` never reports truncation | small |
-| LIVE-6 | P3 | observability | Log redaction hides non-secret fields (`authorization_enabled`) | small |
+| ID | Severity | Area | Defect | Fix size | Status |
+|---|---|---|---|---|---|
+| LIVE-1 | **P1** | order | Order placement uses `POST`; Magento requires `PUT` | one word | **fixed, verified live** |
+| LIVE-2 | P2 | catalog | `product.links.add` sends `entity`; the contract wants `items` | small | **fixed, verified live** |
+| LIVE-3 | P2 | inventory | `inventory.source_create` cannot parse a successful `[]` response | small | **fixed, verified live** |
+| LIVE-4 | P2 | customer | `customer.addresses.create` gives up instead of using the working `PUT /customers/{id}` fallback | medium | **fixed, verified live** |
+| LIVE-5 | **P1** | reporting | `total_count` is omitted from three `fields` projections, so `total` is always 0 and `sales.summary` never reports truncation | small | **fixed, verified live** |
+| LIVE-6 | P3 | observability | Log redaction hides non-secret fields (`authorization_enabled`) | small | **fixed, verified live** |
+| LIVE-7 | P2 | order | Reconciliation misses an order that commits just after the failed placement, so a successful placement is reported `operation_unknown` | medium | **open** |
+| MAG-20 | **P1** | order | Addresses could not express `region_id`; Magento rejects Polish addresses without it | small | **fixed, verified live** |
 
 LIVE-1 and LIVE-5 are the two that matter: one blocks the entire money path, the
 other makes completeness claims wrong.
@@ -194,6 +196,36 @@ loop. `docs/operations/deployment.md` should state the required mode (`0644` whe
 the file holds only environment-variable references).
 
 ---
+
+## LIVE-7 (P2, open): reconciliation misses a just-committed order
+
+- **Location**: `internal/magento/order_create.go` — `reconcilePlacedOrder` and the
+  `reconcileReads` / `reconcileBackoff` window
+- **Evidence** (fixed build, live store): the order **was created**
+  (`entity_id 3`, `created_at 17:33:32`, `grand_total 29.5`) while the ledger row
+  stayed `unknown` with `upstream_unavailable`, created at `17:33:30.79`. The
+  placement call failed ambiguously about a second before the order materialised.
+- **What is already correct**: the gateway refuses to guess. It records `unknown`,
+  returns `operation_unknown`, and tells the caller to poll instead of retrying —
+  that is exactly the designed behaviour and it prevented a duplicate order.
+- **What is still wrong**: the reconciliation read does not reliably see an order
+  that commits ~1 s after the failed call. The window was widened during this work
+  from 3 reads × 250 ms to 6 × 500 ms (≈2.5 s) and the order *still* missed, which
+  points at the match rather than the wait: the candidate list came back but no
+  candidate carried this cart's `quote_id`, or the `created_at >= since` filter
+  excluded the fresh row. The store does expose `quote_id` (verified: order 3
+  reports `quote_id: 21`), so the projection is not the problem.
+- **Impact**: a successful order is reported as unknown. The operation is safe — no
+  duplicate is placed — but an operator must reconcile by hand, and the agent
+  cannot proceed to invoice the order. On a store as slow as this demo the failure
+  is reproducible.
+- **Proposed fix**: reconcile against the cart directly instead of by search.
+  Magento keeps the cart after a successful placement, so `GET /carts/{id}` and
+  `GET /carts/{id}/order` are the authoritative link; fall back to the search only
+  when the cart no longer exists. Keep the ledger semantics unchanged.
+- **Test**: a CONTRACT test where the placement returns a 5xx, the customer search
+  returns no candidate, and `GET /carts/{id}/order` returns an order — the tool must
+  reconcile to `succeeded` rather than `unknown`.
 
 ## Suggested order of work
 

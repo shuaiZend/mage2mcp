@@ -30,7 +30,10 @@ var (
 	incrementIDRE    = regexp.MustCompile(`^[A-Za-z0-9-]{1,32}$`)
 	orderSearchField = "items[entity_id,increment_id,status,state,store_id,customer_id," +
 		"created_at,updated_at,grand_total,subtotal,discount_amount,shipping_amount," +
-		"tax_amount,total_qty_ordered,order_currency_code]"
+		"tax_amount,total_qty_ordered,order_currency_code]," +
+		// total_count must be projected explicitly: `fields` is a whitelist, so
+		// omitting it makes Magento omit the field and every total reads as 0.
+		"total_count"
 )
 
 // OrderItem is one line of an order. It carries no customer data.
@@ -180,6 +183,10 @@ func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesS
 	byDate := map[string]*SalesDay{}
 	limit := maxOrderLimit
 	totalAvailable := 0
+	// scannedAll is set when a page came back short, which is the only proof that
+	// the window holds no further orders. Reaching the cap without it means the
+	// scan was truncated whether or not total_count was available.
+	scannedAll := false
 	for offset := 0; offset < maxSummaryOrders; offset += limit {
 		query, err := orderSearchCriteria(OrderQuery{
 			CreatedFrom:  from.UTC().Format(time.RFC3339),
@@ -229,6 +236,7 @@ func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesS
 			totalAvailable = payload.TotalCount
 		}
 		if len(payload.Items) < limit {
+			scannedAll = true
 			break
 		}
 	}
@@ -240,7 +248,12 @@ func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesS
 		summary.TotalAvailable = summary.ScannedOrders
 	}
 	summary.ExcludedOrders = summary.TotalAvailable - summary.ScannedOrders
-	summary.Truncated = summary.ExcludedOrders > 0
+	// Truncation is a property of the finished scan. Two independent facts can
+	// establish it: a known total larger than what we scanned, or a scan that
+	// stopped at the cap without ever seeing a short page. Relying on the total
+	// alone was wrong — the total was omitted by the fields projection, so a
+	// capped scan reported truncated=false and claimed completeness.
+	summary.Truncated = summary.ExcludedOrders > 0 || !scannedAll
 	for _, day := range byDate {
 		summary.Days = append(summary.Days, *day)
 	}

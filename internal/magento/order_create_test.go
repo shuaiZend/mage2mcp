@@ -66,7 +66,9 @@ func TestCreateOrderCartFlow(t *testing.T) {
 		"POST /rest/default/V1/customers/7/carts",
 		"POST /rest/default/V1/carts/42/items",
 		"POST /rest/default/V1/carts/42/shipping-information",
-		"POST /rest/default/V1/carts/42/order",
+		// Magento places an order with PUT; POST is not a route. The previous
+		// assertion encoded POST, which is why a broken order path passed CI.
+		"PUT /rest/default/V1/carts/42/order",
 	}
 	for i := range want {
 		if paths[i] != want[i] {
@@ -132,7 +134,7 @@ func TestCreateOrderUnsupportedPlacementCleansCart(t *testing.T) {
 			_, _ = w.Write([]byte(`{}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/carts/42/shipping-information":
 			_, _ = w.Write([]byte(`{}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/carts/42/order":
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/default/V1/carts/42/order":
 			http.NotFound(w, r)
 		case r.Method == http.MethodDelete && r.URL.Path == "/rest/default/V1/carts/42":
 			deleted = true
@@ -194,7 +196,7 @@ func (f *orderFake) handler() http.HandlerFunc {
 			_, _ = io.WriteString(w, `{"item_id":1}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/carts/42/shipping-information":
 			_, _ = io.WriteString(w, `{}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/carts/42/order":
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/default/V1/carts/42/order":
 			if placeStatus != 0 {
 				w.WriteHeader(placeStatus)
 				_, _ = io.WriteString(w, `{"message":"The order could not be placed."}`)
