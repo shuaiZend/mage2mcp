@@ -27,6 +27,7 @@ Common behavior:
 |---|---|---|---|
 | `magento.product.get` | read | 30s | One product by SKU |
 | `magento.products.get` | read | 30s | Up to 50 products by SKU in one search (duplicates ignored) |
+| `magento.tax.classes` | read | 30s | Tax classes (id, name, type) for product writes |
 | `magento.product.tier_prices` | read | 30s | Quantity-based tier prices for one SKU |
 | `magento.product.seo` | read | 30s | Deterministic SEO/content audit (description, short description, url_key, meta_title, meta_description, meta_keywords) with a score and suggestions |
 | `magento.configurable.children` | read | 30s | Child products linked to a configurable product |
@@ -35,6 +36,7 @@ Common behavior:
 | `magento.category.get` | read | 30s | One category by id |
 | `magento.category.tree` | read | 30s | Category subtree under a root, flattened depth-first (depth 1-5) |
 | `magento.category.products` | read | 30s | Products assigned to a category, paginated |
+| `magento.customer.groups` | read | 30s | Customer groups (id, code, tax class) for customer writes |
 | `magento.customer.get` | read | 30s | One customer with a PII-safe projection (no email, name, or addresses) |
 | `magento.customer.search` | read | 30s | Exact-email customer lookup; response omits email, name, and addresses |
 | `magento.customer.create` | write + confirmation | 60s | Creates a customer (accepts PII); response is the PII-safe projection |
