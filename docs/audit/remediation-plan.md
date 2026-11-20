@@ -286,7 +286,7 @@ These were present in the audit reports but had never been entered in this plan,
 | PERF-16 | P3 | DEFER | Bulk write paths are N sequential round-trips; batching needs the async bulk endpoint | limitations |
 | PERF-17 | P3 | DEFER | `FinishImportBatch` writes one round-trip per failed row | limitations |
 | PERF-18 | P3 | DEFER | Import status polling reads and discards the payload column | limitations |
-| PERF-19 | P3 | DEFER | Retry is a fixed 5-second re-run, no exponential or jitter | limitations |
+| PERF-19 | P3 | ALREADY-FIXED | The retry is exponential with jitter (5s × 2^(attempt−1), capped at 5 minutes, ±25%); the audit recorded a constant 5s. `TestJobRetryBackoffGrowsWithAttempts` asserts the growth so a future simplification back to a constant fails |
 | PERF-20 | P3 | FIXED | The admin-token refresh is single-flight: waiters block on the in-flight refresh instead of on the mutex, so one slow token fetch no longer queues every request of the instance behind it | `TestAdminTokenRefreshIsSingleFlight` |
 | PERF-21 | P3 | FIXED | Invoice, shipment and credit-memo lists page until the store runs out (bounded at 1000) and report `total`/`truncated`; one page of 100 used to be returned silently | `TestOrderDocumentListsPagePastOneHundred` |
 | PERF-22 | P3 | DEFER | The import payload is parsed twice per execution | limitations |
