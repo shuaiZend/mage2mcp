@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/toolerr"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
@@ -136,7 +137,7 @@ func mcpTool(name, title, description, schema string) *mcp.Tool {
 func newGetTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(getToolName, getToolTitle, getToolDescription)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(getToolName, getToolTitle, getToolDescription, productGetSchema),
+		toolerr.Add(srv, mcpTool(getToolName, getToolTitle, getToolDescription, productGetSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productGetInput) (*mcp.CallToolResult, productGetOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -155,7 +156,7 @@ func newGetTool(lookup serviceLookup) registry.Tool {
 func newSearchTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(searchToolName, searchToolTitle, searchToolDescription)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(searchToolName, searchToolTitle, searchToolDescription, productSearchSchema),
+		toolerr.Add(srv, mcpTool(searchToolName, searchToolTitle, searchToolDescription, productSearchSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productSearchInput) (*mcp.CallToolResult, productSearchOutput, error) {
 				offset := 0
 				if in.Cursor != "" {
@@ -223,7 +224,7 @@ func newImportValidateTool(lookup serviceLookup) registry.Tool {
 		Permission: registry.PermissionRead, Timeout: toolTimeout,
 		Annotations: mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		Register: func(srv *mcp.Server) error {
-			mcp.AddTool(srv, &mcp.Tool{
+			toolerr.Add(srv, &mcp.Tool{
 				Name: importValidateToolName, Title: importValidateToolTitle,
 				Description: importValidateToolDescription,
 				InputSchema: json.RawMessage(importValidateSchema),
@@ -334,7 +335,7 @@ type salesSummaryOutput struct {
 func newOrderGetTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(orderGetToolName, orderGetToolTitle, orderGetToolDescription)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(orderGetToolName, orderGetToolTitle, orderGetToolDescription, orderGetSchema),
+		toolerr.Add(srv, mcpTool(orderGetToolName, orderGetToolTitle, orderGetToolDescription, orderGetSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderGetInput) (*mcp.CallToolResult, orderGetOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -354,7 +355,7 @@ func newOrderGetTool(lookup serviceLookup) registry.Tool {
 func newOrderSearchTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(orderSearchToolName, orderSearchToolTitle, orderSearchToolDescription)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(orderSearchToolName, orderSearchToolTitle, orderSearchToolDescription, orderSearchSchema),
+		toolerr.Add(srv, mcpTool(orderSearchToolName, orderSearchToolTitle, orderSearchToolDescription, orderSearchSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderSearchInput) (*mcp.CallToolResult, orderSearchOutput, error) {
 				offset := 0
 				if in.Cursor != "" {
@@ -390,7 +391,7 @@ func newOrderSearchTool(lookup serviceLookup) registry.Tool {
 func newSalesSummaryTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(salesSummaryToolName, salesSummaryToolTitle, salesSummaryToolDescription)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(salesSummaryToolName, salesSummaryToolTitle, salesSummaryToolDescription, salesSummarySchema),
+		toolerr.Add(srv, mcpTool(salesSummaryToolName, salesSummaryToolTitle, salesSummaryToolDescription, salesSummarySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in salesSummaryInput) (*mcp.CallToolResult, salesSummaryOutput, error) {
 				from, err := parseSummaryTime(in.From, "from")
 				if err != nil {
@@ -510,7 +511,7 @@ func newCategoryGetTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(categoryGetToolName, categoryGetToolTitle, categoryGetToolDescription)
 	t.Capability = "magento.category.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(categoryGetToolName, categoryGetToolTitle, categoryGetToolDescription, categoryGetSchema),
+		toolerr.Add(srv, mcpTool(categoryGetToolName, categoryGetToolTitle, categoryGetToolDescription, categoryGetSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryGetInput) (*mcp.CallToolResult, categoryGetOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -531,7 +532,7 @@ func newCategoryTreeTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(categoryTreeToolName, categoryTreeToolTitle, categoryTreeToolDescription)
 	t.Capability = "magento.category.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(categoryTreeToolName, categoryTreeToolTitle, categoryTreeToolDescription, categoryTreeSchema),
+		toolerr.Add(srv, mcpTool(categoryTreeToolName, categoryTreeToolTitle, categoryTreeToolDescription, categoryTreeSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryTreeInput) (*mcp.CallToolResult, categoryTreeOutput, error) {
 				rootID := in.RootID
 				if rootID == 0 {
@@ -556,7 +557,7 @@ func newAttributeSetsTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(attributeSetsToolName, attributeSetsToolTitle, attributeSetsToolDescription)
 	t.Capability = "magento.attribute.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(attributeSetsToolName, attributeSetsToolTitle, attributeSetsToolDescription, attributeSetsSchema),
+		toolerr.Add(srv, mcpTool(attributeSetsToolName, attributeSetsToolTitle, attributeSetsToolDescription, attributeSetsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in attributeSetsInput) (*mcp.CallToolResult, attributeSetsOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -577,7 +578,7 @@ func newAttributesTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(attributesToolName, attributesToolTitle, attributesToolDescription)
 	t.Capability = "magento.attribute.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(attributesToolName, attributesToolTitle, attributesToolDescription, attributesSchema),
+		toolerr.Add(srv, mcpTool(attributesToolName, attributesToolTitle, attributesToolDescription, attributesSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in attributesInput) (*mcp.CallToolResult, attributesOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -658,7 +659,7 @@ type sourceItemsOutput struct {
 func newProductMediaTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(productMediaToolName, productMediaToolTitle, productMediaToolDescription)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(productMediaToolName, productMediaToolTitle, productMediaToolDescription, productMediaSchema),
+		toolerr.Add(srv, mcpTool(productMediaToolName, productMediaToolTitle, productMediaToolDescription, productMediaSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productMediaInput) (*mcp.CallToolResult, productMediaOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -679,7 +680,7 @@ func newStockStatusTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(stockStatusToolName, stockStatusToolTitle, stockStatusToolDescription)
 	t.Capability = "magento.inventory.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(stockStatusToolName, stockStatusToolTitle, stockStatusToolDescription, stockStatusSchema),
+		toolerr.Add(srv, mcpTool(stockStatusToolName, stockStatusToolTitle, stockStatusToolDescription, stockStatusSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in stockStatusInput) (*mcp.CallToolResult, stockStatusOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -700,7 +701,7 @@ func newSourceItemsTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(sourceItemsToolName, sourceItemsToolTitle, sourceItemsToolDescription)
 	t.Capability = "magento.inventory.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(sourceItemsToolName, sourceItemsToolTitle, sourceItemsToolDescription, sourceItemsSchema),
+		toolerr.Add(srv, mcpTool(sourceItemsToolName, sourceItemsToolTitle, sourceItemsToolDescription, sourceItemsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in sourceItemsInput) (*mcp.CallToolResult, sourceItemsOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -800,7 +801,7 @@ func newOrderHistoryTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(orderHistoryToolName, orderHistoryToolTitle, orderHistoryToolDescription)
 	t.Capability = "magento.order.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(orderHistoryToolName, orderHistoryToolTitle, orderHistoryToolDescription, orderIDOnlySchema),
+		toolerr.Add(srv, mcpTool(orderHistoryToolName, orderHistoryToolTitle, orderHistoryToolDescription, orderIDOnlySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderIDInput) (*mcp.CallToolResult, orderHistoryOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -821,7 +822,7 @@ func newInvoiceListTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(invoiceListToolName, invoiceListToolTitle, invoiceListToolDescription)
 	t.Capability = "magento.invoice.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(invoiceListToolName, invoiceListToolTitle, invoiceListToolDescription, orderIDOnlySchema),
+		toolerr.Add(srv, mcpTool(invoiceListToolName, invoiceListToolTitle, invoiceListToolDescription, orderIDOnlySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderIDInput) (*mcp.CallToolResult, invoiceListOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -842,7 +843,7 @@ func newInvoiceGetTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(invoiceGetToolName, invoiceGetToolTitle, invoiceGetToolDescription)
 	t.Capability = "magento.invoice.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(invoiceGetToolName, invoiceGetToolTitle, invoiceGetToolDescription, invoiceIDSchema),
+		toolerr.Add(srv, mcpTool(invoiceGetToolName, invoiceGetToolTitle, invoiceGetToolDescription, invoiceIDSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in invoiceGetInput) (*mcp.CallToolResult, invoiceGetOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -863,7 +864,7 @@ func newShipmentListTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(shipmentListToolName, shipmentListToolTitle, shipmentListToolDescription)
 	t.Capability = "magento.shipment.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(shipmentListToolName, shipmentListToolTitle, shipmentListToolDescription, orderIDOnlySchema),
+		toolerr.Add(srv, mcpTool(shipmentListToolName, shipmentListToolTitle, shipmentListToolDescription, orderIDOnlySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderIDInput) (*mcp.CallToolResult, shipmentListOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -884,7 +885,7 @@ func newShipmentGetTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(shipmentGetToolName, shipmentGetToolTitle, shipmentGetToolDescription)
 	t.Capability = "magento.shipment.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(shipmentGetToolName, shipmentGetToolTitle, shipmentGetToolDescription, shipmentIDSchema),
+		toolerr.Add(srv, mcpTool(shipmentGetToolName, shipmentGetToolTitle, shipmentGetToolDescription, shipmentIDSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in shipmentGetInput) (*mcp.CallToolResult, shipmentGetOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -937,7 +938,7 @@ func newCreditmemoListTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(creditmemoListToolName, creditmemoListToolTitle, creditmemoListToolDescription)
 	t.Capability = "magento.creditmemo.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(creditmemoListToolName, creditmemoListToolTitle, creditmemoListToolDescription, orderIDOnlySchema),
+		toolerr.Add(srv, mcpTool(creditmemoListToolName, creditmemoListToolTitle, creditmemoListToolDescription, orderIDOnlySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderIDInput) (*mcp.CallToolResult, creditmemoListOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -958,7 +959,7 @@ func newCreditmemoGetTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(creditmemoGetToolName, creditmemoGetToolTitle, creditmemoGetToolDescription)
 	t.Capability = "magento.creditmemo.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(creditmemoGetToolName, creditmemoGetToolTitle, creditmemoGetToolDescription, creditmemoIDSchema),
+		toolerr.Add(srv, mcpTool(creditmemoGetToolName, creditmemoGetToolTitle, creditmemoGetToolDescription, creditmemoIDSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in creditmemoGetInput) (*mcp.CallToolResult, creditmemoGetOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1045,7 +1046,7 @@ func newConfigurableChildrenTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(configurableChildrenToolName, configurableChildrenToolTitle, configurableChildrenToolDescription)
 	t.Capability = "magento.configurable.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(configurableChildrenToolName, configurableChildrenToolTitle, configurableChildrenToolDescription, configurableChildrenSchema),
+		toolerr.Add(srv, mcpTool(configurableChildrenToolName, configurableChildrenToolTitle, configurableChildrenToolDescription, configurableChildrenSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in configurableChildrenInput) (*mcp.CallToolResult, configurableChildrenOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1066,7 +1067,7 @@ func newAttributeOptionsTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(attributeOptionsToolName, attributeOptionsToolTitle, attributeOptionsToolDescription)
 	t.Capability = "magento.attribute.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(attributeOptionsToolName, attributeOptionsToolTitle, attributeOptionsToolDescription, attributeOptionsSchema),
+		toolerr.Add(srv, mcpTool(attributeOptionsToolName, attributeOptionsToolTitle, attributeOptionsToolDescription, attributeOptionsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in attributeOptionsInput) (*mcp.CallToolResult, attributeOptionsOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1087,7 +1088,7 @@ func newCategoryProductsTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(categoryProductsToolName, categoryProductsToolTitle, categoryProductsToolDescription)
 	t.Capability = "magento.category.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(categoryProductsToolName, categoryProductsToolTitle, categoryProductsToolDescription, categoryProductsSchema),
+		toolerr.Add(srv, mcpTool(categoryProductsToolName, categoryProductsToolTitle, categoryProductsToolDescription, categoryProductsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryProductsInput) (*mcp.CallToolResult, categoryProductsOutput, error) {
 				offset := 0
 				if in.Cursor != "" {
@@ -1167,7 +1168,7 @@ func newCustomerGetTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(customerGetToolName, customerGetToolTitle, customerGetToolDescription)
 	t.Capability = "magento.customer.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(customerGetToolName, customerGetToolTitle, customerGetToolDescription, customerGetSchema),
+		toolerr.Add(srv, mcpTool(customerGetToolName, customerGetToolTitle, customerGetToolDescription, customerGetSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in customerGetInput) (*mcp.CallToolResult, customerGetOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1188,7 +1189,7 @@ func newCustomerSearchTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(customerSearchToolName, customerSearchToolTitle, customerSearchToolDescription)
 	t.Capability = "magento.customer.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(customerSearchToolName, customerSearchToolTitle, customerSearchToolDescription, customerSearchSchema),
+		toolerr.Add(srv, mcpTool(customerSearchToolName, customerSearchToolTitle, customerSearchToolDescription, customerSearchSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in customerSearchInput) (*mcp.CallToolResult, customerSearchOutput, error) {
 				offset := 0
 				if in.Cursor != "" {
@@ -1242,7 +1243,7 @@ func newProductLinksTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(productLinksToolName, productLinksToolTitle, productLinksToolDescription)
 	t.Capability = "magento.product.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(productLinksToolName, productLinksToolTitle, productLinksToolDescription, productLinksSchema),
+		toolerr.Add(srv, mcpTool(productLinksToolName, productLinksToolTitle, productLinksToolDescription, productLinksSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productLinksInput) (*mcp.CallToolResult, productLinksOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1285,7 +1286,7 @@ type productsBatchOutput struct {
 func newProductsBatchTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(productsBatchToolName, productsBatchToolTitle, productsBatchToolDescription)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(productsBatchToolName, productsBatchToolTitle, productsBatchToolDescription, productsBatchSchema),
+		toolerr.Add(srv, mcpTool(productsBatchToolName, productsBatchToolTitle, productsBatchToolDescription, productsBatchSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productsBatchInput) (*mcp.CallToolResult, productsBatchOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1329,7 +1330,7 @@ type productSEOOutput struct {
 func newProductSEOTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(productSEOToolName, productSEOToolTitle, productSEOToolDescription)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(productSEOToolName, productSEOToolTitle, productSEOToolDescription, productSEOSchema),
+		toolerr.Add(srv, mcpTool(productSEOToolName, productSEOToolTitle, productSEOToolDescription, productSEOSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productSEOInput) (*mcp.CallToolResult, productSEOOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1373,7 +1374,7 @@ func newCustomerAddressesTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(customerAddressesToolName, customerAddressesToolTitle, customerAddressesToolDescription)
 	t.Capability = "magento.customer.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(customerAddressesToolName, customerAddressesToolTitle, customerAddressesToolDescription, customerAddressesSchema),
+		toolerr.Add(srv, mcpTool(customerAddressesToolName, customerAddressesToolTitle, customerAddressesToolDescription, customerAddressesSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in customerAddressesInput) (*mcp.CallToolResult, customerAddressesOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1417,7 +1418,7 @@ func newStockStatusBatchTool(lookup serviceLookup) registry.Tool {
 	t.Capability = "magento.inventory.read"
 	t.Timeout = 60 * time.Second
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(stockStatusBatchToolName, stockStatusBatchToolTitle, stockStatusBatchToolDescription, stockStatusBatchSchema),
+		toolerr.Add(srv, mcpTool(stockStatusBatchToolName, stockStatusBatchToolTitle, stockStatusBatchToolDescription, stockStatusBatchSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in stockStatusBatchInput) (*mcp.CallToolResult, stockStatusBatchOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1461,7 +1462,7 @@ func newTierPricesTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(tierPricesToolName, tierPricesToolTitle, tierPricesToolDescription)
 	t.Capability = "magento.product.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(tierPricesToolName, tierPricesToolTitle, tierPricesToolDescription, tierPricesSchema),
+		toolerr.Add(srv, mcpTool(tierPricesToolName, tierPricesToolTitle, tierPricesToolDescription, tierPricesSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in tierPricesInput) (*mcp.CallToolResult, tierPricesOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1508,7 +1509,7 @@ func newInventorySourcesTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(inventorySourcesToolName, inventorySourcesToolTitle, inventorySourcesToolDescription)
 	t.Capability = "magento.inventory.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(inventorySourcesToolName, inventorySourcesToolTitle, inventorySourcesToolDescription, instanceOnlySchema),
+		toolerr.Add(srv, mcpTool(inventorySourcesToolName, inventorySourcesToolTitle, inventorySourcesToolDescription, instanceOnlySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
 				Instance string `json:"instance"`
 			}) (*mcp.CallToolResult, inventorySourcesOutput, error) {
@@ -1531,7 +1532,7 @@ func newInventoryStocksTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(inventoryStocksToolName, inventoryStocksToolTitle, inventoryStocksToolDescription)
 	t.Capability = "magento.inventory.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(inventoryStocksToolName, inventoryStocksToolTitle, inventoryStocksToolDescription, instanceOnlySchema),
+		toolerr.Add(srv, mcpTool(inventoryStocksToolName, inventoryStocksToolTitle, inventoryStocksToolDescription, instanceOnlySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
 				Instance string `json:"instance"`
 			}) (*mcp.CallToolResult, inventoryStocksOutput, error) {
@@ -1578,7 +1579,7 @@ func newMediaGetTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(mediaGetToolName, mediaGetToolTitle, mediaGetToolDescription)
 	t.Capability = "magento.product.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(mediaGetToolName, mediaGetToolTitle, mediaGetToolDescription, mediaGetSchema),
+		toolerr.Add(srv, mcpTool(mediaGetToolName, mediaGetToolTitle, mediaGetToolDescription, mediaGetSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in mediaGetInput) (*mcp.CallToolResult, mediaGetOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1608,7 +1609,7 @@ const (
 func newOrderSummaryTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(orderSummaryToolName, orderSummaryToolTitle, orderSummaryToolDescription)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(orderSummaryToolName, orderSummaryToolTitle, orderSummaryToolDescription, salesSummarySchema),
+		toolerr.Add(srv, mcpTool(orderSummaryToolName, orderSummaryToolTitle, orderSummaryToolDescription, salesSummarySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in salesSummaryInput) (*mcp.CallToolResult, salesSummaryOutput, error) {
 				from, err := parseSummaryTime(in.From, "from")
 				if err != nil {
@@ -1660,7 +1661,7 @@ func newProductOptionsTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(productOptionsToolName, productOptionsToolTitle, productOptionsToolDescription)
 	t.Capability = "magento.product.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(productOptionsToolName, productOptionsToolTitle, productOptionsToolDescription, productOptionsSchema),
+		toolerr.Add(srv, mcpTool(productOptionsToolName, productOptionsToolTitle, productOptionsToolDescription, productOptionsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productOptionsInput) (*mcp.CallToolResult, productOptionsOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1704,7 +1705,7 @@ func newMediaTypesTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(mediaTypesToolName, mediaTypesToolTitle, mediaTypesToolDescription)
 	t.Capability = "magento.product.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(mediaTypesToolName, mediaTypesToolTitle, mediaTypesToolDescription, mediaTypesSchema),
+		toolerr.Add(srv, mcpTool(mediaTypesToolName, mediaTypesToolTitle, mediaTypesToolDescription, mediaTypesSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in mediaTypesInput) (*mcp.CallToolResult, mediaTypesOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1752,7 +1753,7 @@ func newCustomerGroupsTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(customerGroupsToolName, customerGroupsToolTitle, customerGroupsToolDescription)
 	t.Capability = "magento.customer.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(customerGroupsToolName, customerGroupsToolTitle, customerGroupsToolDescription, customerGroupsSchema),
+		toolerr.Add(srv, mcpTool(customerGroupsToolName, customerGroupsToolTitle, customerGroupsToolDescription, customerGroupsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
 				Instance string `json:"instance"`
 			}) (*mcp.CallToolResult, customerGroupsOutput, error) {
@@ -1775,7 +1776,7 @@ func newTaxClassesTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(taxClassesToolName, taxClassesToolTitle, taxClassesToolDescription)
 	t.Capability = "magento.product.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(taxClassesToolName, taxClassesToolTitle, taxClassesToolDescription, customerGroupsSchema),
+		toolerr.Add(srv, mcpTool(taxClassesToolName, taxClassesToolTitle, taxClassesToolDescription, customerGroupsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
 				Instance string `json:"instance"`
 			}) (*mcp.CallToolResult, taxClassesOutput, error) {
@@ -1827,7 +1828,7 @@ func newOrderGeographyTool(lookup serviceLookup) registry.Tool {
 	t.Capability = "magento.order.read"
 	t.Timeout = 120 * time.Second
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(orderGeographyToolName, orderGeographyToolTitle, orderGeographyToolDescription, orderGeographySchema),
+		toolerr.Add(srv, mcpTool(orderGeographyToolName, orderGeographyToolTitle, orderGeographyToolDescription, orderGeographySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderGeographyInput) (*mcp.CallToolResult, orderGeographyOutput, error) {
 				from, err := parseSummaryTime(in.From, "from")
 				if err != nil {
@@ -1888,7 +1889,7 @@ func newSalesAnalysisTool(lookup serviceLookup) registry.Tool {
 	t.Capability = "magento.order.read"
 	t.Timeout = 120 * time.Second
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(salesAnalysisToolName, salesAnalysisToolTitle, salesAnalysisToolDescription, salesAnalysisSchema),
+		toolerr.Add(srv, mcpTool(salesAnalysisToolName, salesAnalysisToolTitle, salesAnalysisToolDescription, salesAnalysisSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in salesAnalysisInput) (*mcp.CallToolResult, salesAnalysisOutput, error) {
 				from, err := parseSummaryTime(in.From, "from")
 				if err != nil {
@@ -1944,7 +1945,7 @@ func newStoreConfigsTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(storeConfigsToolName, storeConfigsToolTitle, storeConfigsToolDescription)
 	t.Capability = "magento.store.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(storeConfigsToolName, storeConfigsToolTitle, storeConfigsToolDescription, storeConfigsSchema),
+		toolerr.Add(srv, mcpTool(storeConfigsToolName, storeConfigsToolTitle, storeConfigsToolDescription, storeConfigsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
 				Instance string `json:"instance"`
 			}) (*mcp.CallToolResult, storeConfigsOutput, error) {
@@ -1967,7 +1968,7 @@ func newFlatCategoriesTool(lookup serviceLookup) registry.Tool {
 	t := toolMetadata(flatCategoriesToolName, flatCategoriesToolTitle, flatCategoriesToolDescription)
 	t.Capability = "magento.category.read"
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpTool(flatCategoriesToolName, flatCategoriesToolTitle, flatCategoriesToolDescription, storeConfigsSchema),
+		toolerr.Add(srv, mcpTool(flatCategoriesToolName, flatCategoriesToolTitle, flatCategoriesToolDescription, storeConfigsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
 				Instance string `json:"instance"`
 			}) (*mcp.CallToolResult, flatCategoriesOutput, error) {

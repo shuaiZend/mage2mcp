@@ -1,31 +1,87 @@
 # mage2mcp
 
-mage2mcp is a standalone [Model Context Protocol](https://modelcontextprotocol.io) (MCP)
-gateway that exposes Magento 2, Cloudflare, and Google Analytics 4 to AI agents through
-typed, audited, read-only-by-default tools.
+[![CI](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/shuaiZend/mage2mcp?include_prereleases&sort=semver)](https://github.com/shuaiZend/mage2mcp/releases)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](go.mod)
+[![MCP](https://img.shields.io/badge/MCP-2025--11--25%20%7C%202026--07--28-7c3aed.svg)](docs/mcp-conformance.md)
 
-> **Status: Phase 1 — foundation.**
-> A runnable MCP server exists: Streamable HTTP, Cloudflare Access JWT
-> authentication, RBAC, audit, Prometheus metrics, read-only tools for Magento
-> products, Cloudflare analytics/security, GA4 reports and capabilities, and a
-> unified traffic comparison. Multiple Magento stores, Cloudflare zones, and GA4
-> properties can share one gateway, with per-instance authorization and audit;
-> optional PostgreSQL-backed state, audit, and job queue complete the deployment.
-> Write tools require two-step human approval. [v0.8.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.0)
-> is the first public pre-release (signed artifacts, SBOM, multi-arch image);
-> interfaces may still change with an ADR before 1.0.
+**Open-source MCP gateway for Magento 2, Cloudflare, and Google Analytics 4.**
+One endpoint, one auth model, one audit trail — with typed, documented tools that AI
+agents can actually use safely. Writes are two-step human-approved; reads are
+read-only by default and PII-safe.
+
+> **Status: v0.8.0 (pre-1.0).** 112 tools (101 Magento). Validated against a live
+> Magento production store: 23 read-only checks plus a 30-day business drill-down
+> (924 orders) with no writes. Releases ship signed artifacts, SBOM, and a
+> multi-arch image. Interfaces may still change with an ADR before 1.0.
+
+## Why mage2mcp
+
+- **Typed contracts, not prompt glue.** Every tool has a stable name, JSON Schema,
+  permission scope, timeout, and annotations. A contract test pins the Magento
+  tool names; a docs test fails if the catalog drifts.
+- **Safe writes.** Writes require an opaque confirmation approved by a *different*
+  identity. Arguments are validated against the tool schema **before** the approval
+  is created, and the approval is bound to the canonical argument hash.
+- **PII stays inside Magento.** Customer and address reads return country/region/
+  default flags only; order reads omit email, addresses, and payment data.
+- **Built for operations.** PostgreSQL job queue (no Redis), advisory-locked
+  migrations, async imports with idempotency, live progress, resumable failed rows,
+  and 30-day batch retention.
+- **Multi-instance.** Several Magento stores, Cloudflare zones, and GA4 properties
+  behind one gateway with per-instance authorization and audit.
+
+## Tool surface (112 tools)
+
+| Module | Tools | Examples |
+|---|---:|---|
+| Magento 2 | 101 | products, configurable variants, categories, MSI inventory, orders, invoices/shipments/credit memos, customers, media, imports, business analysis |
+| Cloudflare | 3 | zone traffic, security events, security summary |
+| Google Analytics 4 | 6 | traffic reports, realtime, ecommerce, property metadata/capabilities |
+| Unified analytics | 1 | Magento vs GA4 traffic comparison |
+| Platform | 1 | `platform.info` (versions, instances, write flag) |
+
+Highlights of the Magento surface:
+
+- **Catalog**: create/update/delete, batch reads, bulk update, SEO audit, media
+  (upload/list/get/update/delete/types), tier prices, custom options, attribute
+  options (create/bulk/delete).
+- **Configurable**: parent create/update, variant pre-checks, option declaration,
+  explicit variation creation, child linking.
+- **Inventory (MSI)**: sources, stocks, source items, assign/unassign/transfer,
+  source create, stock-source link/unlink.
+- **Orders & documents**: create (cart flow), search/get, status history, comments,
+  hold/unhold, email, cancel; invoice/shipment/credit-memo read, create, capture,
+  email.
+- **Customers**: PII-safe reads, create/update, address create/update/delete.
+- **Imports**: validate, execute, async start/status/cancel, batch history, resume.
+- **Analytics**: `magento.sales.analysis` and `magento.orders.geography` return
+  PII-free aggregates (KPIs, repeat/new customers, coupons, shipping methods,
+  AOV bands, timezone buckets, refunds by SKU, shipment latency).
 
 ## What exists today
 
 | Item | State |
 |---|---|
-| Design documents | Complete Phase 0 baseline in [`docs/`](docs/) |
-| Research baseline | [`docs/development/research-baseline.md`](docs/development/research-baseline.md) |
-| Source code | Phase 1 foundation: MCP server, auth, RBAC, audit, metrics, config, Docker |
-| Tests and CI | Unit, integration (PostgreSQL service), race, lint, security, and supply-chain gates on every PR |
-| Write tools | Product/configurable/inventory/import writes behind `tools.writes`, with two-step human approval |
-| Releases and container images | Not published yet; the release workflow is in place |
-| License and community documents | [Apache-2.0](LICENSE), [NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md) |
+| Source code | Production-grade Go gateway: MCP server, auth, RBAC, audit, metrics, PostgreSQL queue, Docker |
+| Tests and CI | Unit, integration (PostgreSQL), race, lint, security, supply-chain, and a full end-to-end job on every PR |
+| Releases | v0.8.0 pre-release with signed artifacts, checksums, SBOM, multi-arch GHCR image |
+| Production validation | Read-only acceptance and a 30-day business report against a live Magento store |
+| Documentation | Architecture, ADRs (22), tool catalog, field reference, compatibility, operations, release notes |
+| License and community | [Apache-2.0](LICENSE), [NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md) |
+
+## Documentation map
+
+| Start here | For |
+|---|---|
+| [docs/index.md](docs/index.md) | Documentation entry point |
+| [docs/mcp-tools.md](docs/mcp-tools.md) | Design catalog with implementation status |
+| [docs/implemented-tools.md](docs/implemented-tools.md) | The 112 tools registered today |
+| [docs/magento-fields.md](docs/magento-fields.md) | Field requirements and SEO guidance |
+| [docs/compatibility.md](docs/compatibility.md) | Supported components and stability promises |
+| [docs/operations/production-acceptance.md](docs/operations/production-acceptance.md) | Live read-only acceptance and fixes |
+| [docs/development/mcp-gaps.md](docs/development/mcp-gaps.md) | Known gaps and their status |
 
 ## Quickstart (development)
 
@@ -125,7 +181,7 @@ configures, and audits.
 - The source, the threat model, and the decision records are public, so operators can
   evaluate the gateway before trusting it with production credentials.
 
-## Architecture at a glance
+## Architecture diagram
 
 ```mermaid
 flowchart TB
@@ -189,134 +245,16 @@ Runtime components:
 | `slog` | Structured JSON logs with redaction |
 | YAML + environment | Configuration, with secrets supplied only through the environment |
 
-## What the gateway will do
+## Architecture at a glance
 
-The status column records the current state only; nothing in this table is available
-today. No capability is design-complete or implemented yet.
+- **`cmd/server`** — Streamable HTTP MCP endpoint (`/mcp`), `/healthz`, `/readyz`, `/metrics`, auth/RBAC/audit middleware.
+- **`internal/magento`, `cloudflare`, `ga4`, `unified`** — module-owned tools and clients; no module imports another.
+- **`internal/mcp`** — tool registry, contract validation, confirmation gate, structured error envelope.
+- **`internal/storage`** — PostgreSQL for audit, confirmations, the job queue, and import batches (no Redis).
+- **`cmd/worker`** — asynchronous import executor with leases, progress, retries, and failed-row resume.
+- **Deployment** — distroless multi-arch image; Compose stack for local and test deployments; signed releases.
 
-| Status | Meaning |
-|---|---|
-| Planned | In scope, not yet designed in detail |
-| Design in progress | Design document being written or reviewed in Phase 0 |
-| Design complete | Design reviewed and approved (none yet) |
-| Implemented | Working code merged (none yet) |
-
-### Support matrix
-
-| Module | Capability | Status |
-|---|---|---|
-| Platform | Streamable HTTP MCP endpoint on the official Go SDK | Design in progress |
-| Platform | Cloudflare Access JWT authentication | Design in progress |
-| Platform | RBAC permissions and per-instance grants | Planned |
-| Platform | Tool registry with typed schemas and risk classification | Design in progress |
-| Platform | Confirmation bound to a canonicalized parameter hash | Design in progress |
-| Platform | Audit log, Prometheus metrics, health endpoints | Planned |
-| Platform | YAML + environment configuration with validation | Planned |
-| Platform | Container image and Compose stack | Planned |
-| Magento 2 | Product read for simple, configurable, virtual, downloadable, and bundle products | Implemented (read-only) |
-| Magento 2 | Product writes via REST, including configurable options and child products | Planned |
-| Magento 2 | EAV attribute and attribute-set discovery | Planned |
-| Magento 2 | MSI inventory read and bulk source operations | Planned |
-| Magento 2 | Media gallery read and upload | Planned |
-| Magento 2 | Category read and product-category assignment | Planned |
-| Magento 2 | Order read | Planned |
-| Magento 2 | Bulk import (CSV/JSON) with an explicit validation strategy | Planned |
-| Magento 2 | Bulk and asynchronous operation status polling | Planned |
-| Magento 2 | GraphQL read-only storefront verification | Planned |
-| Cloudflare | Zone, plan, and dataset inventory (read-only) | Planned |
-| Cloudflare | GraphQL Analytics queries | Implemented (traffic) |
-| Cloudflare | Security Events queries | Implemented (summary and events) |
-| Cloudflare | Logpush job inventory and field discovery (opt-in, read-only) | Planned |
-| Cloudflare | Logpush log analysis from a customer-configured destination | Planned |
-| Cloudflare | WAF and bot event inspection (read-only) | Planned |
-| GA4 | Property metadata and dimension/metric compatibility discovery | Design in progress |
-| GA4 | Traffic, acquisition, and engagement reports | Implemented (traffic) |
-| GA4 | Ecommerce reports with an explicit data-presence probe | Planned |
-| GA4 | Realtime reports | Planned |
-| GA4 | Quota-aware execution and backoff | Planned |
-| Unified | Cross-source metric catalog with declared semantics | Design in progress |
-| Unified | Entity and time-base mapping across sources | Planned |
-| Unified | Cross-source reports on declared join keys | Planned |
-
-### Magento 2
-
-The Magento module will manage catalog and inventory data through the REST API and use
-GraphQL only to verify what a storefront actually renders. Product writes must use REST:
-Magento GraphQL has no product write mutations. The module will cover:
-
-- Products of every standard type, including configurable options and child products.
-- EAV attribute sets and attributes, so tool inputs can be validated against the store's
-  real schema rather than a hardcoded list.
-- MSI sources and source items, including bulk assign, unassign, and transfer operations.
-- Media gallery assets, categories, and order reads.
-- Bulk import through `POST /V1/import/csv` and `POST /V1/import/json`, with the
-  validation strategy and allowed error count stated explicitly in the tool input.
-- Polling of bulk and asynchronous operation status.
-
-There will be no Magento plugin, no `app/code` package, and no database connection.
-Anything the module cannot do through an official API is out of scope.
-
-### Cloudflare
-
-The Cloudflare module is read-only in v0.x. It will expose:
-
-- Zone, plan, and dataset inventory.
-- GraphQL Analytics queries across the datasets available to the account.
-- Security Events from the `firewallEventsAdaptive` dataset.
-- Logpush job inventory and field discovery, plus analysis of logs delivered to a
-  customer-configured destination.
-
-Logpush is available on Free, Pro, and Business plans, not only Enterprise, but it is
-usage-billed: 25 GB per month are included per account, then $0.03/GB to internal
-destinations and $0.10/GB to external destinations. Logpush has no historical backfill,
-and logs are lost if a job fails. Bot score and verified-bot fields require Bot
-Management, which is an Enterprise add-on. The module will state these constraints in
-tool output instead of silently returning partial data.
-
-Raw request logs are opt-in per zone. When enabled, Cloudflare pushes records to R2 and a
-ClickHouse query layer serves request-level queries; PostgreSQL never stores raw logs.
-Operators who only need aggregate analytics can leave Logpush disabled.
-
-Logpush job and field inspection is also opt-in. Cloudflare requires the `Logs Write`
-permission for every Logpush API call, including reads, so the gateway uses a separate
-token profile for this and never issues a mutation. Operators who do not accept that
-permission can manage jobs out of band and infer job health from R2 file arrival.
-
-### Google Analytics 4
-
-The GA4 module is scoped as read-only and will use the Data API v1. It will expose traffic,
-acquisition, engagement, ecommerce, and realtime reports, plus metadata discovery so the
-agent can check which dimensions and metrics can be combined before querying.
-
-The Data API returns aggregate data only. Dimension and metric compatibility is
-pair-wise and must be validated per property: some item-level dimensions are rejected
-with session-scoped metrics, while other combinations are accepted. The gateway will
-validate each request rather than infer a rule from scope. Raw event data requires a
-BigQuery export that the customer owns and configures. The gateway does not query
-BigQuery; it documents the boundary. Because a property can serve traffic without
-ecommerce tracking, ecommerce tools will probe for data and report its absence rather
-than returning zeros as if they were revenue.
-
-### Unified analytics
-
-The unified module will compose the other modules through the shared data source
-contract. It will provide a metric catalog in which every metric carries a definition, a
-denominator, an attribution window, and a time zone, and cross-source reports built only
-on declared join keys. It will not invent a blended "revenue" or "conversion" number by adding
-metrics that mean different things in different systems.
-
-### Explicitly out of scope for v0.x
-
-| Not planned | Reason |
-|---|---|
-| A Magento plugin or `app/code` package | The gateway uses official APIs only; nothing is installed in Magento |
-| Direct Magento database access | Bypasses business logic and breaks across upgrades |
-| Adobe Commerce as a Cloud Service (IMS OAuth) | Different authentication model; deferred until after v0.x |
-| Cloudflare writes (DNS, WAF rules, Logpush jobs) | The Cloudflare module is read-only in v0.x |
-| GA4 Admin API and property configuration changes | The GA4 module is read-only |
-| Universal `execute_api` or `execute_sql` tools | Untyped, unauditable, and incompatible with RBAC and confirmation |
-| Cross-device identity stitching | Requires identity data the gateway does not have |
-| Raw GA4 event export inside the gateway | The Data API is aggregate-only; raw events stay in the customer's BigQuery export |
+Request flow: client → auth → RBAC → schema validation → confirmation gate (writes only) → module client → audit → structured result.
 
 ## Security posture
 
@@ -392,10 +330,10 @@ documentation behind each constraint is cited in the corresponding integration d
 | PostgreSQL | 16 or newer | Configuration metadata, audit log, job state |
 | Container runtime | Docker with Compose | Local stack and deployment |
 
-## Documentation map
+## Full documentation index
 
-Design documents are written in public during Phase 0. Links point to files that are
-being created in parallel and will exist before this README is merged.
+The documentation is written in public and kept in sync with the code; contract
+tests fail when the tool catalog and the docs drift.
 
 | Document | Contents |
 |---|---|
@@ -434,9 +372,10 @@ and the design documents for the next phase are consistent with the research bas
 
 ## Contributing
 
-The project is in Phase 0. Design review comments, threat-model feedback, and
-documentation corrections are welcome now through GitHub issues. Code contributions open
-up in Phase 1.
+Design review comments, threat-model feedback, bug reports, and documentation
+corrections are welcome through GitHub issues. Code contributions follow the
+Developer Certificate of Origin and the review/CI gates described in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 All contributions require a Developer Certificate of Origin sign-off (`git commit -s`);
 there is no CLA. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development environment,

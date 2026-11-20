@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/toolerr"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
@@ -199,7 +200,7 @@ func registerPlatformInfo(srv *mcp.Server, opts Options) {
 		Description: "Returns the gateway name, version, supported MCP protocol versions, and registered tools. Read-only.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: boolPtr(false)},
 	}
-	mcp.AddTool(srv, tool, func(_ context.Context, _ *mcp.CallToolRequest, _ InfoInput) (*mcp.CallToolResult, InfoOutput, error) {
+	toolerr.Add(srv, tool, func(_ context.Context, _ *mcp.CallToolRequest, _ InfoInput) (*mcp.CallToolResult, InfoOutput, error) {
 		names := make([]string, 0, opts.Registry.Len())
 		for _, t := range opts.Registry.List() {
 			names = append(names, t.Name)

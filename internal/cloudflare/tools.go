@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/toolerr"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
@@ -168,7 +169,7 @@ func newReadTool(name, title, description, capability string, register registry.
 }
 
 func addReadTool[In, Out any](srv *mcp.Server, name, title, description, schema string, handler mcp.ToolHandlerFor[In, Out]) {
-	mcp.AddTool(srv, &mcp.Tool{
+	toolerr.Add(srv, &mcp.Tool{
 		Name: name, Title: title, Description: description,
 		InputSchema: json.RawMessage(schema), Annotations: readAnnotations(),
 	}, handler)

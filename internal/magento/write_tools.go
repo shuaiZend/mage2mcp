@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/toolerr"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
@@ -395,7 +396,7 @@ func destructiveHint() *bool {
 func newProductCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(productCreateToolName, productCreateToolTitle, productCreateToolDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(productCreateToolName, productCreateToolTitle, productCreateToolDescription, productCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(productCreateToolName, productCreateToolTitle, productCreateToolDescription, productCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productCreateInput) (*mcp.CallToolResult, productWriteOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -426,7 +427,7 @@ func (in productUpdateInput) toServiceInput() UpdateProductInput {
 func newProductUpdateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(productUpdateToolName, productUpdateToolTitle, productUpdateToolDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(productUpdateToolName, productUpdateToolTitle, productUpdateToolDescription, productUpdateSchema),
+		toolerr.Add(srv, mcpWriteTool(productUpdateToolName, productUpdateToolTitle, productUpdateToolDescription, productUpdateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productUpdateInput) (*mcp.CallToolResult, productWriteOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -446,7 +447,7 @@ func newProductUpdateTool(lookup serviceLookup) registry.Tool {
 func newConfigurableCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(configurableCreateToolName, configurableCreateToolTitle, configurableCreateToolDescription, capabilityConfigurableWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(configurableCreateToolName, configurableCreateToolTitle, configurableCreateToolDescription, configurableCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(configurableCreateToolName, configurableCreateToolTitle, configurableCreateToolDescription, configurableCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in configurableCreateInput) (*mcp.CallToolResult, configurableCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -482,7 +483,7 @@ func (in configurableCreateInput) toServiceInput() CreateConfigurableInput {
 func newConfigurableAddChildTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(configurableAddChildToolName, configurableAddChildToolTitle, configurableAddChildToolDescription, capabilityConfigurableWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(configurableAddChildToolName, configurableAddChildToolTitle, configurableAddChildToolDescription, configurableAddChildSchema),
+		toolerr.Add(srv, mcpWriteTool(configurableAddChildToolName, configurableAddChildToolTitle, configurableAddChildToolDescription, configurableAddChildSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in configurableAddChildInput) (*mcp.CallToolResult, configurableAddChildOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -501,7 +502,7 @@ func newConfigurableAddChildTool(lookup serviceLookup) registry.Tool {
 func newInventoryAssignTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(inventoryAssignToolName, inventoryAssignToolTitle, inventoryAssignToolDescription, capabilityInventoryWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(inventoryAssignToolName, inventoryAssignToolTitle, inventoryAssignToolDescription, inventoryAssignSchema),
+		toolerr.Add(srv, mcpWriteTool(inventoryAssignToolName, inventoryAssignToolTitle, inventoryAssignToolDescription, inventoryAssignSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in inventoryAssignInput) (*mcp.CallToolResult, inventoryAssignOutput, error) {
 				items := make([]SourceItem, 0, len(in.Items))
 				for _, item := range in.Items {
@@ -556,7 +557,7 @@ const importExecuteSchema = `{
 func newImportExecuteTool(lookup serviceLookup) registry.Tool {
 	tool := writeToolMetadata(importExecuteToolName, importExecuteToolTitle, importExecuteToolDescription, importExecuteCapability)
 	tool.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(importExecuteToolName, importExecuteToolTitle, importExecuteToolDescription, importExecuteSchema),
+		toolerr.Add(srv, mcpWriteTool(importExecuteToolName, importExecuteToolTitle, importExecuteToolDescription, importExecuteSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importExecuteInput) (*mcp.CallToolResult, importExecuteOutput, error) {
 				data, err := DecodeImportPayload(in.Data)
 				if err != nil {
@@ -618,7 +619,7 @@ func destructiveTrue() *bool {
 func newProductDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(productDeleteToolName, productDeleteToolTitle, productDeleteDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, &mcp.Tool{
+		toolerr.Add(srv, &mcp.Tool{
 			Name: productDeleteToolName, Title: productDeleteToolTitle, Description: productDeleteDescription,
 			InputSchema: json.RawMessage(productDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
@@ -689,7 +690,7 @@ type unassignSourceItemsOutput struct {
 func newRemoveChildTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(removeChildToolName, removeChildToolTitle, removeChildDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(removeChildToolName, removeChildToolTitle, removeChildDescription, removeChildSchema),
+		toolerr.Add(srv, mcpWriteTool(removeChildToolName, removeChildToolTitle, removeChildDescription, removeChildSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in removeChildInput) (*mcp.CallToolResult, removeChildOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -708,7 +709,7 @@ func newRemoveChildTool(lookup serviceLookup) registry.Tool {
 func newUnassignSourceItemsTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(unassignSourceItemsToolName, unassignSourceItemsToolTitle, unassignSourceItemsDescription, "magento.inventory.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(unassignSourceItemsToolName, unassignSourceItemsToolTitle, unassignSourceItemsDescription, unassignSourceItemsSchema),
+		toolerr.Add(srv, mcpWriteTool(unassignSourceItemsToolName, unassignSourceItemsToolTitle, unassignSourceItemsDescription, unassignSourceItemsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in unassignSourceItemsInput) (*mcp.CallToolResult, unassignSourceItemsOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -763,7 +764,7 @@ type mediaUploadOutput struct {
 func newMediaUploadTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(mediaUploadToolName, mediaUploadToolTitle, mediaUploadDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(mediaUploadToolName, mediaUploadToolTitle, mediaUploadDescription, mediaUploadSchema),
+		toolerr.Add(srv, mcpWriteTool(mediaUploadToolName, mediaUploadToolTitle, mediaUploadDescription, mediaUploadSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in mediaUploadInput) (*mcp.CallToolResult, mediaUploadOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -817,7 +818,7 @@ type invoiceCreateOutput struct {
 func newInvoiceCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(invoiceCreateToolName, invoiceCreateToolTitle, invoiceCreateDescription, "magento.invoice.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(invoiceCreateToolName, invoiceCreateToolTitle, invoiceCreateDescription, invoiceCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(invoiceCreateToolName, invoiceCreateToolTitle, invoiceCreateDescription, invoiceCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in invoiceCreateInput) (*mcp.CallToolResult, invoiceCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -907,7 +908,7 @@ type creditmemoCreateOutput struct {
 func newShipmentCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(shipmentCreateToolName, shipmentCreateToolTitle, shipmentCreateDescription, "magento.shipment.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(shipmentCreateToolName, shipmentCreateToolTitle, shipmentCreateDescription, shipmentCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(shipmentCreateToolName, shipmentCreateToolTitle, shipmentCreateDescription, shipmentCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in shipmentCreateInput) (*mcp.CallToolResult, shipmentCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -934,7 +935,7 @@ func newShipmentCreateTool(lookup serviceLookup) registry.Tool {
 func newCreditmemoCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(creditmemoCreateToolName, creditmemoCreateToolTitle, creditmemoCreateDescription, "magento.creditmemo.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(creditmemoCreateToolName, creditmemoCreateToolTitle, creditmemoCreateDescription, creditmemoCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(creditmemoCreateToolName, creditmemoCreateToolTitle, creditmemoCreateDescription, creditmemoCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in creditmemoCreateInput) (*mcp.CallToolResult, creditmemoCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1007,7 +1008,7 @@ type orderActionOutput struct {
 func newOrderCommentTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(orderCommentToolName, orderCommentToolTitle, orderCommentDescription, "magento.order.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(orderCommentToolName, orderCommentToolTitle, orderCommentDescription, orderCommentSchema),
+		toolerr.Add(srv, mcpWriteTool(orderCommentToolName, orderCommentToolTitle, orderCommentDescription, orderCommentSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderCommentInput) (*mcp.CallToolResult, orderActionOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1030,7 +1031,7 @@ func newOrderHoldTool(lookup serviceLookup, hold bool) registry.Tool {
 	}
 	t := writeToolMetadata(name, title, description, "magento.order.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(name, title, description, orderHoldSchema),
+		toolerr.Add(srv, mcpWriteTool(name, title, description, orderHoldSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderHoldInput) (*mcp.CallToolResult, orderActionOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1130,7 +1131,7 @@ type categoryAssignOutput struct {
 func newCategoryCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(categoryCreateToolName, categoryCreateToolTitle, categoryCreateDescription, "magento.category.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(categoryCreateToolName, categoryCreateToolTitle, categoryCreateDescription, categoryCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(categoryCreateToolName, categoryCreateToolTitle, categoryCreateDescription, categoryCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryCreateInput) (*mcp.CallToolResult, categoryCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1160,7 +1161,7 @@ func newCategoryCreateTool(lookup serviceLookup) registry.Tool {
 func newCategoryUpdateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(categoryUpdateToolName, categoryUpdateToolTitle, categoryUpdateDescription, "magento.category.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(categoryUpdateToolName, categoryUpdateToolTitle, categoryUpdateDescription, categoryUpdateSchema),
+		toolerr.Add(srv, mcpWriteTool(categoryUpdateToolName, categoryUpdateToolTitle, categoryUpdateDescription, categoryUpdateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryUpdateInput) (*mcp.CallToolResult, categoryUpdateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1183,7 +1184,7 @@ func newCategoryUpdateTool(lookup serviceLookup) registry.Tool {
 func newCategoryAssignProductTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(categoryAssignToolName, categoryAssignToolTitle, categoryAssignDescription, "magento.category.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(categoryAssignToolName, categoryAssignToolTitle, categoryAssignDescription, categoryAssignSchema),
+		toolerr.Add(srv, mcpWriteTool(categoryAssignToolName, categoryAssignToolTitle, categoryAssignDescription, categoryAssignSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in categoryAssignInput) (*mcp.CallToolResult, categoryAssignOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1241,7 +1242,7 @@ type productLinkWriteOutput struct {
 func newProductLinkAddTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(productLinkAddToolName, productLinkAddToolTitle, productLinkAddDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(productLinkAddToolName, productLinkAddToolTitle, productLinkAddDescription, productLinkAddSchema),
+		toolerr.Add(srv, mcpWriteTool(productLinkAddToolName, productLinkAddToolTitle, productLinkAddDescription, productLinkAddSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productLinkWriteInput) (*mcp.CallToolResult, productLinkWriteOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1262,7 +1263,7 @@ func newProductLinkAddTool(lookup serviceLookup) registry.Tool {
 func newProductLinkRemoveTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(productLinkRemoveToolName, productLinkRemoveToolTitle, productLinkRemoveDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(productLinkRemoveToolName, productLinkRemoveToolTitle, productLinkRemoveDescription, productLinkRemoveSchema),
+		toolerr.Add(srv, mcpWriteTool(productLinkRemoveToolName, productLinkRemoveToolTitle, productLinkRemoveDescription, productLinkRemoveSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productLinkWriteInput) (*mcp.CallToolResult, productLinkWriteOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1321,7 +1322,7 @@ type orderEmailOutput struct {
 func newInvoiceCaptureTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(invoiceCaptureToolName, invoiceCaptureToolTitle, invoiceCaptureDescription, "magento.invoice.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(invoiceCaptureToolName, invoiceCaptureToolTitle, invoiceCaptureDescription, invoiceCaptureSchema),
+		toolerr.Add(srv, mcpWriteTool(invoiceCaptureToolName, invoiceCaptureToolTitle, invoiceCaptureDescription, invoiceCaptureSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in invoiceCaptureInput) (*mcp.CallToolResult, invoiceCaptureOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1340,7 +1341,7 @@ func newInvoiceCaptureTool(lookup serviceLookup) registry.Tool {
 func newOrderEmailTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(orderEmailToolName, orderEmailToolTitle, orderEmailDescription, "magento.order.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(orderEmailToolName, orderEmailToolTitle, orderEmailDescription, orderEmailSchema),
+		toolerr.Add(srv, mcpWriteTool(orderEmailToolName, orderEmailToolTitle, orderEmailDescription, orderEmailSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderEmailInput) (*mcp.CallToolResult, orderEmailOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1382,7 +1383,7 @@ type mediaDeleteOutput struct {
 func newMediaDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(mediaDeleteToolName, mediaDeleteToolTitle, mediaDeleteDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, &mcp.Tool{
+		toolerr.Add(srv, &mcp.Tool{
 			Name: mediaDeleteToolName, Title: mediaDeleteToolTitle, Description: mediaDeleteDescription,
 			InputSchema: json.RawMessage(mediaDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
@@ -1472,7 +1473,7 @@ func (a orderAddressWire) toInput() OrderAddressInput {
 func newOrderCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(orderCreateToolName, orderCreateToolTitle, orderCreateDescription, "magento.order.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(orderCreateToolName, orderCreateToolTitle, orderCreateDescription, orderCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(orderCreateToolName, orderCreateToolTitle, orderCreateDescription, orderCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderCreateInput) (*mcp.CallToolResult, orderCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1533,7 +1534,7 @@ type tierPricesSetOutput struct {
 func newTierPricesSetTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(tierPricesSetToolName, tierPricesSetToolTitle, tierPricesSetDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(tierPricesSetToolName, tierPricesSetToolTitle, tierPricesSetDescription, tierPricesSetSchema),
+		toolerr.Add(srv, mcpWriteTool(tierPricesSetToolName, tierPricesSetToolTitle, tierPricesSetDescription, tierPricesSetSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in tierPricesSetInput) (*mcp.CallToolResult, tierPricesSetOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1589,7 +1590,7 @@ type inventoryTransferOutput struct {
 func newInventoryTransferTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(inventoryTransferToolName, inventoryTransferToolTitle, inventoryTransferDescription, "magento.inventory.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, &mcp.Tool{
+		toolerr.Add(srv, &mcp.Tool{
 			Name: inventoryTransferToolName, Title: inventoryTransferToolTitle, Description: inventoryTransferDescription,
 			InputSchema: json.RawMessage(inventoryTransferSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
@@ -1672,7 +1673,7 @@ type customerUpdateOutput struct {
 func newCustomerCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(customerCreateToolName, customerCreateToolTitle, customerCreateDescription, "magento.customer.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(customerCreateToolName, customerCreateToolTitle, customerCreateDescription, customerCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(customerCreateToolName, customerCreateToolTitle, customerCreateDescription, customerCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in customerCreateWire) (*mcp.CallToolResult, customerCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1695,7 +1696,7 @@ func newCustomerCreateTool(lookup serviceLookup) registry.Tool {
 func newCustomerUpdateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(customerUpdateToolName, customerUpdateTitle, customerUpdateDescription, "magento.customer.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(customerUpdateToolName, customerUpdateTitle, customerUpdateDescription, customerUpdateSchema),
+		toolerr.Add(srv, mcpWriteTool(customerUpdateToolName, customerUpdateTitle, customerUpdateDescription, customerUpdateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in customerUpdateWire) (*mcp.CallToolResult, customerUpdateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1766,7 +1767,7 @@ type orderCancelOutput struct {
 func newMediaUpdateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(mediaUpdateToolName, mediaUpdateToolTitle, mediaUpdateDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(mediaUpdateToolName, mediaUpdateToolTitle, mediaUpdateDescription, mediaUpdateSchema),
+		toolerr.Add(srv, mcpWriteTool(mediaUpdateToolName, mediaUpdateToolTitle, mediaUpdateDescription, mediaUpdateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in mediaUpdateInput) (*mcp.CallToolResult, mediaUpdateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1788,7 +1789,7 @@ func newMediaUpdateTool(lookup serviceLookup) registry.Tool {
 func newOrderCancelTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(orderCancelToolName, orderCancelToolTitle, orderCancelDescription, "magento.order.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, &mcp.Tool{
+		toolerr.Add(srv, &mcp.Tool{
 			Name: orderCancelToolName, Title: orderCancelToolTitle, Description: orderCancelDescription,
 			InputSchema: json.RawMessage(orderCancelSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
@@ -1833,7 +1834,7 @@ type attributeOptionCreateOutput struct {
 func newAttributeOptionCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(attributeOptionCreateToolName, attributeOptionCreateToolTitle, attributeOptionCreateDescription, "magento.attribute.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(attributeOptionCreateToolName, attributeOptionCreateToolTitle, attributeOptionCreateDescription, attributeOptionCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(attributeOptionCreateToolName, attributeOptionCreateToolTitle, attributeOptionCreateDescription, attributeOptionCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in attributeOptionCreateInput) (*mcp.CallToolResult, attributeOptionCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1878,7 +1879,7 @@ type attributeOptionDeleteOutput struct {
 func newAttributeOptionDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(attributeOptionDeleteToolName, attributeOptionDeleteToolTitle, attributeOptionDeleteDescription, "magento.attribute.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, &mcp.Tool{
+		toolerr.Add(srv, &mcp.Tool{
 			Name: attributeOptionDeleteToolName, Title: attributeOptionDeleteToolTitle, Description: attributeOptionDeleteDescription,
 			InputSchema: json.RawMessage(attributeOptionDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
@@ -1928,7 +1929,7 @@ func newBulkProductUpdateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(bulkProductUpdateToolName, bulkProductUpdateToolTitle, bulkProductUpdateDescription, capabilityProductWrite)
 	t.Timeout = 120 * time.Second
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(bulkProductUpdateToolName, bulkProductUpdateToolTitle, bulkProductUpdateDescription, bulkProductUpdateSchema),
+		toolerr.Add(srv, mcpWriteTool(bulkProductUpdateToolName, bulkProductUpdateToolTitle, bulkProductUpdateDescription, bulkProductUpdateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in bulkProductUpdateInput) (*mcp.CallToolResult, bulkProductUpdateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -1972,7 +1973,7 @@ type categoryDeleteOutput struct {
 func newCategoryDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(categoryDeleteToolName, categoryDeleteToolTitle, categoryDeleteDescription, "magento.category.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, &mcp.Tool{
+		toolerr.Add(srv, &mcp.Tool{
 			Name: categoryDeleteToolName, Title: categoryDeleteToolTitle, Description: categoryDeleteDescription,
 			InputSchema: json.RawMessage(categoryDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
@@ -2053,7 +2054,7 @@ type customerAddressDeleteOutput struct {
 func newCustomerAddressCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(customerAddressCreateToolName, customerAddressCreateToolTitle, customerAddressCreateDescription, "magento.customer.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(customerAddressCreateToolName, customerAddressCreateToolTitle, customerAddressCreateDescription, customerAddressCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(customerAddressCreateToolName, customerAddressCreateToolTitle, customerAddressCreateDescription, customerAddressCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in customerAddressCreateInput) (*mcp.CallToolResult, customerAddressCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2078,7 +2079,7 @@ func newCustomerAddressCreateTool(lookup serviceLookup) registry.Tool {
 func newCustomerAddressDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(customerAddressDeleteToolName, customerAddressDeleteTitle, customerAddressDeleteDescription, "magento.customer.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, &mcp.Tool{
+		toolerr.Add(srv, &mcp.Tool{
 			Name: customerAddressDeleteToolName, Title: customerAddressDeleteTitle, Description: customerAddressDeleteDescription,
 			InputSchema: json.RawMessage(customerAddressDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
@@ -2143,7 +2144,7 @@ type customerAddressUpdateOutput struct {
 func newCustomerAddressUpdateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(customerAddressUpdateToolName, customerAddressUpdateTitle, customerAddressUpdateDescription, "magento.customer.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(customerAddressUpdateToolName, customerAddressUpdateTitle, customerAddressUpdateDescription, customerAddressUpdateSchema),
+		toolerr.Add(srv, mcpWriteTool(customerAddressUpdateToolName, customerAddressUpdateTitle, customerAddressUpdateDescription, customerAddressUpdateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in customerAddressUpdateInput) (*mcp.CallToolResult, customerAddressUpdateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2196,7 +2197,7 @@ func newBulkLinkTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(bulkLinkToolName, bulkLinkToolTitle, bulkLinkDescription, "magento.product.write")
 	t.Timeout = 120 * time.Second
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(bulkLinkToolName, bulkLinkToolTitle, bulkLinkDescription, bulkLinkSchema),
+		toolerr.Add(srv, mcpWriteTool(bulkLinkToolName, bulkLinkToolTitle, bulkLinkDescription, bulkLinkSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in bulkLinkInput) (*mcp.CallToolResult, bulkLinkOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2241,7 +2242,7 @@ func newBulkOptionCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(bulkOptionCreateToolName, bulkOptionCreateToolTitle, bulkOptionCreateDescription, "magento.attribute.write")
 	t.Timeout = 120 * time.Second
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(bulkOptionCreateToolName, bulkOptionCreateToolTitle, bulkOptionCreateDescription, bulkOptionCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(bulkOptionCreateToolName, bulkOptionCreateToolTitle, bulkOptionCreateDescription, bulkOptionCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in bulkOptionCreateInput) (*mcp.CallToolResult, bulkOptionCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2270,7 +2271,7 @@ const (
 func newConfigurableUpdateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(configurableUpdateToolName, configurableUpdateToolTitle, configurableUpdateDescription, capabilityConfigurableWrite)
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(configurableUpdateToolName, configurableUpdateToolTitle, configurableUpdateDescription, productUpdateSchema),
+		toolerr.Add(srv, mcpWriteTool(configurableUpdateToolName, configurableUpdateToolTitle, configurableUpdateDescription, productUpdateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productUpdateInput) (*mcp.CallToolResult, productWriteOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2326,7 +2327,7 @@ func newDocumentEmailTools(lookup serviceLookup) []registry.Tool {
 func newDocumentEmailTool(lookup serviceLookup, name, title, description, kind string) registry.Tool {
 	t := writeToolMetadata(name, title, description, "magento.order.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(name, title, description, documentEmailSchema),
+		toolerr.Add(srv, mcpWriteTool(name, title, description, documentEmailSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in documentEmailInput) (*mcp.CallToolResult, documentEmailOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2406,7 +2407,7 @@ type stockSourceLinkOutput struct {
 func newInventorySourceCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(inventorySourceCreateToolName, inventorySourceCreateToolTitle, inventorySourceCreateDescription, "magento.inventory.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(inventorySourceCreateToolName, inventorySourceCreateToolTitle, inventorySourceCreateDescription, inventorySourceCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(inventorySourceCreateToolName, inventorySourceCreateToolTitle, inventorySourceCreateDescription, inventorySourceCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in inventorySourceCreateInput) (*mcp.CallToolResult, inventorySourceCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2430,7 +2431,7 @@ func newInventorySourceCreateTool(lookup serviceLookup) registry.Tool {
 func newStockSourceLinkTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(stockSourceLinkToolName, stockSourceLinkToolTitle, stockSourceLinkDescription, "magento.inventory.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(stockSourceLinkToolName, stockSourceLinkToolTitle, stockSourceLinkDescription, stockSourceLinkSchema),
+		toolerr.Add(srv, mcpWriteTool(stockSourceLinkToolName, stockSourceLinkToolTitle, stockSourceLinkDescription, stockSourceLinkSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in stockSourceLinkInput) (*mcp.CallToolResult, stockSourceLinkOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2475,7 +2476,7 @@ type stockSourceUnlinkOutput struct {
 func newStockSourceUnlinkTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(stockSourceUnlinkToolName, stockSourceUnlinkToolTitle, stockSourceUnlinkDescription, "magento.inventory.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, &mcp.Tool{
+		toolerr.Add(srv, &mcp.Tool{
 			Name: stockSourceUnlinkToolName, Title: stockSourceUnlinkToolTitle, Description: stockSourceUnlinkDescription,
 			InputSchema: json.RawMessage(stockSourceUnlinkSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
@@ -2530,7 +2531,7 @@ func newCreateVariationsTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(createVariationsToolName, createVariationsToolTitle, createVariationsDescription, capabilityConfigurableWrite)
 	t.Timeout = 120 * time.Second
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(createVariationsToolName, createVariationsToolTitle, createVariationsDescription, createVariationsSchema),
+		toolerr.Add(srv, mcpWriteTool(createVariationsToolName, createVariationsToolTitle, createVariationsDescription, createVariationsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in createVariationsInput) (*mcp.CallToolResult, createVariationsOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2593,7 +2594,7 @@ func newSetConfigurableOptionsTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(setConfigurableOptionsToolName, setConfigurableOptionsToolTitle, setConfigurableOptionsDescription, capabilityConfigurableWrite)
 	t.Timeout = 120 * time.Second
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(setConfigurableOptionsToolName, setConfigurableOptionsToolTitle, setConfigurableOptionsDescription, setConfigurableOptionsSchema),
+		toolerr.Add(srv, mcpWriteTool(setConfigurableOptionsToolName, setConfigurableOptionsToolTitle, setConfigurableOptionsDescription, setConfigurableOptionsSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in setConfigurableOptionsInput) (*mcp.CallToolResult, setConfigurableOptionsOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2659,7 +2660,7 @@ type productOptionCreateOutput struct {
 func newProductOptionCreateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(productOptionCreateToolName, productOptionCreateToolTitle, productOptionCreateDescription, "magento.product.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(productOptionCreateToolName, productOptionCreateToolTitle, productOptionCreateDescription, productOptionCreateSchema),
+		toolerr.Add(srv, mcpWriteTool(productOptionCreateToolName, productOptionCreateToolTitle, productOptionCreateDescription, productOptionCreateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productOptionCreateInput) (*mcp.CallToolResult, productOptionCreateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2743,7 +2744,7 @@ type productOptionDeleteOutput struct {
 func newProductOptionUpdateTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(productOptionUpdateToolName, productOptionUpdateToolTitle, productOptionUpdateDescription, "magento.product.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, mcpWriteTool(productOptionUpdateToolName, productOptionUpdateToolTitle, productOptionUpdateDescription, productOptionUpdateSchema),
+		toolerr.Add(srv, mcpWriteTool(productOptionUpdateToolName, productOptionUpdateToolTitle, productOptionUpdateDescription, productOptionUpdateSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in productOptionUpdateInput) (*mcp.CallToolResult, productOptionUpdateOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
@@ -2769,7 +2770,7 @@ func newProductOptionUpdateTool(lookup serviceLookup) registry.Tool {
 func newProductOptionDeleteTool(lookup serviceLookup) registry.Tool {
 	t := destructiveToolMetadata(productOptionDeleteToolName, productOptionDeleteToolTitle, productOptionDeleteDescription, "magento.product.write")
 	t.Register = func(srv *mcp.Server) error {
-		mcp.AddTool(srv, &mcp.Tool{
+		toolerr.Add(srv, &mcp.Tool{
 			Name: productOptionDeleteToolName, Title: productOptionDeleteToolTitle, Description: productOptionDeleteDescription,
 			InputSchema: json.RawMessage(productOptionDeleteSchema),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},

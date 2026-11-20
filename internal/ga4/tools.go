@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/toolerr"
 
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
 )
@@ -65,7 +66,7 @@ func registerTools(reg *registry.Registry, lookup serviceLookup) error {
 			Capability: trafficCapability, Permission: registry.PermissionRead, Timeout: 60 * time.Second,
 			Annotations: *traffic.Annotations,
 			Register: func(server *mcp.Server) error {
-				mcp.AddTool(server, traffic, func(ctx context.Context, _ *mcp.CallToolRequest, input TrafficInput) (*mcp.CallToolResult, ReportResult, error) {
+				toolerr.Add(server, traffic, func(ctx context.Context, _ *mcp.CallToolRequest, input TrafficInput) (*mcp.CallToolResult, ReportResult, error) {
 					svc, err := lookup(input.Instance)
 					if err != nil {
 						return nil, ReportResult{}, err
@@ -84,7 +85,7 @@ func registerTools(reg *registry.Registry, lookup serviceLookup) error {
 			Capability: metadataCapability, Permission: registry.PermissionRead, Timeout: 30 * time.Second,
 			Annotations: *metadata.Annotations,
 			Register: func(server *mcp.Server) error {
-				mcp.AddTool(server, metadata, func(ctx context.Context, _ *mcp.CallToolRequest, input MetadataInput) (*mcp.CallToolResult, PropertyMetadata, error) {
+				toolerr.Add(server, metadata, func(ctx context.Context, _ *mcp.CallToolRequest, input MetadataInput) (*mcp.CallToolResult, PropertyMetadata, error) {
 					svc, err := lookup(input.Instance)
 					if err != nil {
 						return nil, PropertyMetadata{}, err
