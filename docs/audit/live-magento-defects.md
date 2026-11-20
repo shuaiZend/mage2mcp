@@ -246,11 +246,19 @@ Replaces the earlier LIVE-7 description after the queue defect was found.
   possible — `GET /carts/{id}/order` is not a route (404), and the cart itself is
   gone after a successful placement (`404 No such entity with cartId`). The search
   path is the only one available.
-- **Proposed fix**: reconcile on `quote_id` directly. Magento's order search
-  accepts `quote_id` as a filter, so the observer should look the cart up by
-  `searchCriteria[filter_groups][0][filters][0][field]=quote_id` instead of
-  scanning the customer's orders in a time window. That removes both the window
-  race and the "several candidates" ambiguity. Keep the ledger semantics unchanged.
+- **Second fix hypothesis, also rejected by evidence**: filtering the order search
+  on `quote_id`. Magento returns `200` with `total_count: 0` for
+  `field=quote_id&condition_type=eq&value=21`, so `quote_id` is not a filterable
+  attribute even though it is returned in the projection.
+- **What was ruled out**: the date format is not the problem. Both
+  `created_at gteq 2026-11-20T17:30:00Z` (RFC3339, what the code sends) and
+  `created_at gteq 2026-11-20 17:30:00` (`Y-m-d H:i:s`) return the order, so the
+  window filter is correct.
+- **Remaining direction**: the search path is sound but its inputs are not. The
+  observer should be verified against a placement whose cart id is known, and the
+  `since` anchor should come from the ledger row rather than from the in-process
+  attempt, so a reconciler running minutes later still covers the placement. This
+  needs a dedicated contract test rather than another live guess.
 - **Test**: a CONTRACT test where the placement returns a 5xx, the customer search
   returns no candidate, and `GET /carts/{id}/order` returns an order — the tool must
   reconcile to `succeeded` rather than `unknown`.
