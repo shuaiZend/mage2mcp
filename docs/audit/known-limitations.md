@@ -45,9 +45,12 @@ The defects it found were fixed and re-verified the same day against a second
 container built from the patched tree: `links.add`, `inventory.source_create`,
 `customer.addresses.create`, the `total_count` projections, log redaction and
 `region_id` now pass on the real store, and order placement now creates an order
-(the method was wrong). One gap remains open — LIVE-7, where a successfully placed
-order is still reported `operation_unknown` because reconciliation misses an order
-that commits just after the failed call.
+(the method was wrong). Two things came out of that verification. The reconciler's `maintenance` queue was
+not in the worker's default list, so **no UNKNOWN operation was ever reconciled** in
+a default deployment; that is fixed and verified (72 queued jobs drained, 283
+terminal transitions). One gap remains open — LIVE-8, where the reconciler reports
+`reconciliation_inconclusive` for a placement whose order did commit just after the
+failed call.
 
 That run is manual and is not part of CI. It narrows the risk; it does not close
 it.

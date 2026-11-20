@@ -240,3 +240,19 @@ cannot yet confirm it.
 The 24 skipped cases remain dependants of that confirmation, so the invoice,
 shipment and credit-memo domains are still unexercised. Fixing LIVE-7 is what
 unlocks them.
+
+### 9.1 A P1 the fix verification exposed
+
+Re-running with a worker present revealed that the reconciler's queue was never
+polled: `enqueueReconcileLoop` publishes `platform:reconcile` on the `maintenance`
+queue, and the worker's default queue list omitted `maintenance`. On the live
+deployment **70 reconcile jobs sat queued and were never claimed**, so no UNKNOWN
+operation could ever resolve — the mechanism that makes an ambiguous money
+operation safe was inert.
+
+After adding `maintenance` to the default list and redeploying the worker: 72
+reconcile jobs drained, 283 terminal transitions were written, and the stuck
+operations resolved (seven to `failed`, one to `reconciliation_inconclusive`).
+
+This is the strongest argument for running the live harness with a worker: the
+unit tests, the contract tests and the first live run all passed without it.

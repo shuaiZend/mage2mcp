@@ -22,7 +22,8 @@ not taken on trust.
 | LIVE-4 | P2 | customer | `customer.addresses.create` gives up instead of using the working `PUT /customers/{id}` fallback | medium | **fixed, verified live** |
 | LIVE-5 | **P1** | reporting | `total_count` is omitted from three `fields` projections, so `total` is always 0 and `sales.summary` never reports truncation | small | **fixed, verified live** |
 | LIVE-6 | P3 | observability | Log redaction hides non-secret fields (`authorization_enabled`) | small | **fixed, verified live** |
-| LIVE-7 | P2 | order | Reconciliation misses an order that commits just after the failed placement, so a successful placement is reported `operation_unknown` | medium | **open** |
+| LIVE-7 | **P1** | reliability | The reconciler enqueues to the `maintenance` queue, but the worker's default queues did not include it, so no UNKNOWN operation was ever reconciled | one line | **fixed, verified live** |
+| LIVE-8 | P2 | order | The reconciler reports `reconciliation_inconclusive` for a placement whose order did commit just after the failed call | medium | **open** |
 | MAG-20 | **P1** | order | Addresses could not express `region_id`; Magento rejects Polish addresses without it | small | **fixed, verified live** |
 
 LIVE-1 and LIVE-5 are the two that matter: one blocks the entire money path, the
@@ -197,7 +198,29 @@ the file holds only environment-variable references).
 
 ---
 
-## LIVE-7 (P2, open): reconciliation misses a just-committed order
+## LIVE-7 (P1, fixed): the reconciler's queue was never polled
+
+- **Location**: `internal/jobs/jobs.go:192` — `WorkerOptions.defaults`
+- **Evidence**: `enqueueReconcileLoop` enqueues `platform:reconcile` on the
+  `maintenance` queue, but the worker's default queue list was
+  `critical, default, import, report`. On the live deployment **70 reconcile jobs
+  sat `queued` on `maintenance` and were never claimed**, so no UNKNOWN operation
+  was ever resolved.
+- **Impact**: this is the P1 that mattered most in practice. The whole
+  UNKNOWN → reconciling → resolved design — the thing that makes an ambiguous money
+  operation safe — was inert in a default deployment. An operator would see
+  `operation_unknown` forever, and the ledger's retry and escalation paths would
+  never run.
+- **Fix**: add `maintenance` to the default queue list.
+- **Verified live**: after deploying the fix, the 70+ queued jobs drained
+  (`72 succeeded`), `283` terminal transitions were written, and the previously
+  stuck operations resolved — seven to `failed` (the store confirmed nothing was
+  placed) and one to `reconciliation_inconclusive`.
+- **Regression test**: `TestDefaultQueuesIncludeMaintenance`.
+
+## LIVE-8 (P2, open): the observer cannot confirm one committed order
+
+Replaces the earlier LIVE-7 description after the queue defect was found.
 
 - **Location**: `internal/magento/order_create.go` — `reconcilePlacedOrder` and the
   `reconcileReads` / `reconcileBackoff` window
@@ -219,10 +242,15 @@ the file holds only environment-variable references).
   duplicate is placed — but an operator must reconcile by hand, and the agent
   cannot proceed to invoice the order. On a store as slow as this demo the failure
   is reproducible.
-- **Proposed fix**: reconcile against the cart directly instead of by search.
-  Magento keeps the cart after a successful placement, so `GET /carts/{id}` and
-  `GET /carts/{id}/order` are the authoritative link; fall back to the search only
-  when the cart no longer exists. Keep the ledger semantics unchanged.
+- **Attempted fix, rejected by evidence**: reconciling through the cart is not
+  possible — `GET /carts/{id}/order` is not a route (404), and the cart itself is
+  gone after a successful placement (`404 No such entity with cartId`). The search
+  path is the only one available.
+- **Proposed fix**: reconcile on `quote_id` directly. Magento's order search
+  accepts `quote_id` as a filter, so the observer should look the cart up by
+  `searchCriteria[filter_groups][0][filters][0][field]=quote_id` instead of
+  scanning the customer's orders in a time window. That removes both the window
+  race and the "several candidates" ambiguity. Keep the ledger semantics unchanged.
 - **Test**: a CONTRACT test where the placement returns a 5xx, the customer search
   returns no candidate, and `GET /carts/{id}/order` returns an order — the tool must
   reconcile to `succeeded` rather than `unknown`.

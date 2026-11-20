@@ -494,3 +494,20 @@ func TestWorkerRetryGate(t *testing.T) {
 		})
 	}
 }
+
+// The reconciler enqueues platform:reconcile on the maintenance queue. A worker
+// that does not poll that queue leaves every UNKNOWN operation unresolved, which
+// is what happened before the default list included it.
+func TestDefaultQueuesIncludeMaintenance(t *testing.T) {
+	opts := WorkerOptions{}
+	opts.defaults()
+	found := false
+	for _, q := range opts.Queues {
+		if q == "maintenance" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("default queues = %v, want maintenance included", opts.Queues)
+	}
+}

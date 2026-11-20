@@ -189,7 +189,10 @@ func (o *WorkerOptions) defaults() {
 		}
 	}
 	if len(o.Queues) == 0 {
-		o.Queues = []string{"critical", "default", "import", "report"}
+		// "maintenance" must be served: the reconciler enqueues platform:reconcile
+		// there, and a worker that never polls it leaves every UNKNOWN operation
+		// unresolved forever. That is what happened before this list included it.
+		o.Queues = []string{"critical", "default", "import", "report", "maintenance"}
 	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
