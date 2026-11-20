@@ -68,6 +68,30 @@ jobs:
             echo "::error::total coverage ${total}% is below the 70% floor"
             exit 1
           }
+      - name: Enforce per-scope coverage floors
+        shell: bash
+        run: |
+          # The testing strategy sets per-scope targets that nothing enforced, so a
+          # drop in the security or protocol layer was invisible while the total
+          # stayed above 70%. The floors below are the measured level, rounded down:
+          # they are a ratchet, so coverage cannot fall, and the distance to the
+          # documented target is recorded in docs/development/testing-strategy.md
+          # rather than left to look met.
+          set -euo pipefail
+          fail=0
+          check() { # scope floor
+            go test -race -count=1 -covermode=atomic -coverprofile=scope.out "$1" >/dev/null
+            got="$(go tool cover -func=scope.out | tail -n 1 | awk '{print $3}' | tr -d '%')"
+            echo "$1 coverage: ${got}% (floor $2%)"
+            awk -v g="$got" -v f="$2" 'BEGIN { if (g + 0 < f + 0) exit 1 }' || {
+              echo "::error::$1 coverage ${got}% is below its ${2}% floor"
+              fail=1
+            }
+          }
+          check ./internal/security/... 85
+          check ./internal/core/... 84
+          check ./internal/mcp/... 78
+          exit "$fail"
       - name: Documentation gates
         run: |
           npm ci

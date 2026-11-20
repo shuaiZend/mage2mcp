@@ -20,7 +20,10 @@ test-race: ## Run tests with the race detector
 	$(GO) test -race ./...
 
 cover: ## Write coverage.out and print the total
-	$(GO) test -covermode=atomic -coverprofile=coverage.out ./...
+	@# Only packages that have tests: `go test -cover` on a package without any needs
+	@# the covdata tool to emit an empty profile, and a toolchain that omits it fails
+	@# the whole target for three packages that have no coverage to contribute.
+	$(GO) test -covermode=atomic -coverprofile=coverage.out $$($(GO) list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
 	$(GO) tool cover -func=coverage.out | tail -n 1
 
 lint: ## Run golangci-lint

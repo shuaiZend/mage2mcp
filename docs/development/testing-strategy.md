@@ -115,16 +115,25 @@ Sandbox, and Real environment rows. An empty row means not verified, not "passed
 
 ## 4. Coverage targets
 
-| Scope | Target | Measurement | Phase |
-|---|---|---|---|
-| `internal/security` (auth, RBAC, confirmation, audit) | 90% statements | `go test -coverprofile` per package | 1 |
-| `internal/core`, `internal/mcp` | 80% statements | Same, aggregated by a script | 1 |
-| Overall repository | 70% statements | Total statements across packages | 1 warning, 6 blocking |
-| Generated code and `faketest` packages | Excluded | An explicit, reviewed exclusion list | 1 |
+| Scope | Target | Enforced floor | Measured | Measurement |
+|---|---|---|---|---|
+| `internal/security` (auth, RBAC, confirmation, audit) | 90% | **85%** | 85.8% | `go test -coverprofile` per scope |
+| `internal/core` | 80% | **84%** | 84.6% | same |
+| `internal/mcp` | 80% | **78%** | 78.8% | same |
+| Overall repository | 70% | **70%** | 76.3% | total across packages |
+| Generated code and `faketest` packages | Excluded | — | — | explicit, reviewed exclusion list |
 
-Coverage is measured with `go test -race -covermode=atomic -coverprofile` and reported
-per package in the PR. The CI job prints the summary to the step summary today and will
-fail below threshold from Phase 6.
+Coverage is measured with `go test -race -covermode=atomic -coverprofile`. The **enforced
+floor** is what CI fails below; the **target** is what the scope should reach. Where the
+two differ, the gap is real and is recorded here rather than left to read as met:
+
+- `internal/security` is 4 points short of its 90% target. The uncovered statements are
+  the in-memory audit and confirmation recorders' error paths.
+- `internal/mcp` is 1 point short of its 80% target.
+
+The floors are a ratchet: they are the measured level rounded down, so coverage cannot
+fall, and raising them is the way to close the gap. Before this, only the total was
+checked, so a drop in either layer was invisible while the total stayed above 70%.
 
 Coverage is not a quality metric on its own. It measures which lines executed, not
 whether anything was asserted: a test can call a function, ignore the result, and raise
