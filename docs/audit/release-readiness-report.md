@@ -268,7 +268,8 @@ the first production captures as supervised.
    degrades to UNKNOWN — safe, but not automatic.
 3. **Residual audit and isolation gaps.** The five self-ledgered money tools write
    their outcome audit after their own commit (`REL-16-R`); Cloudflare and GA4
-   have no outbound limits; `cmd/admin` has no tests.
+   have no outbound limits. `cmd/admin` now has tests: the approval CLI validates
+   its request before opening the store, and its usage contract is pinned.
 
 **Why not NOT READY.** None of the conditions that would force it hold:
 

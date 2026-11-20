@@ -10,6 +10,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -19,20 +20,41 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "mage2mcp-admin:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run is the testable body of the command. Arguments and output are injected so
+// the usage contract can be exercised without a database or a child process.
+func run(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("mage2mcp-admin", flag.ContinueOnError)
+	flags.SetOutput(stderr)
 	var configPath, as string
-	flag.StringVar(&configPath, "config", "config.yaml", "path to the YAML configuration")
-	flag.StringVar(&as, "as", "", "approver identity (email or subject); required for approve")
-	flag.Parse()
+	flags.StringVar(&configPath, "config", "config.yaml", "path to the YAML configuration")
+	flags.StringVar(&as, "as", "", "approver identity (email or subject); required for approve")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
 
-	if flag.NArg() < 1 {
+	if flags.NArg() < 1 {
 		return fmt.Errorf("usage: mage2mcp-admin [-config path] [-as identity] pending|approve <id>")
+	}
+	// Validate the request before touching the store. Opening the pool first made a
+	// typo cost a full connect timeout, and made the usage errors untestable.
+	command := flags.Arg(0)
+	switch command {
+	case "pending":
+	case "approve":
+		if flags.NArg() < 2 {
+			return fmt.Errorf("approve requires a confirmation id")
+		}
+		if as == "" {
+			return fmt.Errorf("-as <approver identity> is required")
+		}
+	default:
+		return fmt.Errorf("unknown command %q", command)
 	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -56,32 +78,26 @@ func run() error {
 		return err
 	}
 
-	switch flag.Arg(0) {
+	switch command {
 	case "pending":
 		requests, err := svc.Pending(ctx)
 		if err != nil {
 			return err
 		}
 		if len(requests) == 0 {
-			fmt.Println("no pending confirmations")
+			fmt.Fprintln(stdout, "no pending confirmations")
 			return nil
 		}
 		// The approver must see what is being approved, on which instance, and
 		// until when. WritePending renders a bounded, sanitised argument summary.
-		return confirm.WritePending(os.Stdout, requests)
+		return confirm.WritePending(stdout, requests)
 	case "approve":
-		if flag.NArg() < 2 {
-			return fmt.Errorf("approve requires a confirmation id")
-		}
-		if as == "" {
-			return fmt.Errorf("-as <approver identity> is required")
-		}
-		if err := svc.Approve(ctx, flag.Arg(1), as); err != nil {
+		if err := svc.Approve(ctx, flags.Arg(1), as); err != nil {
 			return err
 		}
-		fmt.Printf("approved %s by %s\n", flag.Arg(1), as)
+		fmt.Fprintf(stdout, "approved %s by %s\n", flags.Arg(1), as)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q", flag.Arg(0))
+		return fmt.Errorf("unknown command %q", flags.Arg(0))
 	}
 }

@@ -105,11 +105,11 @@ wiring is reverted.
 | MAG-14 | P1 | **FIXED** | `t10` — integer entry id accepted; fixtures corrected | `t15` pass |
 | MAG-15 | P2 | DEFER | Media dedupe/ledger | limitations |
 | MAG-16 | P2 | **FIXED** | Fallback no longer fabricates an option: an unconfirmed write returns `conflict`, an unreadable read-back returns `upstream_unavailable` | `TestCreateProductOptionDoesNotFabricateOnMissingReadBack`, `TestCreateProductOptionReadBackFailureIsNotSuccess` |
-| MAG-17 | P2 | DEFER | Stage errors drop upstream detail | limitations |
+| MAG-17 | P2 | FIXED | Stage errors now carry `upstream_status`, `upstream_message` (bounded) and `store_code`, and a stage failure is never retryable | `TestStageErrorPreservesUpstreamDiagnostics` |
 | MAG-18 | P2 | **FIXED** | `t30` — 5xx on a non-idempotent write is UNKNOWN, not retryable | `t38` |
 | MAG-19 | P2 | **FIXED** | `store_id` is refused with `unsupported_capability` instead of being silently dropped; the store is selected by the instance's `store_code` | `TestCreateOrderRejectsStoreID` (asserts zero upstream calls) |
-| MAG-20 | P2 | DEFER | No `region_id` | limitations |
-| MAG-21 | P2 | DEFER | `bundle`/`downloadable` accepted without options | limitations |
+| MAG-20 | P1 | FIXED | Addresses carry `region_id`; Magento rejects Polish addresses without it, so order creation could not succeed | `TestOrderAddressCarriesRegionID` |
+| MAG-21 | P2 | FIXED | `writableTypeIDs` and the schema enum now offer only `simple`/`virtual`; the other types are refused with the missing capability named | `TestCreateProductRejectsBundleAndDownloadable` |
 | MAG-22 | P3 | DEFER | Grouped product creation | limitations |
 | MAG-23 | P1 | DEFER | No Magento integration coverage | limitations §1.1 — the largest residual risk |
 | MAG-24 | P3 | DOC | Configurable price relationship | `t34` |

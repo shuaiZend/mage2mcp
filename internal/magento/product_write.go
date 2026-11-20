@@ -32,7 +32,18 @@ const (
 var (
 	priceRE         = regexp.MustCompile(`^[0-9]+(\.[0-9]{1,4})?$`)
 	attributeCodeRE = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
-	writableTypeIDs = map[string]struct{}{"simple": {}, "virtual": {}, "downloadable": {}, "bundle": {}}
+	// writableTypeIDs are the types this gateway can actually make sellable.
+	// downloadable and bundle are deliberately absent: creating one performs only
+	// POST /products, and the package implements neither the bundle option and
+	// selection endpoints nor the downloadable link and sample endpoints, so the
+	// result is an enabled, visible, unsellable product reported as created.
+	writableTypeIDs = map[string]struct{}{"simple": {}, "virtual": {}}
+	// unsupportedTypeIDs names the missing capability, so a caller that reaches
+	// validation gets the reason rather than a generic enum error.
+	unsupportedTypeIDs = map[string]string{
+		"bundle":       "bundle options and selections, which this gateway cannot create",
+		"downloadable": "downloadable links and samples, which this gateway cannot create",
+	}
 )
 
 // CreateProductInput describes one product to create. Status zero selects 1
@@ -371,8 +382,11 @@ func validateCreateProduct(in CreateProductInput) error {
 	if err := validateProductFields(in); err != nil {
 		return err
 	}
+	if reason, ok := unsupportedTypeIDs[in.TypeID]; ok {
+		return invalidf("type_id %q requires %s; create it in the admin or import it, then manage it here", in.TypeID, reason)
+	}
 	if _, ok := writableTypeIDs[in.TypeID]; !ok {
-		return invalidf("type_id must be one of simple, virtual, downloadable, bundle")
+		return invalidf("type_id must be one of simple, virtual")
 	}
 	return nil
 }

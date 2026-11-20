@@ -127,7 +127,10 @@ without them is a misuse.
 2. **Configure a database.** Without `database.url`, confirmations and audit
    records are in memory and are lost on restart, and high-risk approvals do not
    survive a deploy. The server logs a warning; it does not refuse to start.
-3. **Run the approval CLI as a trusted operator.** `cmd/admin` requires direct
+3. **Run the approval CLI as a trusted operator.** It now validates its request
+   (subcommand, confirmation id, `-as`) before opening the store, so a typo fails
+   immediately instead of after a connect timeout, and its usage contract is
+   covered by tests. `cmd/admin` still requires direct
    database access, which is already root-equivalent. The `-as` approver identity
    is self-asserted (SEC-04), so the approval trail is only as trustworthy as the
    operator. See §4.

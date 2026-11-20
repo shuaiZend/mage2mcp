@@ -922,6 +922,39 @@ func stageFailure(stage, sku string, cause error) error {
 	if sku != "" {
 		_ = e.WithDetail("sku", sku)
 	}
+	return preserveUpstream(e, cause)
+}
+
+// upstreamDetailKeys are the cause details worth carrying through a stage wrapper.
+// Without them the caller is told "verify store_code and field values" when the
+// real problem is a specific attribute value, and the retry that follows
+// re-creates products.
+var upstreamDetailKeys = []string{"upstream_status", "upstream_code", "store_code"}
+
+// maxUpstreamMessageBytes bounds the upstream text copied into a detail. The full
+// message can be long and can quote store data; a bounded prefix is enough to
+// diagnose without turning the error into a data channel.
+const maxUpstreamMessageBytes = 512
+
+// preserveUpstream copies the upstream diagnostics from cause onto e. Retryability
+// is deliberately not copied: a stage wrapper describes a partly applied write, and
+// a blind retry re-creates whatever the stage already committed.
+func preserveUpstream(e *errs.Error, cause error) error {
+	var from *errs.Error
+	if !errors.As(cause, &from) {
+		return e
+	}
+	for _, key := range upstreamDetailKeys {
+		if value := from.Details[key]; value != "" {
+			e = e.WithDetail(key, value)
+		}
+	}
+	if message := strings.TrimSpace(from.Details["upstream_message"]); message != "" {
+		if len(message) > maxUpstreamMessageBytes {
+			message = message[:maxUpstreamMessageBytes] + "…"
+		}
+		e = e.WithDetail("upstream_message", message)
+	}
 	return e
 }
 
@@ -945,7 +978,7 @@ func writeStageError(stage string, completed []string, failedSKU string, cause e
 	if failedSKU != "" {
 		_ = e.WithDetail("failed_sku", failedSKU)
 	}
-	return e
+	return preserveUpstream(e, cause)
 }
 
 func stageMessage(stage string, cause error) string {

@@ -5,6 +5,7 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -291,5 +292,101 @@ func TestObserveOperationDoesNotReadOrderForOrderCreate(t *testing.T) {
 	}
 	if len(paths) != 0 {
 		t.Fatalf("observer read %v, want no upstream read for order.create", paths)
+	}
+}
+
+// MAG-21: a bundle or downloadable product cannot be made sellable through this
+// gateway — the option/selection and link/sample endpoints do not exist — so
+// creating one used to produce an enabled, visible, unsellable product that was
+// reported as created. It must be refused with a reason.
+func TestCreateProductRejectsBundleAndDownloadable(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected upstream call %s %s: the request must be refused before it is sent", r.Method, r.URL.Path)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	for _, typeID := range []string{"bundle", "downloadable"} {
+		in := CreateProductInput{
+			SKU: "MCPTEST-TYPE-" + typeID, Name: "MCPTEST Type", AttributeSetID: 4,
+			TypeID: typeID, Price: "9.99",
+		}
+		if _, err := svc.Create(context.Background(), in); errs.CodeOf(err) != errs.CodeInvalidArgument {
+			t.Fatalf("type_id %q: err = %v, want invalid_argument", typeID, err)
+		}
+	}
+}
+
+// The schema must not advertise what the gateway refuses to create.
+func TestProductCreateSchemaOffersOnlySellableTypes(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(productCreateSchema), &schema); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	props, _ := schema["properties"].(map[string]any)
+	typeProp, _ := props["type_id"].(map[string]any)
+	values, _ := typeProp["enum"].([]any)
+	got := make([]string, 0, len(values))
+	for _, v := range values {
+		got = append(got, fmt.Sprint(v))
+	}
+	want := map[string]bool{"simple": true, "virtual": true}
+	if len(got) != len(want) {
+		t.Fatalf("type_id enum = %v, want simple and virtual only", got)
+	}
+	for _, v := range got {
+		if !want[v] {
+			t.Fatalf("type_id enum = %v, want simple and virtual only", got)
+		}
+	}
+}
+
+// MAG-17: a staged workflow used to discard Magento's own diagnostics, leaving
+// the caller with "verify store_code and field values" when the real problem was
+// a specific attribute value. The stage wrapper must carry the cause's upstream
+// status and message, and must never become blindly retryable: a stage failure
+// means part of the write already committed.
+func TestStageErrorPreservesUpstreamDiagnostics(t *testing.T) {
+	cause := errs.New(errs.CodeInvalidArgument, "Magento rejected the request as invalid").
+		WithDetail("upstream_status", "400").
+		WithDetail("upstream_message", `The value of attribute "color" is incorrect.`).
+		WithDetail("store_code", "pl")
+	cause.Retryable = true
+
+	for name, wrapped := range map[string]error{
+		"stageFailure":    stageFailure("parent", "SKU-1", cause),
+		"writeStageError": writeStageError("children", []string{"SKU-1"}, "SKU-2", cause),
+	} {
+		var e *errs.Error
+		if !errors.As(wrapped, &e) {
+			t.Fatalf("%s: wrapped error is not a taxonomy error: %v", name, wrapped)
+		}
+		if got := e.Details["upstream_status"]; got != "400" {
+			t.Fatalf("%s: upstream_status = %q, want 400", name, got)
+		}
+		if got := e.Details["upstream_message"]; !strings.Contains(got, `"color" is incorrect`) {
+			t.Fatalf("%s: upstream_message = %q, want Magento's own reason", name, got)
+		}
+		if got := e.Details["store_code"]; got != "pl" {
+			t.Fatalf("%s: store_code = %q, want pl", name, got)
+		}
+		if e.Retryable {
+			t.Fatalf("%s: a partly applied stage must not be retryable", name)
+		}
+	}
+}
+
+// The upstream message is bounded: a long store message must not turn the error
+// into a data channel.
+func TestStageErrorBoundsUpstreamMessage(t *testing.T) {
+	long := strings.Repeat("x", maxUpstreamMessageBytes*3)
+	cause := errs.New(errs.CodeInvalidArgument, "rejected").
+		WithDetail("upstream_message", long)
+	var e *errs.Error
+	if !errors.As(stageFailure("parent", "", cause), &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	if got := len(e.Details["upstream_message"]); got > maxUpstreamMessageBytes+3 {
+		t.Fatalf("upstream_message length = %d, want it bounded", got)
 	}
 }
