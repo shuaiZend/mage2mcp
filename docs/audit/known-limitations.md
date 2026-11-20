@@ -281,8 +281,14 @@ The two open P2 items are bounded and were accepted by the audit, not overlooked
   commits for the five self-ledgered money tools. A crash in that window leaves the
   `operations` row correct but its audit row missing. The ledger remains the authority
   on whether the mutation happened, so the gap is in the audit trail, not in the money.
-  Closing it means letting those five Magento write files write their audit row inside
-  their own transaction.
+
+  The obvious fix — have the ledger write the row in its own transaction, as
+  `RecoverExpired` and `Abort` already do — makes things worse, and it took reading the
+  call order to see why: `CreateOrder` validates its input **before** `ops.Begin`, so a
+  call that fails validation opens no operation. If the audit row came only from the
+  ledger, that call would have no audit row at all. A correct fix needs the middleware
+  to write the row when no operation was opened and the ledger to write it when one
+  was, which requires a signal that does not exist today.
 - **`MCP-08`** — every output property now carries a description, enforced at
   registration. What is missing is a common output envelope (instance, request id),
   which would change all 106 output schemas.
