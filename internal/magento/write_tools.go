@@ -77,19 +77,19 @@ const (
 	idempotencyKeyProp          = `"idempotency_key": {"type": "string", "maxLength": 256, "description": "Optional replay key. Repeating it with the same arguments returns the recorded outcome without a second upstream mutation; reusing it with different arguments is rejected as idempotency_key_reuse. Without a key one is derived from the arguments. The key is not caller-scoped, so treat it as a secret: use an unguessable value (a UUID), never a predictable one."}`
 	configurableOperationIDProp = `"operation_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$", "description": "Optional resume handle. Pass the operation_id returned by a partial configurable.create to resume it: children and a parent that already exist are reused instead of re-created, missing links are repaired, and no duplicate SKU is written. Omit it for a fresh create, which refuses a pre-existing SKU."}`
 	skuProp                     = `"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}`
-	nameProp                    = `"name": {"type": "string", "minLength": 1, "maxLength": 255}`
-	setProp                     = `"attribute_set_id": {"type": "integer", "minimum": 1}`
+	nameProp                    = `"name": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Display name shown in the storefront."}`
+	setProp                     = `"attribute_set_id": {"type": "integer", "minimum": 1, "description": "Attribute set the product belongs to; it decides which custom attributes the product can carry. Use magento.attribute.sets to list the ids."}`
 	// Only the types the gateway can make sellable are offered. bundle and
 	// downloadable need option/link endpoints that do not exist here; advertising
 	// them produced enabled, visible, unsellable products (MAG-21).
 	typeIDProp           = `"type_id": {"type": "string", "enum": ["simple", "virtual"], "description": "Product type. bundle and downloadable are rejected: their options, selections, links and samples cannot be created through this gateway."}`
 	priceProp            = `"price": {"type": "string", "pattern": "` + priceInputPattern + `", "description": "Decimal price string, up to 4 fraction digits."}`
-	statusProp           = `"status": {"type": "integer", "enum": [1, 2]}`
-	visibilityProp       = `"visibility": {"type": "integer", "enum": [1, 2, 3, 4]}`
-	websiteIDsProp       = `"website_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "maxItems": 50}`
-	categoryIDsProp      = `"category_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 500}`
+	statusProp           = `"status": {"type": "integer", "enum": [1, 2], "description": "1 enabled (default), 2 disabled. A disabled product exists but is not sellable."}`
+	visibilityProp       = `"visibility": {"type": "integer", "enum": [1, 2, 3, 4], "description": "1 not visible, 2 catalog only, 3 search only, 4 catalog and search (the usual value)."}`
+	websiteIDsProp       = `"website_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "maxItems": 50, "description": "Websites the product is published to. The default store website is usually 1."}`
+	categoryIDsProp      = `"category_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 500, "description": "Categories to assign the product to. Omit to leave placement untouched; an empty array clears it."}`
 	attributesProp       = `"attributes": {"type": "object", "additionalProperties": {"type": "string", "maxLength": 255}, "description": "Custom EAV attributes keyed by attribute code."}`
-	childAttributesProp  = `"attributes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "maxLength": 255}}`
+	childAttributesProp  = `"attributes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "maxLength": 255}, "description": "Variant attribute code to option value for this child, for example {\"color\": \"12\"}. Every child needs the parent's variant attributes."}`
 	quantityProp         = `"quantity": {"type": "integer", "minimum": 0, "description": "Optional default-source quantity assigned after the product exists."}`
 	descriptionProp      = `"description": {"type": "string", "maxLength": 65535, "description": "Full product description (HTML allowed). For SEO, write at least 300 characters of unique, keyword-relevant copy; do not duplicate other products."}`
 	shortDescriptionProp = `"short_description": {"type": "string", "maxLength": 2048, "description": "Short summary shown in listings; a 1-2 sentence benefit statement works best."}`
@@ -1610,14 +1610,14 @@ const (
 	addressSchema = `{"type": "object", "additionalProperties": false,
 		"required": ["firstname", "lastname", "street", "city", "postcode", "country_id", "telephone"],
 		"properties": {
-			"firstname": {"type": "string", "minLength": 1, "maxLength": 255},
-			"lastname": {"type": "string", "minLength": 1, "maxLength": 255},
-			"street": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string", "minLength": 1, "maxLength": 255}},
-			"city": {"type": "string", "minLength": 1, "maxLength": 255},
-			"postcode": {"type": "string", "minLength": 1, "maxLength": 255},
-			"country_id": {"type": "string", "pattern": "^[A-Z]{2}$"},
+			"firstname": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Recipient given name."},
+			"lastname": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Recipient family name."},
+			"street": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string", "minLength": 1, "maxLength": 255}, "description": "Street lines, most specific first. Magento stores up to four."},
+			"city": {"type": "string", "minLength": 1, "maxLength": 255, "description": "City or locality."},
+			"postcode": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Postal code as the destination country writes it; not validated against the country."},
+			"country_id": {"type": "string", "pattern": "^[A-Z]{2}$", "description": "ISO 3166-1 alpha-2 country code, uppercase, for example PL or US."},
 			"region_id": {"type": "integer", "minimum": 1, "description": "Numeric region (state/province) id. Magento requires it for countries that have a region directory (Poland among them) and rejects the address otherwise."},
-			"telephone": {"type": "string", "minLength": 1, "maxLength": 255},
+			"telephone": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Contact phone number for this address."},
 			"region": {"type": "string", "maxLength": 255}
 		}}`
 
@@ -1785,9 +1785,9 @@ const (
 		"and confirmation-gated."
 
 	inventoryTransferSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
-		"from_source": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
-		"to_source": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
-		"quantity": {"type": "integer", "minimum": 1}
+		"from_source": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$", "description": "Source code the stock leaves, for example default. Use magento.inventory.sources to list them."},
+		"to_source": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$", "description": "Source code the stock arrives at. Must differ from from_source."},
+		"quantity": {"type": "integer", "minimum": 1, "description": "Whole units to move. Physical source quantity, not salable quantity: reservations are not adjusted by a transfer."}
 	}, "required": ["instance", "sku", "from_source", "to_source", "quantity"], "additionalProperties": false}`
 )
 

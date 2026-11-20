@@ -626,3 +626,48 @@ func TestProductAndOrderOutputsCarryDescriptions(t *testing.T) {
 		}
 	}
 }
+
+// MCP-07: the schema is the only contract an agent sees, so a required property
+// without a description is a missing instruction. The audit named three write
+// schemas whose required fields were undocumented; these are the ones that caused
+// wrong values in practice.
+func TestNamedWriteSchemasDocumentTheirRequiredFields(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema string
+		fields []string
+	}{
+		{"product.create", productCreateSchema, []string{"name", "attribute_set_id", "type_id", "price"}},
+		{"inventory.transfer", inventoryTransferSchema, []string{"from_source", "to_source", "quantity"}},
+		{"order.create address", addressSchema, []string{
+			"firstname", "lastname", "street", "city", "postcode", "country_id", "telephone"}},
+	}
+	for _, tc := range cases {
+		var decoded struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal([]byte(tc.schema), &decoded); err != nil {
+			t.Fatalf("%s: decode schema: %v", tc.name, err)
+		}
+		for _, field := range tc.fields {
+			prop, ok := decoded.Properties[field]
+			if !ok {
+				t.Fatalf("%s: %q is not in the schema", tc.name, field)
+			}
+			if strings.TrimSpace(prop.Description) == "" {
+				t.Errorf("%s: required property %q has no description", tc.name, field)
+			}
+		}
+	}
+}
+
+// The unit ambiguity the audit called out: `quantity` in inventory is whole units of
+// physical stock, which is not the same number as salable quantity. The description
+// has to say which one it is.
+func TestTransferQuantityStatesWhichNumberItIs(t *testing.T) {
+	if !strings.Contains(inventoryTransferSchema, "Physical source quantity") {
+		t.Fatal("transfer quantity must state that it moves physical, not salable, stock")
+	}
+}
