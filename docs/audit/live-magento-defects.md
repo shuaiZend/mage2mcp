@@ -23,7 +23,7 @@ not taken on trust.
 | LIVE-5 | **P1** | reporting | `total_count` is omitted from three `fields` projections, so `total` is always 0 and `sales.summary` never reports truncation | small | **fixed, verified live** |
 | LIVE-6 | P3 | observability | Log redaction hides non-secret fields (`authorization_enabled`) | small | **fixed, verified live** |
 | LIVE-7 | **P1** | reliability | The reconciler enqueues to the `maintenance` queue, but the worker's default queues did not include it, so no UNKNOWN operation was ever reconciled | one line | **fixed, verified live** |
-| LIVE-8 | P2 | order | The reconciler reports `reconciliation_inconclusive` for a placement whose order did commit just after the failed call | medium | **open** |
+| LIVE-8 | **P1** | order | An ambiguous placement that was retried-empty was recorded as a definite `failed` (`reconciled_not_applied`) for an order that existed; and the observer read `/orders/{customerID}`, which can report an unrelated order as applied | medium | **fixed, verified live** |
 | MAG-20 | **P1** | order | Addresses could not express `region_id`; Magento rejects Polish addresses without it | small | **fixed, verified live** |
 
 LIVE-1 and LIVE-5 are the two that matter: one blocks the entire money path, the
@@ -218,9 +218,45 @@ the file holds only environment-variable references).
   placed) and one to `reconciliation_inconclusive`.
 - **Regression test**: `TestDefaultQueuesIncludeMaintenance`.
 
-## LIVE-8 (P2, open): the observer cannot confirm one committed order
+## LIVE-8 (P1, fixed): a placed order was recorded as definitely not placed
 
-Replaces the earlier LIVE-7 description after the queue defect was found.
+The live ledger contained the worst possible row for a money operation:
+
+```text
+entity_id 8 | state failed | error_code reconciled_not_applied | reconcile_count 1
+```
+
+while order `3` existed on the store, created about one second after the failed
+call. The gateway told the caller "the order was not placed … safe to retry with a
+new idempotency key" — an instruction that would create a duplicate order.
+
+**Two separate faults, both fixed:**
+
+1. **An empty reconciliation read was treated as proof of non-placement.** The
+   window is a race: a real store commits after the HTTP response is lost. Empty
+   reads now prove nothing. The discriminator that does hold is the cart — Magento
+   consumes it on a successful placement — so a cart that is still readable is
+   positive evidence nothing was placed, and only then is `failed` recorded. A
+   consumed cart leaves the operation `unknown`.
+
+2. **The observer read an unrelated order.** `magento.order.create` records the
+   *customer* id as the entity id (the order does not exist yet), and
+   `ObserveOperation` did `GET /orders/{customerID}`. On a store where that order
+   id happens to exist, the observer would read someone else's order and could
+   report the placement as applied. It now returns inconclusive for this operation
+   by construction, without any upstream read.
+
+**Verified live** on the next run: the placement again timed out, the order was
+created (`entity_id 4`, customer 3), and the ledger recorded
+`unknown / upstream_unavailable` — the safe state. The earlier run's `failed` row
+for a placed order is the evidence that the old behaviour was wrong.
+
+**Residual (documented, not a defect):** this store cannot confirm the placement
+from the reconciler, so the operation escalates to a human after
+`maxReconcileAttempts`. That is the designed terminal state for an operation the
+gateway refuses to guess about. Auto-resolving it would need the cart id in the
+ledger, which is a schema change worth doing deliberately rather than in a
+bug-fix pass.
 
 - **Location**: `internal/magento/order_create.go` — `reconcilePlacedOrder` and the
   `reconcileReads` / `reconcileBackoff` window

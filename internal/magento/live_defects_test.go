@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 )
 
 // Regression tests for the defects found by the live run against a real Magento
@@ -231,5 +233,63 @@ func TestOrderAddressCarriesRegionID(t *testing.T) {
 	empty, _ := json.Marshal(OrderAddressInput{Firstname: "A"}.toPayload())
 	if strings.Contains(string(empty), "region_id") {
 		t.Fatalf("payload = %s, want region_id omitted when unset", empty)
+	}
+}
+
+// LIVE-8: an empty reconciliation read is not proof of non-placement. A live run
+// recorded `failed / reconciled_not_applied` for an order that existed on the
+// store, because the order committed about a second after the failed call. Only a
+// surviving cart proves nothing was placed; a consumed cart means the placement
+// may have succeeded and the operation must stay unknown.
+func TestCreateOrderAmbiguousWithConsumedCartStaysUnknown(t *testing.T) {
+	fastReconcile(t)
+	fake := &orderFake{
+		placeStatus: http.StatusRequestTimeout,
+		ordersJSON:  ordersJSON(),
+		cartGone:    true,
+	}
+	ts := httptest.NewServer(fake.handler())
+	defer ts.Close()
+	ledger := newFakeLedger()
+	useLedger(t, ledger)
+	svc := testService(t, ts.URL)
+	in := validOrderInput()
+	in.IdempotencyKey = "order-cart-consumed"
+
+	_, err := svc.CreateOrder(context.Background(), in)
+	if errs.CodeOf(err) != errs.CodeOperationUnknown {
+		t.Fatalf("err = %v, want operation_unknown", err)
+	}
+	if errs.RetryableError(err) {
+		t.Fatal("a possibly placed order must not be marked retryable")
+	}
+	if c := ledger.counts(); c.fails != 0 {
+		t.Fatalf("ledger failures = %d, want 0: a possibly placed order must not be recorded failed", c.fails)
+	}
+}
+
+// LIVE-8: magento.order.create stores the customer id as the entity id, because
+// the order does not exist yet. The observer must not read /orders/{customerID}:
+// that is an unrelated order, and reporting it as applied would claim a placement
+// that never happened.
+func TestObserveOperationDoesNotReadOrderForOrderCreate(t *testing.T) {
+	var paths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"entity_id":8,"status":"complete","state":"complete"}`)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	observation, err := svc.ObserveOperation(context.Background(), "magento.order.create", "order", "8")
+	if err != nil {
+		t.Fatalf("ObserveOperation: %v", err)
+	}
+	if observation != ObservationInconclusive {
+		t.Fatalf("observation = %q, want inconclusive", observation)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("observer read %v, want no upstream read for order.create", paths)
 	}
 }

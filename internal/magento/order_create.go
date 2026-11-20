@@ -242,18 +242,29 @@ func (s *Service) reconcilePlacedOrder(ctx context.Context, run *OperationRun, i
 		break
 	}
 	if len(candidates) == 0 {
-		// reconcileReads empty reads agree: nothing was placed for this customer
-		// in the window, so the ledger can record a definite failure.
-		if err := run.Fail(ctx, reconciledNotApplied); err != nil {
-			return nil, err
+		// Empty reads are not proof of non-placement: a real store committed the
+		// order about a second after the failed call, so a window of agreeing empty
+		// reads still missed it and the ledger recorded a definite failure for an
+		// order that existed. The discriminator that does hold is the cart: a
+		// successful placement consumes it, so a cart that still exists is positive
+		// evidence nothing was placed.
+		consumed, cartErr := s.cartConsumed(ctx, cartID)
+		if cartErr == nil && !consumed {
+			if err := run.Fail(ctx, reconciledNotApplied); err != nil {
+				return nil, err
+			}
+			failure := errs.New(errs.CodeOf(placeErr),
+				"the order was not placed: the cart still exists after repeated reconciliation reads, so it is safe to retry with a new idempotency key").
+				WithDetail("operation_id", run.ID()).
+				WithDetail("cart_id", strconv.Itoa(cartID)).
+				WithDetail("upstream_code", upstreamCode)
+			failure.Retryable = true
+			return nil, failure
 		}
-		failure := errs.New(errs.CodeOf(placeErr),
-			"the order was not placed: repeated reconciliation reads found no order for the customer, so it is safe to retry with a new idempotency key").
-			WithDetail("operation_id", run.ID()).
-			WithDetail("cart_id", strconv.Itoa(cartID)).
-			WithDetail("upstream_code", upstreamCode)
-		failure.Retryable = true
-		return nil, failure
+		// The cart is gone or its state could not be read: the placement may have
+		// succeeded, so stay unknown and let the reconciler decide.
+		_ = run.Unknown(ctx, string(errs.CodeUpstreamUnavailable))
+		return nil, operationUnknownError(run.ID(), "order placement", string(errs.CodeUpstreamUnavailable))
 	}
 	exact := make([]orderCandidate, 0, 1)
 	for _, candidate := range candidates {
@@ -340,6 +351,20 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// cartConsumed reports whether the cart no longer exists, which is what Magento
+// does to a cart after a successful placement. A cart that is still readable is
+// positive evidence that nothing was placed.
+func (s *Service) cartConsumed(ctx context.Context, cartID int) (bool, error) {
+	_, err := s.client.do(ctx, http.MethodGet, "/carts/"+strconv.Itoa(cartID), nil, nil)
+	if err == nil {
+		return false, nil
+	}
+	if errs.CodeOf(err) == errs.CodeNotFound {
+		return true, nil
+	}
+	return false, err
 }
 
 // reconcileBackoff is the pause between reconciliation reads. It is a variable

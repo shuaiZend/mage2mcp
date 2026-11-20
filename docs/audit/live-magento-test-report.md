@@ -231,11 +231,18 @@ The single remaining hard failure is `magento.product.options.create`, which is 
 store limitation described in §5 (the demo exposes no custom-option route), not a
 gateway defect.
 
-**Still open**: LIVE-7, the reconciliation gap that reports a successfully placed
-order as `operation_unknown`. The order *is* created; the ledger refuses to guess,
-which is the safe behaviour, but an operator has to reconcile by hand. That is why
-`order-write` still shows 0 pass: the case asserts a placed order, and the gateway
-cannot yet confirm it.
+**LIVE-8 changed the picture again.** The reconciler used to record a *definite
+failure* for an ambiguous placement whose order had in fact been created — the
+worst possible row for a money operation, because the message told the caller it
+was safe to retry. Empty reconciliation reads no longer prove anything: only a
+surviving cart does. Verified live afterwards: the placement timed out again, the
+order was created (`entity_id 4`), and the ledger recorded `unknown` — the safe
+state — instead of `failed`.
+
+The operation still cannot be *confirmed* from this store's reconciler, so it
+escalates to a human after `maxReconcileAttempts`. That is the designed terminal
+state for an operation the gateway refuses to guess about, and it is why
+`order-write` still shows 0 pass: the case asserts a confirmed order.
 
 The 24 skipped cases remain dependants of that confirmation, so the invoice,
 shipment and credit-memo domains are still unexercised. Fixing LIVE-7 is what

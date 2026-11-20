@@ -459,6 +459,14 @@ func (s *Service) ObserveOperation(ctx context.Context, operation, entityType, e
 		}
 		return ObservationInconclusive, nil
 	case "order":
+		// magento.order.create records the *customer* id here, because the order
+		// does not exist yet when the operation begins. Reading /orders/{id} would
+		// fetch an unrelated order and could report a placement as applied that
+		// never happened, so this operation is left to the placement path and to a
+		// human: it is inconclusive by construction.
+		if operation == "magento.order.create" {
+			return ObservationInconclusive, nil
+		}
 		raw, err := s.client.do(ctx, http.MethodGet, "/orders/"+url.PathEscape(entityID), nil, nil)
 		if observation, done := observeError(err); done {
 			return observation, nil

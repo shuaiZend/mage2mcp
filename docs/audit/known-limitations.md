@@ -48,9 +48,13 @@ container built from the patched tree: `links.add`, `inventory.source_create`,
 (the method was wrong). Two things came out of that verification. The reconciler's `maintenance` queue was
 not in the worker's default list, so **no UNKNOWN operation was ever reconciled** in
 a default deployment; that is fixed and verified (72 queued jobs drained, 283
-terminal transitions). One gap remains open — LIVE-8, where the reconciler reports
-`reconciliation_inconclusive` for a placement whose order did commit just after the
-failed call.
+terminal transitions). LIVE-8 was the sharpest finding: an ambiguous placement whose order *had* been
+created was recorded as a definite failure with "safe to retry", which would have
+produced a duplicate order. Empty reconciliation reads no longer prove
+non-placement — only a surviving cart does — and the observer no longer reads
+`/orders/{customerID}` as if it were an order id. What remains is a limitation
+rather than a defect: this store's reconciler cannot confirm the placement, so the
+operation escalates to a human after its retry budget.
 
 That run is manual and is not part of CI. It narrows the risk; it does not close
 it.

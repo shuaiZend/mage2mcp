@@ -176,6 +176,9 @@ type orderFake struct {
 	ordersSeq   []string // successive GET /orders responses; the last repeats
 	deletes     int
 	orderReads  int
+	// cartGone makes GET /carts/42 answer 404, which is what Magento does to a
+	// cart after a successful placement.
+	cartGone bool
 }
 
 func (f *orderFake) handler() http.HandlerFunc {
@@ -203,6 +206,15 @@ func (f *orderFake) handler() http.HandlerFunc {
 				return
 			}
 			_, _ = io.WriteString(w, placeBody)
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/carts/42":
+			f.mu.Lock()
+			gone := f.cartGone
+			f.mu.Unlock()
+			if gone {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = io.WriteString(w, `{"id":42,"items":[]}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/orders":
 			f.mu.Lock()
 			f.orderReads++
@@ -414,8 +426,8 @@ func TestCreateOrderReconcileMatchesByQuoteID(t *testing.T) {
 	}
 }
 
-// TestCreateOrderAmbiguousNoMatch proves an empty reconciliation is only called a
-// definite failure after repeated agreeing reads, and keeps the cart.
+// TestCreateOrderAmbiguousNoMatch proves a definite failure is only recorded on
+// positive evidence: the cart still exists, so nothing was placed.
 func TestCreateOrderAmbiguousNoMatch(t *testing.T) {
 	fastReconcile(t)
 	fake := &orderFake{
@@ -435,7 +447,7 @@ func TestCreateOrderAmbiguousNoMatch(t *testing.T) {
 		t.Fatal("want an error when the order was not placed")
 	}
 	if !errs.RetryableError(err) {
-		t.Fatal("a proven not-placed order should be retryable with a new key")
+		t.Fatal("a not-placed order with a surviving cart should be retryable with a new key")
 	}
 	if fake.searchCount() != reconcileReads {
 		t.Fatalf("order searches = %d, want %d agreeing reads", fake.searchCount(), reconcileReads)
