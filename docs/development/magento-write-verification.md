@@ -72,4 +72,4 @@ they report failure after a successful write.
 | W9 | fixed | `category.create` accepts `url_key` and sends it through `custom_attributes`; demo create succeeded |
 | W10 | fixed | `category.tree` now returns the list under `categories` (breaking output rename, pre-1.0) |
 | W11 | fixed | `inventory.assign` defaults `status` to 1 when omitted |
-| W12 | fixed | import of a minimal CSV now succeeds; upstream validation messages are surfaced when a row fails |
+| W12 | fixed | imports succeed; duplicate URL keys are surfaced with Magento's message (include `url_key` in the CSV to avoid collisions) |
