@@ -1855,3 +1855,67 @@ func toolResultText(res *mcp.CallToolResult) string {
 	}
 	return strings.Join(parts, " | ")
 }
+
+// SEC-12: /metrics exposes the tool inventory, per-tool counts and build_info.
+// On a listener reachable off-host it must sit behind the same middleware as
+// /mcp; health probes stay open so orchestrators can still use them.
+func TestMetricsRequireAuthOnPublicListener(t *testing.T) {
+	denied := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		})
+	}
+	srv, err := NewMCP(Options{Version: "test", Registry: mustRegistry(t)})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ts := httptest.NewServer(Handler(srv, Options{
+		Registry:           mustRegistry(t),
+		AuthMiddleware:     denied,
+		Metrics:            http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }),
+		MetricsRequireAuth: true,
+	}))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("/metrics status = %d, want 401 on a public listener", resp.StatusCode)
+	}
+	// Health probes must remain reachable without credentials.
+	for _, path := range []string{"/healthz", "/readyz"} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200", path, resp.StatusCode)
+		}
+	}
+}
+
+// A loopback deployment keeps the unauthenticated scrape path it has today.
+func TestMetricsStayOpenOnLoopback(t *testing.T) {
+	srv, err := NewMCP(Options{Version: "test", Registry: mustRegistry(t)})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ts := httptest.NewServer(Handler(srv, Options{
+		Registry: mustRegistry(t),
+		Metrics:  http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }),
+	}))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/metrics status = %d, want 200 without MetricsRequireAuth", resp.StatusCode)
+	}
+}

@@ -37,8 +37,13 @@ type Options struct {
 	Registry       *registry.Registry
 	AuthMiddleware func(http.Handler) http.Handler
 	Metrics        http.Handler
-	SessionTimeout time.Duration
-	MaxBodyBytes   int64
+	// MetricsRequireAuth puts /metrics behind AuthMiddleware. Set it whenever the
+	// listener is reachable off-host: the endpoint exposes the tool inventory,
+	// per-tool call counts and build_info, which is reconnaissance for an
+	// unauthenticated caller. Health probes stay open so orchestrators can use them.
+	MetricsRequireAuth bool
+	SessionTimeout     time.Duration
+	MaxBodyBytes       int64
 	// Authorize is consulted for every tools/call. requiredScope is the tool's
 	// declared registry permission, resolved by installPolicy; the server never
 	// defaults it to read. A nil Authorize allows all calls and is only
@@ -510,7 +515,11 @@ func Handler(srv *mcp.Server, opts Options) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "tools": opts.Registry.Len()})
 	})
 	if opts.Metrics != nil {
-		mux.Handle("/metrics", opts.Metrics)
+		if opts.MetricsRequireAuth && opts.AuthMiddleware != nil {
+			mux.Handle("/metrics", opts.AuthMiddleware(opts.Metrics))
+		} else {
+			mux.Handle("/metrics", opts.Metrics)
+		}
 	}
 	return mux
 }

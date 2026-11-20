@@ -152,7 +152,10 @@ func run() error {
 		Registry:       reg,
 		AuthMiddleware: authMiddleware,
 		Metrics:        metrics.Handler(),
-		MaxBodyBytes:   cfg.Server.MaxBodyBytes,
+		// A metrics endpoint on a non-loopback listener is reconnaissance for an
+		// unauthenticated caller, so it goes behind the same middleware as /mcp.
+		MetricsRequireAuth: !isLoopbackListen(cfg.Server.Listen),
+		MaxBodyBytes:       cfg.Server.MaxBodyBytes,
 	})
 
 	httpServer := &http.Server{

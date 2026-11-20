@@ -76,7 +76,7 @@ wiring is reverted.
 | SEC-09 | P1 | **FIXED** | `t22` — role provenance documented; unknown role fails closed | final review `t36` |
 | SEC-10 | P2 | DEFER | Bounded upstream text reaches the agent | limitations |
 | SEC-11 | P2 | **FIXED** | Instance-aware rate limiting and concurrency cap (`internal/magento/limits.go`, config `limits:`) | covered by `limits_test.go` + config validation |
-| SEC-12 | P2 | DEFER | `/metrics` and `/healthz` unauthenticated on the public listener | limitations |
+| SEC-12 | P2 | FIXED | `/metrics` goes behind the auth middleware whenever the listener is not loopback; health probes stay open | `TestMetricsRequireAuthOnPublicListener` |
 | SEC-13 | P2 | **FIXED** | `t20` — non-loopback + auth disabled is refused; startup warns loudly | `t20` |
 | SEC-14 | P2 | **FIXED** | `t9` — canonical hashing and integer precision preserved | `t32` |
 | SEC-15 | P2 | DEFER | Session not bound to identity | limitations |
