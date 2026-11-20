@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-11-20
+
+Patch release: geography truncation is reported accurately with the available
+total and a newest-first sample.
+
 ### Fixed
 
 - `magento.orders.geography` now reports `total_available` from Magento's
@@ -556,7 +561,8 @@ for Magento 2, Cloudflare, and Google Analytics 4.
   multi-agent development, licensing, data stores, error model, configuration,
   and observability.
 
-[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/shuaiZend/mage2mcp/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.4
 [0.7.3]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.3
 [0.7.2]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.2
 [0.7.1]: https://github.com/shuaiZend/mage2mcp/releases/tag/v0.7.1
