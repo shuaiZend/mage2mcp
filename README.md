@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/shuaiZend/mage2mcp?include_prereleases&sort=semver)](https://github.com/shuaiZend/mage2mcp/releases)
+[![Latest release v0.9.0](https://img.shields.io/badge/latest-v0.9.0-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](go.mod)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25%20%7C%202026--07--28-7c3aed.svg)](docs/mcp-conformance.md)
@@ -11,7 +12,7 @@ One endpoint, one auth model, one audit trail — with typed, documented tools t
 agents can actually use safely. Writes are two-step human-approved; reads are
 read-only by default and PII-safe.
 
-> **Status: v0.9.0 (pre-1.0).** 112 tools (101 Magento). Validated against a live
+> **Status: v0.10.0 (pre-1.0).** 112 tools (101 Magento). Validated against a live
 > Magento production store: 23 read-only checks plus a 30-day business drill-down
 > (924 orders) with no writes. Releases ship signed artifacts, SBOM, and a
 > multi-arch image. Interfaces may still change with an ADR before 1.0.
@@ -66,10 +67,46 @@ Highlights of the Magento surface:
 |---|---|
 | Source code | Production-grade Go gateway: MCP server, auth, RBAC, audit, metrics, PostgreSQL queue, Docker |
 | Tests and CI | Unit, integration (PostgreSQL), race, lint, security, supply-chain, and a full end-to-end job on every PR |
-| Releases | v0.8.0 pre-release with signed artifacts, checksums, SBOM, multi-arch GHCR image |
+| Releases | [v0.10.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0) with signed artifacts, checksums, SBOM, multi-arch GHCR image |
 | Production validation | Read-only acceptance and a 30-day business report against a live Magento store |
 | Documentation | Architecture, ADRs (22), tool catalog, field reference, compatibility, operations, release notes |
 | License and community | [Apache-2.0](LICENSE), [NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md) |
+
+## Releases
+
+The latest release is [**v0.9.0**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0)
+(2026-11-20), the write-verification release: it fixes W1–W6, W9, W11, and W12 against
+a live Magento demo, surfaces upstream 400/422 messages, and renames the
+`magento.category.tree` output key to `categories`.
+
+Every tagged release publishes:
+
+- static binaries for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, and
+  windows/amd64 (`mage2mcp-{server,worker,admin}_<os>_<arch>`);
+- `checksums.txt` (SHA-256) and an SPDX JSON SBOM plus a third-party notices bundle;
+- keyless cosign signatures (`.bundle`) for every artifact and for the multi-arch
+  image at `ghcr.io/shuaizend/mage2mcp`;
+- SLSA build provenance attestations for the release artifacts.
+
+```bash
+# Verify a downloaded artifact against its published signature and checksum.
+cosign verify-blob \
+  --bundle mage2mcp-server_linux_amd64.bundle \
+  --certificate-identity-regexp 'https://github.com/shuaiZend/mage2mcp/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  mage2mcp-server_linux_amd64
+sha256sum --check checksums.txt
+```
+
+| Release | Notes | Highlights |
+|---|---|---|
+| [v0.10.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0) | [release notes](docs/releases/v0.9.0.md) | Write verification fixes W1–W6, W9, W11, W12; upstream error messages |
+| [v0.8.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.1) | [release notes](docs/releases/v0.8.1.md) | Structured tool errors (G12) |
+| [v0.8.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.0) | [release notes](docs/releases/v0.8.0.md) | Business analysis fixes; `store.configs` and `categories.flat` |
+
+The complete list, including pre-releases, is on the
+[Releases page](https://github.com/shuaiZend/mage2mcp/releases); every version is
+also recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Documentation map
 
@@ -381,6 +418,11 @@ All contributions require a Developer Certificate of Origin sign-off (`git commi
 there is no CLA. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development environment,
 branch and commit conventions, testing expectations, and the module ownership rules, and
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
+
+Questions, usage help, and commercial-support boundaries are covered in
+[SUPPORT.md](SUPPORT.md); bug reports and feature proposals have templates in
+[`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/), and pull requests follow
+[`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md).
 
 ## Security
 

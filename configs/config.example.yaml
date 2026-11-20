@@ -48,6 +48,18 @@ datasources:
       - id: "store-us"
         endpoint: "https://shop.example.com"
         store_code: "default"
+        # Credential forms:
+        #   bearer:<integration-access-token>            (recommended)
+        #   oauth1:<key>:<secret>:<token>:<token-secret>
+        #   admin:<username>:<password>                   (mints and refreshes an
+        #     admin bearer token automatically; a password may contain colons)
+        #
+        # Security caveat: an admin token inherits the whole ACL role of the
+        # account, which is far more powerful than an integration token. Use a
+        # dedicated API-only admin with a least-privilege role, never a human
+        # administrator. The password stays in process memory and is never
+        # logged or persisted. With 2FA enabled the token endpoint is refused,
+        # so prefer bearer: or oauth1: there.
         credential: "${MAGENTO_US_CREDENTIAL}"
   cloudflare:
     enabled: false

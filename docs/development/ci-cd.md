@@ -1,12 +1,32 @@
 # CI/CD
 
-**Status:** Phase 0 baseline. The workflows in `.github/workflows/` are live. The Go
-jobs are defined, reviewed, and merged, but skipped until `go.mod` lands.
+**Status:** live (v0.9.x). Sections 3–10 describe the original Phase 0 design;
+where they differ from the current workflows, the workflows and the "Current state"
+section below are authoritative.
 **Owner:** Maintainer (Platform). Security-relevant steps require Security review.
 **Related:** [Agent workflow](agent-workflow.md), [Review process](review-process.md),
 [Testing strategy](testing-strategy.md), [Development plan](../development-plan.md),
 [Threat model](../security/threat-model.md),
 [ADR-0007](../adr/0007-multi-agent-development.md).
+
+## Current state (v0.9.x)
+
+- `ci.yml`: `detect`/`classify` → `docs`, `dco`, `actions-pinned`, `go` (1.26.x +
+  1.27.x), `integration`, `docker`, `e2e`, `external-links` (advisory), and a
+  `ci-gate` job that fails on any failed/cancelled job and treats skipped jobs as
+  not applicable. Docs-only changes run only the lightweight jobs; the classifier
+  fails safe to the full set on schedules, manual runs, unknown base SHAs, and
+  non-allowlisted paths.
+- Caching: `setup-go` module/build cache on every Go job; one shared buildx layer
+  cache (`mage2mcp-docker`) reused by the `docker` and `release-dry-run` jobs;
+  golangci-lint runs on the 1.27 leg only.
+- `security.yml`: `detect`, `gitleaks`, `govulncheck`, `gosec`, `scorecard`.
+- `release.yml`: `verify` (tag commit checks green) → `publish` (binaries, SBOM,
+  checksums, cosign, multi-arch image, GitHub release) behind the `release`
+  environment with a required reviewer.
+- Required checks on `main`: docs, dco, actions-pinned, go 1.26/1.27, gosec,
+  govulncheck, gitleaks, dependency-review, integration, docker, release-dry-run.
+  `ci-gate` is a candidate to become the single required check.
 
 This document describes what CI proves, what it does not yet prove, and how the
 pipeline may change. It is normative: a workflow that contradicts it is a bug in one

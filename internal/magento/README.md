@@ -6,7 +6,8 @@ No plugin is installed and the Magento database is never touched.
 ## Public surface
 
 - `NewClient(ClientConfig)` — bounded REST client (`/rest/{store}/V1`), OAuth
-  1.0a or bearer signing, 8 MiB response cap, error taxonomy mapping.
+  1.0a, bearer, or admin-credential signing (automatic token acquisition and
+  refresh), 8 MiB response cap, error taxonomy mapping.
 - `NewService(*Client)` — product reads and writes, configurable lifecycle, MSI
   source items, bounded import validation and execution, order reads and a
   bounded per-day sales summary, category reads/tree, attribute-set reads, media
@@ -29,7 +30,8 @@ No plugin is installed and the Magento database is never touched.
   the stage, completed SKUs, and failed SKU; writes are **not** rolled back.
 - Import execution is bounded (8 MiB, 5000 rows) and non-atomic; new products
   require `attribute_set_id`.
-- Client IPs, credentials, and raw upstream bodies never appear in errors.
+- Client IPs, credentials, and raw upstream bodies never appear in errors;
+  Magento's sanitized validation message may appear as `upstream_message`.
 
 ## Tests
 

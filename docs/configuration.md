@@ -61,7 +61,7 @@ missing instance is rejected. Every write still requires two-step human approval
 
 | Module | Instance keys |
 |---|---|
-| `magento` | `id`, `endpoint`, `store_code`, `credential` (`bearer:<token>` or `oauth1:<key>:<secret>:<token>:<token-secret>`) |
+| `magento` | `id`, `endpoint`, `store_code`, `credential` (`bearer:<token>`, `oauth1:<key>:<secret>:<token>:<token-secret>`, or `admin:<username>:<password>` for automatic token acquisition/refresh) |
 | `cloudflare` | `id`, `account_id`, `zone_id`, `credential` (API token) |
 | `ga4` | `id`, `property_id`, `credential` (service-account JSON or a static token for development) |
 
