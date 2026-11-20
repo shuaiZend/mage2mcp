@@ -65,6 +65,7 @@ magento.order.search
 magento.order.status_history
 magento.order.summary
 magento.order.unhold
+magento.orders.geography
 magento.product.create
 magento.product.delete
 magento.product.get
