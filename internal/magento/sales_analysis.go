@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
@@ -18,7 +19,10 @@ const (
 	defaultAnalysisOrders = 10000
 	maxAnalysisOrders     = 20000
 	analysisPageSize      = 500
-	topSKULimit           = 30
+	topSKULimit           = 50
+	topCouponLimit        = 10
+	topRefundSKULimit     = 10
+	shipmentLookaheadDays = 7
 )
 
 // DimensionStat is one grouped measure (status, country, payment, store).
@@ -26,6 +30,50 @@ type DimensionStat struct {
 	Key     string  `json:"key"`
 	Orders  int     `json:"orders"`
 	Revenue float64 `json:"revenue"`
+}
+
+// ShippingStat is one shipping method's volume and cost.
+type ShippingStat struct {
+	Method       string  `json:"method"`
+	Orders       int     `json:"orders"`
+	Revenue      float64 `json:"revenue"`
+	ShippingCost float64 `json:"shipping_cost"`
+}
+
+// CurrencyStat is one currency's orders, revenue, and AOV.
+type CurrencyStat struct {
+	Code    string  `json:"code"`
+	Orders  int     `json:"orders"`
+	Revenue float64 `json:"revenue"`
+	AOV     float64 `json:"aov"`
+}
+
+// BandStat is one order-value band.
+type BandStat struct {
+	Label   string  `json:"label"`
+	Orders  int     `json:"orders"`
+	Revenue float64 `json:"revenue"`
+}
+
+// CouponStat is one normalized coupon code.
+type CouponStat struct {
+	Code   string `json:"code"`
+	Orders int    `json:"orders"`
+}
+
+// SKURefundStat is one SKU's refunded quantity and amount.
+type SKURefundStat struct {
+	SKU    string  `json:"sku"`
+	Qty    float64 `json:"qty"`
+	Amount float64 `json:"amount"`
+}
+
+// ShipLatency is the order-to-shipment latency distribution in days.
+type ShipLatency struct {
+	Avg    float64 `json:"avg"`
+	Median float64 `json:"median"`
+	P90    float64 `json:"p90"`
+	Max    float64 `json:"max"`
 }
 
 // DayStat is one day's order count and revenue.
@@ -46,28 +94,49 @@ type SKUStat struct {
 
 // SalesAnalysis is a PII-free business summary of an order window.
 type SalesAnalysis struct {
-	From           string          `json:"from"`
-	To             string          `json:"to"`
-	Orders         int             `json:"orders"`
-	TotalAvailable int             `json:"total_available"`
-	Truncated      bool            `json:"truncated"`
-	Revenue        float64         `json:"revenue"`
-	Subtotal       float64         `json:"subtotal"`
-	Discount       float64         `json:"discount"`
-	Shipping       float64         `json:"shipping"`
-	Tax            float64         `json:"tax"`
-	ItemsQty       float64         `json:"items_qty"`
-	AOV            float64         `json:"aov"`
-	GuestOrders    int             `json:"guest_orders"`
-	RefundedAmount float64         `json:"refunded_amount"`
-	RefundedQty    float64         `json:"refunded_qty"`
-	Currencies     []DimensionStat `json:"currencies"`
-	ByDay          []DayStat       `json:"by_day"`
-	ByStatus       []DimensionStat `json:"by_status"`
-	ByCountry      []DimensionStat `json:"by_country"`
-	ByPayment      []DimensionStat `json:"by_payment"`
-	ByStore        []DimensionStat `json:"by_store"`
-	TopSKUs        []SKUStat       `json:"top_skus"`
+	From            string          `json:"from"`
+	To              string          `json:"to"`
+	Timezone        string          `json:"timezone"`
+	Orders          int             `json:"orders"`
+	TotalAvailable  int             `json:"total_available"`
+	Truncated       bool            `json:"truncated"`
+	Revenue         float64         `json:"revenue"`
+	Subtotal        float64         `json:"subtotal"`
+	Discount        float64         `json:"discount"`
+	Shipping        float64         `json:"shipping"`
+	Tax             float64         `json:"tax"`
+	ItemsQty        float64         `json:"items_qty"`
+	AOV             float64         `json:"aov"`
+	MixedCurrency   bool            `json:"mixed_currency"`
+	GuestOrders     int             `json:"guest_orders"`
+	Customers       int             `json:"customers"`
+	RepeatCustomers int             `json:"repeat_customers"`
+	RepeatOrders    int             `json:"repeat_orders"`
+	RepeatRevenue   float64         `json:"repeat_revenue"`
+	NewOrders       int             `json:"new_orders"`
+	NewRevenue      float64         `json:"new_revenue"`
+	CouponOrders    int             `json:"coupon_orders"`
+	CouponRevenue   float64         `json:"coupon_revenue"`
+	CouponAOV       float64         `json:"coupon_aov"`
+	NonCouponAOV    float64         `json:"non_coupon_aov"`
+	RefundedAmount  float64         `json:"refunded_amount"`
+	RefundedQty     float64         `json:"refunded_qty"`
+	Currencies      []CurrencyStat  `json:"currencies"`
+	ByDay           []DayStat       `json:"by_day"`
+	ByStatus        []DimensionStat `json:"by_status"`
+	ByCountry       []DimensionStat `json:"by_country"`
+	ByPayment       []DimensionStat `json:"by_payment"`
+	ByStore         []DimensionStat `json:"by_store"`
+	ShippingMethods []ShippingStat  `json:"shipping_methods"`
+	AOVBands        []BandStat      `json:"aov_bands"`
+	Weekday         []int           `json:"weekday"`
+	Hour            []int           `json:"hour"`
+	TopCoupons      []CouponStat    `json:"top_coupons"`
+	RefundedSKUs    []SKURefundStat `json:"refunded_skus"`
+	TopSKUs         []SKUStat       `json:"top_skus"`
+	Shipments       int             `json:"shipments"`
+	UnshippedOrders int             `json:"unshipped_orders"`
+	ShipLatency     ShipLatency     `json:"ship_latency"`
 }
 
 type analysisOrderItem struct {
@@ -93,7 +162,10 @@ type analysisOrder struct {
 	TotalQty       float64 `json:"total_qty_ordered"`
 	Currency       string  `json:"order_currency_code"`
 	StoreName      string  `json:"store_name"`
+	CustomerID     *int    `json:"customer_id"`
 	IsGuest        int     `json:"customer_is_guest"`
+	CouponCode     string  `json:"coupon_code"`
+	ShippingDesc   string  `json:"shipping_description"`
 	Payment        struct {
 		Method string `json:"method"`
 	} `json:"payment"`
@@ -109,10 +181,15 @@ type analysisOrder struct {
 	Items []analysisOrderItem `json:"items"`
 }
 
+type customerAgg struct {
+	orders  int
+	revenue float64
+}
+
 // AnalyzeSales aggregates a window of orders into business metrics. Only
 // aggregate counts and amounts are returned; customer PII never enters the
 // result.
-func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrders int) (*SalesAnalysis, error) {
+func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrders int, timezone string) (*SalesAnalysis, error) {
 	if s == nil || s.client == nil {
 		return nil, errs.New(errs.CodeInternal, "Magento order service is not configured")
 	}
@@ -125,19 +202,33 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 	if maxOrders > maxAnalysisOrders {
 		return nil, invalidf("max_orders must be at most %d", maxAnalysisOrders)
 	}
-	result := &SalesAnalysis{From: from.Format(time.RFC3339), To: to.Format(time.RFC3339)}
+	loc, zoneName, err := s.resolveTimezone(ctx, timezone)
+	if err != nil {
+		return nil, err
+	}
+	result := &SalesAnalysis{
+		From: from.Format(time.RFC3339), To: to.Format(time.RFC3339), Timezone: zoneName,
+		Weekday: make([]int, 7), Hour: make([]int, 24),
+	}
 	days := map[string]*DayStat{}
 	statuses := map[string]*DimensionStat{}
 	countries := map[string]*DimensionStat{}
 	payments := map[string]*DimensionStat{}
 	stores := map[string]*DimensionStat{}
-	currencies := map[string]*DimensionStat{}
+	currencies := map[string]*CurrencyStat{}
+	shippingMethods := map[string]*ShippingStat{}
 	skus := map[string]*SKUStat{}
 	skuOrders := map[string]map[int]bool{}
+	refunds := map[string]*SKURefundStat{}
+	coupons := map[string]*CouponStat{}
+	customers := map[int]*customerAgg{}
+	orderTimes := map[int]time.Time{}
+	var orderValues []float64
+	var couponRevenue, nonCouponRevenue float64
+	var couponCount, nonCouponCount int
 
 	for page := 1; result.Orders < maxOrders; page++ {
-		query := analysisQuery(from, to, page)
-		raw, err := s.client.do(ctx, http.MethodGet, "/orders", query, nil)
+		raw, err := s.client.do(ctx, http.MethodGet, "/orders", analysisQuery(from, to, page), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -166,14 +257,39 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 			result.Shipping += order.ShippingAmount
 			result.Tax += order.TaxAmount
 			result.ItemsQty += order.TotalQty
+			orderValues = append(orderValues, order.GrandTotal)
 			if order.IsGuest == 1 {
 				result.GuestOrders++
+			} else if order.CustomerID != nil && *order.CustomerID > 0 {
+				agg := customers[*order.CustomerID]
+				if agg == nil {
+					agg = &customerAgg{}
+					customers[*order.CustomerID] = agg
+				}
+				agg.orders++
+				agg.revenue += order.GrandTotal
 			}
-			day := order.CreatedAt
-			if len(day) >= 10 {
-				day = day[:10]
+			local := orderLocalTime(order.CreatedAt, loc)
+			orderTimes[order.EntityID] = orderUTCTime(order.CreatedAt)
+			addDay(days, local.Format("2006-01-02"), order.GrandTotal)
+			result.Weekday[(int(local.Weekday())+6)%7]++
+			result.Hour[local.Hour()]++
+			coupon := strings.ToUpper(strings.TrimSpace(order.CouponCode))
+			if coupon != "" {
+				result.CouponOrders++
+				result.CouponRevenue += order.GrandTotal
+				couponRevenue += order.GrandTotal
+				couponCount++
+				stat := coupons[coupon]
+				if stat == nil {
+					stat = &CouponStat{Code: coupon}
+					coupons[coupon] = stat
+				}
+				stat.Orders++
+			} else {
+				nonCouponRevenue += order.GrandTotal
+				nonCouponCount++
 			}
-			addDay(days, day, order.GrandTotal)
 			addDimension(statuses, order.Status, order.GrandTotal)
 			country := "UNKNOWN"
 			if len(order.ExtensionAttributes.ShippingAssignments) > 0 {
@@ -183,18 +299,42 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 			}
 			addDimension(countries, country, order.GrandTotal)
 			addDimension(payments, order.Payment.Method, order.GrandTotal)
-			store := order.StoreName
-			if store == "" {
-				store = "unknown"
+			addDimension(stores, normalizeStore(order.StoreName), order.GrandTotal)
+			currency := order.Currency
+			if currency == "" {
+				currency = "unknown"
 			}
-			addDimension(stores, store, order.GrandTotal)
-			addDimension(currencies, order.Currency, order.GrandTotal)
+			cstat := currencies[currency]
+			if cstat == nil {
+				cstat = &CurrencyStat{Code: currency}
+				currencies[currency] = cstat
+			}
+			cstat.Orders++
+			cstat.Revenue += order.GrandTotal
+			method := normalizeShipping(order.ShippingDesc)
+			sstat := shippingMethods[method]
+			if sstat == nil {
+				sstat = &ShippingStat{Method: method}
+				shippingMethods[method] = sstat
+			}
+			sstat.Orders++
+			sstat.Revenue += order.GrandTotal
+			sstat.ShippingCost += order.ShippingAmount
 			for _, item := range order.Items {
 				if item.ParentItemID != nil {
 					continue // configurable child rows duplicate the parent's amount
 				}
 				result.RefundedAmount += item.AmountRefunded
 				result.RefundedQty += item.QtyRefunded
+				if item.AmountRefunded > 0 || item.QtyRefunded > 0 {
+					rstat := refunds[item.SKU]
+					if rstat == nil {
+						rstat = &SKURefundStat{SKU: item.SKU}
+						refunds[item.SKU] = rstat
+					}
+					rstat.Qty += item.QtyRefunded
+					rstat.Amount += item.AmountRefunded
+				}
 				stat := skus[item.SKU]
 				if stat == nil {
 					stat = &SKUStat{SKU: item.SKU, Name: item.Name}
@@ -217,14 +357,93 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 	if result.Orders > 0 {
 		result.AOV = result.Revenue / float64(result.Orders)
 	}
+	if couponCount > 0 {
+		result.CouponAOV = couponRevenue / float64(couponCount)
+	}
+	if nonCouponCount > 0 {
+		result.NonCouponAOV = nonCouponRevenue / float64(nonCouponCount)
+	}
+	for _, agg := range customers {
+		result.Customers++
+		if agg.orders > 1 {
+			result.RepeatCustomers++
+			result.RepeatOrders += agg.orders
+			result.RepeatRevenue += agg.revenue
+		} else {
+			result.NewOrders++
+			result.NewRevenue += agg.revenue
+		}
+	}
+	result.Currencies = sortedCurrencies(currencies)
+	result.MixedCurrency = len(result.Currencies) > 1
 	result.ByDay = sortedDays(days)
 	result.ByStatus = sortedDimensions(statuses)
 	result.ByCountry = sortedDimensions(countries)
 	result.ByPayment = sortedDimensions(payments)
 	result.ByStore = sortedDimensions(stores)
-	result.Currencies = sortedDimensions(currencies)
+	result.ShippingMethods = sortedShipping(shippingMethods)
+	result.AOVBands = aovBands(orderValues)
+	result.TopCoupons = topCoupons(coupons)
+	result.RefundedSKUs = topRefundSKUs(refunds)
 	result.TopSKUs = topSKUs(skus)
+	result.Shipments, result.UnshippedOrders, result.ShipLatency = s.shipmentStats(ctx, from, to, orderTimes)
 	return result, nil
+}
+
+func (s *Service) resolveTimezone(ctx context.Context, timezone string) (*time.Location, string, error) {
+	name := strings.TrimSpace(timezone)
+	if name == "" {
+		if stores, err := s.StoreConfigs(ctx); err == nil {
+			for _, store := range stores {
+				if store.Timezone != "" {
+					name = store.Timezone
+					break
+				}
+			}
+		}
+	}
+	if name == "" {
+		name = "UTC"
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, "", invalidf("timezone %q is not a valid IANA zone", name)
+	}
+	return loc, name, nil
+}
+
+func orderUTCTime(raw string) time.Time {
+	parsed, err := time.ParseInLocation("2006-01-02 15:04:05", raw, time.UTC)
+	if err != nil {
+		return time.Now().UTC()
+	}
+	return parsed
+}
+
+func orderLocalTime(raw string, loc *time.Location) time.Time {
+	parsed, err := time.ParseInLocation("2006-01-02 15:04:05", raw, time.UTC)
+	if err != nil {
+		return time.Now().UTC().In(loc)
+	}
+	return parsed.In(loc)
+}
+
+func normalizeStore(name string) string {
+	parts := strings.Split(name, "\n")
+	for i := len(parts) - 1; i >= 0; i-- {
+		if trimmed := strings.TrimSpace(parts[i]); trimmed != "" {
+			return trimmed
+		}
+	}
+	return "unknown"
+}
+
+func normalizeShipping(name string) string {
+	trimmed := strings.Join(strings.Fields(strings.TrimSpace(name)), " ")
+	if trimmed == "" {
+		return "unknown"
+	}
+	return trimmed
 }
 
 func analysisQuery(from, to time.Time, page int) url.Values {
@@ -288,6 +507,95 @@ func sortedDimensions(dims map[string]*DimensionStat) []DimensionStat {
 	return out
 }
 
+func sortedCurrencies(cur map[string]*CurrencyStat) []CurrencyStat {
+	out := make([]CurrencyStat, 0, len(cur))
+	for _, stat := range cur {
+		if stat.Orders > 0 {
+			stat.AOV = stat.Revenue / float64(stat.Orders)
+		}
+		out = append(out, *stat)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Orders != out[j].Orders {
+			return out[i].Orders > out[j].Orders
+		}
+		return out[i].Code < out[j].Code
+	})
+	return out
+}
+
+func sortedShipping(methods map[string]*ShippingStat) []ShippingStat {
+	out := make([]ShippingStat, 0, len(methods))
+	for _, stat := range methods {
+		out = append(out, *stat)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Orders != out[j].Orders {
+			return out[i].Orders > out[j].Orders
+		}
+		return out[i].Method < out[j].Method
+	})
+	return out
+}
+
+func aovBands(values []float64) []BandStat {
+	bands := []struct {
+		label string
+		hi    float64
+	}{
+		{"<$100", 100}, {"$100-300", 300}, {"$300-600", 600},
+		{"$600-1k", 1000}, {"$1k-2k", 2000}, {">$2k", 0},
+	}
+	out := make([]BandStat, len(bands))
+	for i, band := range bands {
+		out[i] = BandStat{Label: band.label}
+	}
+	for _, value := range values {
+		for i, band := range bands {
+			if band.hi == 0 || value < band.hi {
+				out[i].Orders++
+				out[i].Revenue += value
+				break
+			}
+		}
+	}
+	return out
+}
+
+func topCoupons(coupons map[string]*CouponStat) []CouponStat {
+	out := make([]CouponStat, 0, len(coupons))
+	for _, stat := range coupons {
+		out = append(out, *stat)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Orders != out[j].Orders {
+			return out[i].Orders > out[j].Orders
+		}
+		return out[i].Code < out[j].Code
+	})
+	if len(out) > topCouponLimit {
+		out = out[:topCouponLimit]
+	}
+	return out
+}
+
+func topRefundSKUs(refunds map[string]*SKURefundStat) []SKURefundStat {
+	out := make([]SKURefundStat, 0, len(refunds))
+	for _, stat := range refunds {
+		out = append(out, *stat)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Amount != out[j].Amount {
+			return out[i].Amount > out[j].Amount
+		}
+		return out[i].SKU < out[j].SKU
+	})
+	if len(out) > topRefundSKULimit {
+		out = out[:topRefundSKULimit]
+	}
+	return out
+}
+
 func topSKUs(skus map[string]*SKUStat) []SKUStat {
 	out := make([]SKUStat, 0, len(skus))
 	for _, stat := range skus {
@@ -303,4 +611,74 @@ func topSKUs(skus map[string]*SKUStat) []SKUStat {
 		out = out[:topSKULimit]
 	}
 	return out
+}
+
+// shipmentStats reads shipments created up to seven days after the window and
+// joins them with the orders to compute latency and unshipped counts. A failed
+// shipment read does not fail the order analysis.
+func (s *Service) shipmentStats(ctx context.Context, from, to time.Time, orderTimes map[int]time.Time) (int, int, ShipLatency) {
+	var latency []float64
+	shipments := 0
+	shipped := map[int]bool{}
+	queryFrom := from.UTC().Format("2006-01-02 15:04:05")
+	queryTo := to.AddDate(0, 0, shipmentLookaheadDays).UTC().Format("2006-01-02 15:04:05")
+	for page := 1; ; page++ {
+		query := url.Values{}
+		query.Set("searchCriteria[pageSize]", strconv.Itoa(analysisPageSize))
+		query.Set("searchCriteria[currentPage]", strconv.Itoa(page))
+		query.Set("searchCriteria[filter_groups][0][filters][0][field]", "created_at")
+		query.Set("searchCriteria[filter_groups][0][filters][0][value]", queryFrom)
+		query.Set("searchCriteria[filter_groups][0][filters][0][condition_type]", "gteq")
+		query.Set("searchCriteria[filter_groups][1][filters][0][field]", "created_at")
+		query.Set("searchCriteria[filter_groups][1][filters][0][value]", queryTo)
+		query.Set("searchCriteria[filter_groups][1][filters][0][condition_type]", "lt")
+		raw, err := s.client.do(ctx, http.MethodGet, "/shipments", query, nil)
+		if err != nil {
+			return 0, 0, ShipLatency{}
+		}
+		var payload struct {
+			Items []struct {
+				OrderID   int    `json:"order_id"`
+				CreatedAt string `json:"created_at"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return 0, 0, ShipLatency{}
+		}
+		for _, shipment := range payload.Items {
+			shipments++
+			shipped[shipment.OrderID] = true
+			orderTime, ok := orderTimes[shipment.OrderID]
+			if !ok {
+				continue
+			}
+			created, err := time.ParseInLocation("2006-01-02 15:04:05", shipment.CreatedAt, time.UTC)
+			if err != nil {
+				continue
+			}
+			latency = append(latency, created.Sub(orderTime).Hours()/24)
+		}
+		if len(payload.Items) < analysisPageSize {
+			break
+		}
+	}
+	unshipped := 0
+	for id := range orderTimes {
+		if !shipped[id] {
+			unshipped++
+		}
+	}
+	stats := ShipLatency{}
+	if len(latency) > 0 {
+		sort.Float64s(latency)
+		sum := 0.0
+		for _, value := range latency {
+			sum += value
+		}
+		stats.Avg = sum / float64(len(latency))
+		stats.Median = latency[len(latency)/2]
+		stats.P90 = latency[min(len(latency)-1, int(float64(len(latency))*0.9))]
+		stats.Max = latency[len(latency)-1]
+	}
+	return shipments, unshipped, stats
 }

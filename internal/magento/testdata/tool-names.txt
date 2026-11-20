@@ -4,6 +4,7 @@ magento.attributes.options
 magento.attributes.options.bulk_create
 magento.attributes.options.create
 magento.attributes.options.delete
+magento.categories.flat
 magento.category.assign_product
 magento.category.create
 magento.category.delete
@@ -96,4 +97,5 @@ magento.shipment.create
 magento.shipment.email
 magento.shipment.get
 magento.shipment.list
+magento.store.configs
 magento.tax.classes

@@ -40,6 +40,39 @@ type Product struct {
 	AttributeSetID int     `json:"attribute_set_id"`
 	CreatedAt      string  `json:"created_at"`
 	UpdatedAt      string  `json:"updated_at"`
+	CategoryIDs    []int   `json:"category_ids,omitempty"`
+	WebsiteIDs     []int   `json:"website_ids,omitempty"`
+}
+
+// UnmarshalJSON lifts category_links and website_ids out of extension_attributes
+// so callers can analyse product placement without a second read.
+func (p *Product) UnmarshalJSON(data []byte) error {
+	type productAlias Product
+	aux := &struct {
+		*productAlias
+		ExtensionAttributes struct {
+			CategoryLinks []struct {
+				CategoryID any `json:"category_id"`
+			} `json:"category_links"`
+			WebsiteIDs []int `json:"website_ids"`
+		} `json:"extension_attributes"`
+	}{productAlias: (*productAlias)(p)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	p.CategoryIDs = p.CategoryIDs[:0]
+	for _, link := range aux.ExtensionAttributes.CategoryLinks {
+		switch v := link.CategoryID.(type) {
+		case string:
+			if id, err := strconv.Atoi(v); err == nil {
+				p.CategoryIDs = append(p.CategoryIDs, id)
+			}
+		case float64:
+			p.CategoryIDs = append(p.CategoryIDs, int(v))
+		}
+	}
+	p.WebsiteIDs = aux.ExtensionAttributes.WebsiteIDs
+	return nil
 }
 
 // ProductQuery selects products; zero values mean no filter except Limit (50).

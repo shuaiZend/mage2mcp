@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Business analysis gaps G1, G2, G4–G9: the product projection now carries
+  category/website ids; `magento.sales.analysis` adds repeat/new customers,
+  normalized coupons, shipping-method and AOV-band breakdowns, weekday/hour
+  buckets in the store timezone, refunds by SKU, shipment latency, mixed-currency
+  flags and per-currency AOV; store names are normalized. New reads:
+  `magento.store.configs` and `magento.categories.flat`.
+
 ## [0.7.6] - 2026-11-20
 
 Minor release: PII-free business analysis aggregate for order windows.

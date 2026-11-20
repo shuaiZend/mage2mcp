@@ -111,7 +111,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newInventorySourcesTool(lookup), newInventoryStocksTool(lookup), newMediaGetTool(lookup),
 		newOrderSummaryTool(lookup), newProductOptionsTool(lookup), newMediaTypesTool(lookup),
 		newCustomerGroupsTool(lookup), newTaxClassesTool(lookup), newOrderGeographyTool(lookup),
-		newSalesAnalysisTool(lookup),
+		newSalesAnalysisTool(lookup), newStoreConfigsTool(lookup), newFlatCategoriesTool(lookup),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -1857,7 +1857,8 @@ const (
 	salesAnalysisToolTitle = "Magento business analysis"
 
 	salesAnalysisToolDescription = "Aggregates an order window into business metrics: orders, revenue, AOV, discounts, shipping, tax, " +
-		"guest share, refunds, daily trend, status/payment/store/currency mix, shipping country, and top SKUs. " +
+		"mixed-currency flag, guest share, repeat/new customers, coupons, refunds (total and by SKU), daily/weekday/hour trend, " +
+		"status/payment/store/currency mix, shipping methods, AOV bands, shipping country, top SKUs, and shipment latency. " +
 		"Only aggregates are returned; customer PII never enters the result. Scans at most 20,000 orders and reports truncation. Read-only. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
@@ -1865,7 +1866,8 @@ const (
 		"instance": {"type": "string", "pattern": "` + instancePattern + `"},
 		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD."},
 		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD."},
-		"max_orders": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 10000}
+		"max_orders": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 10000},
+		"timezone": {"type": "string", "description": "IANA zone for day/hour buckets; defaults to the store view timezone."}
 	}, "required": ["instance", "from", "to"], "additionalProperties": false}`
 )
 
@@ -1874,6 +1876,7 @@ type salesAnalysisInput struct {
 	From      string `json:"from"`
 	To        string `json:"to"`
 	MaxOrders int    `json:"max_orders"`
+	Timezone  string `json:"timezone"`
 }
 
 type salesAnalysisOutput struct {
@@ -1899,11 +1902,84 @@ func newSalesAnalysisTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, salesAnalysisOutput{}, err
 				}
-				analysis, err := svc.AnalyzeSales(ctx, from, to, in.MaxOrders)
+				analysis, err := svc.AnalyzeSales(ctx, from, to, in.MaxOrders, in.Timezone)
 				if err != nil {
 					return nil, salesAnalysisOutput{}, err
 				}
 				return nil, salesAnalysisOutput{Analysis: *analysis}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+const (
+	storeConfigsToolName  = "magento.store.configs"
+	storeConfigsToolTitle = "List Magento store configs"
+
+	storeConfigsToolDescription = "Lists store views (GET /rest/{store_code}/V1/store/storeConfigs) with id, code, website, locale, " +
+		"currencies, timezone, and base URL. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+	flatCategoriesToolName  = "magento.categories.flat"
+	flatCategoriesToolTitle = "List Magento categories flat"
+
+	flatCategoriesToolDescription = "Flattens the category tree (GET /rest/{store_code}/V1/categories) into id, parent, name, level, " +
+		"and slash-separated path rows, which is what product-to-category mapping needs. Read-only. " +
+		"The instance input is resolved by the server when only one Magento instance is configured."
+
+	storeConfigsSchema = `{"type": "object", "properties": {
+		"instance": {"type": "string", "pattern": "` + instancePattern + `"}
+	}, "required": ["instance"], "additionalProperties": false}`
+)
+
+type storeConfigsOutput struct {
+	Stores []StoreConfig `json:"stores"`
+}
+
+type flatCategoriesOutput struct {
+	Categories []CategoryFlat `json:"categories"`
+}
+
+func newStoreConfigsTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(storeConfigsToolName, storeConfigsToolTitle, storeConfigsToolDescription)
+	t.Capability = "magento.store.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(storeConfigsToolName, storeConfigsToolTitle, storeConfigsToolDescription, storeConfigsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
+				Instance string `json:"instance"`
+			}) (*mcp.CallToolResult, storeConfigsOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, storeConfigsOutput{}, err
+				}
+				stores, err := svc.StoreConfigs(ctx)
+				if err != nil {
+					return nil, storeConfigsOutput{}, err
+				}
+				return nil, storeConfigsOutput{Stores: stores}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+func newFlatCategoriesTool(lookup serviceLookup) registry.Tool {
+	t := toolMetadata(flatCategoriesToolName, flatCategoriesToolTitle, flatCategoriesToolDescription)
+	t.Capability = "magento.category.read"
+	t.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, mcpTool(flatCategoriesToolName, flatCategoriesToolTitle, flatCategoriesToolDescription, storeConfigsSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
+				Instance string `json:"instance"`
+			}) (*mcp.CallToolResult, flatCategoriesOutput, error) {
+				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, flatCategoriesOutput{}, err
+				}
+				categories, err := svc.FlatCategories(ctx)
+				if err != nil {
+					return nil, flatCategoriesOutput{}, err
+				}
+				return nil, flatCategoriesOutput{Categories: categories}, nil
 			})
 		return nil
 	}
