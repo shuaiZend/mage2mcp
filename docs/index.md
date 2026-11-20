@@ -4,6 +4,14 @@ This is the entry point for mage2mcp documentation. The project is past the
 Phase 0 design baseline: the documents below describe a running gateway, with
 design catalogues kept alongside the implemented surface.
 
+## Latest release
+
+[**v0.9.0**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.9.0) (2026-11-20) is the
+current release: the write-verification release that fixes W1–W6, W9, W11, and W12 against
+a live Magento demo. Read the [v0.9.0 release notes](releases/v0.9.0.md), the
+[Releases page](https://github.com/shuaiZend/mage2mcp/releases) for artifacts and
+signatures, and [CHANGELOG.md](../CHANGELOG.md) for the full history.
+
 ## Verification legend
 
 Every capability claim is tagged:
@@ -32,7 +40,10 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Configuration](configuration.md) | Every configuration key, default, and environment override |
 | [Compatibility](compatibility.md) | Supported components, interface stability promises, version support |
 | [Production acceptance](operations/production-acceptance.md) | Read-only acceptance against a live Magento instance and the fixes it produced |
-| [v0.9.0 release notes](releases/v0.9.0.md) | Highlights, breaking changes, upgrade and verification checklist |
+| [Actions bump review](development/actions-bump-review.md) | Review of the GitHub Actions major-version bump (PR #46) |
+| [Product copy run](development/product-copy-run.md) | End-to-end product copy on the demo and the 11 MCP defects it found |
+| [v0.10.0 release notes](releases/v0.10.0.md) | Highlights, breaking changes, upgrade and verification checklist |
+| [v0.9.0 release notes](releases/v0.9.0.md) | Previous release notes |
 | [v0.8.1 release notes](releases/v0.8.1.md) | Previous release notes |
 | [v0.8.0 release notes](releases/v0.8.0.md) | Previous release notes |
 | [v0.7.6 release notes](releases/v0.7.6.md) | Previous release notes |
@@ -109,3 +120,14 @@ Sanitized records of Phase 0 live verification:
 - [Magento evidence](evidence/magento.md)
 - [Cloudflare evidence](evidence/cloudflare.md)
 - [GA4 evidence](evidence/ga4.md)
+
+## Project policies
+
+| Document | Scope |
+|---|---|
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | Development environment, DCO, branch and commit rules, review gates |
+| [SECURITY.md](../SECURITY.md) | Supported versions, private vulnerability reporting, disclosure timeline |
+| [SUPPORT.md](../SUPPORT.md) | Where to ask questions and what support is in scope |
+| [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) | Community expectations and enforcement |
+| [CHANGELOG.md](../CHANGELOG.md) | Release history in Keep a Changelog form |
+| [LICENSE](../LICENSE) and [NOTICE](../NOTICE) | Apache-2.0 terms and third-party attributions |

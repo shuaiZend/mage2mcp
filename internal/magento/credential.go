@@ -8,7 +8,12 @@ import (
 )
 
 // ParseCredential builds a Signer from the configured credential form:
-// bearer:<token> or oauth1:<key>:<secret>:<token>:<token-secret>.
+// bearer:<token>, oauth1:<key>:<secret>:<token>:<token-secret>, or
+// admin:<username>:<password>.
+//
+// The admin form returns an unbound AdminTokenSigner: NewResolverFromSettings
+// binds it to the instance endpoint and store code, then installs the 401-retry
+// HTTP client. A password may itself contain colons; the username may not.
 func ParseCredential(credential string) (Signer, error) {
 	if strings.HasPrefix(credential, "bearer:") {
 		return &BearerSigner{Token: strings.TrimPrefix(credential, "bearer:")}, nil
@@ -20,7 +25,14 @@ func ParseCredential(credential string) (Signer, error) {
 		}
 		return NewOAuth1Signer(parts[0], parts[1], parts[2], parts[3])
 	}
-	return nil, fmt.Errorf("unsupported credential form; use bearer:<token> or oauth1:<key>:<secret>:<token>:<token-secret>")
+	if strings.HasPrefix(credential, "admin:") {
+		parts := strings.SplitN(strings.TrimPrefix(credential, "admin:"), ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("admin credential must be admin:<username>:<password>")
+		}
+		return NewAdminTokenSigner(parts[0], parts[1])
+	}
+	return nil, fmt.Errorf("unsupported credential form; use bearer:<token>, oauth1:<key>:<secret>:<token>:<token-secret>, or admin:<username>:<password>")
 }
 
 // InstanceSettings is the subset of instance configuration the module needs.
@@ -40,9 +52,16 @@ func NewResolverFromSettings(settings []InstanceSettings) (*Resolver, error) {
 		if err != nil {
 			return nil, fmt.Errorf("magento %s: %w", inst.ID, err)
 		}
-		client, err := NewClient(ClientConfig{
-			BaseURL: inst.Endpoint, StoreCode: inst.StoreCode, Signer: signer,
-		})
+		cfg := ClientConfig{BaseURL: inst.Endpoint, StoreCode: inst.StoreCode, Signer: signer}
+		if admin, ok := signer.(*AdminTokenSigner); ok {
+			// The admin form mints its token lazily, so it needs the instance
+			// it belongs to and the client that retries once on a 401.
+			if err := admin.Bind(inst.Endpoint, inst.StoreCode); err != nil {
+				return nil, fmt.Errorf("magento %s: %w", inst.ID, err)
+			}
+			cfg.HTTPClient = admin.HTTPClient()
+		}
+		client, err := NewClient(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("magento %s: %w", inst.ID, err)
 		}

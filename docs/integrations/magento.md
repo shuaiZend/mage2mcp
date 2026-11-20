@@ -36,14 +36,22 @@ expected `price_range`, and the expected `stock_status` `[V-docs]` ([configurabl
 
 | Deployment | Credential | Lifetime | Gateway mode | Notes | Tag |
 |---|---|---|---|---|---|
-| Self-hosted / PaaS | Admin token | 4 hours | `admin_token` | Username + password; inherits the admin ACL role; refused unless explicitly enabled | `[V-docs]` |
+| Self-hosted / PaaS | Admin token | 4 hours | `admin_token` | `credential: admin:<username>:<password>`; inherits the admin ACL role; prefer a dedicated API-only admin, never a human administrator | `[V-docs]` |
 | Self-hosted / PaaS | Integration access token | Indefinite until revoked | `integration_bearer` | Bearer use disabled by default since 2.4.x; needs `oauth/consumer/enable_integration_as_bearer=1` | `[V-docs]` |
 | Self-hosted / PaaS | Integration OAuth 1.0a (4 credentials) | n/a | `integration_oauth1` | HMAC-signed requests, no config toggle; **production default** | `[V-docs]` |
 | Adobe Commerce as a Cloud Service | Adobe IMS OAuth | IMS-managed | none | Out of scope for v0.x | `[V-docs]` |
 
 Source: [token-based authentication](https://developer.adobe.com/commerce/webapi/get-started/authentication/gs-authentication-token/). `POST /V1/integration/admin/token` exists in the 2.4.9 admin schema `[V-docs]`; with 2FA enabled the plain endpoint is insufficient and a
-TFA provider route is required `[V-docs]` ([generate-local](https://developer.adobe.com/commerce/webapi/rest/quick-reference/generate-local/)). The gateway mints admin tokens on start and on 401, caches them for 4
-hours minus 5 minutes of skew, and never persists passwords, logs tokens, or uses session cookies.
+TFA provider route is required `[V-docs]` ([generate-local](https://developer.adobe.com/commerce/webapi/rest/quick-reference/generate-local/)). With the `admin:` credential form the gateway mints an admin token lazily on the first
+request and again when Magento answers 401, caches it for 4 hours minus 5 minutes of skew, and never persists
+the password, logs the token, or uses session cookies. The token request has a 15 s deadline, does not follow
+redirects, and never echoes the upstream body.
+
+**Admin credentials are more powerful than an integration token.** The token inherits the full ACL role of the
+admin account, including sales, customer, and configuration access that no integration needs. Configure a
+dedicated API-only admin (System > Permissions > All Users) with a least-privilege role for the manifest in
+section 2.2, never a human administrator account; rotate the password when the gateway is decommissioned. When
+the store requires 2FA, the plain token endpoint fails and `bearer:` or `oauth1:` remains the supported path.
 
 ### 2.2 Least privilege
 
@@ -183,11 +191,22 @@ Routes per [ConfigurableProduct webapi.xml](https://github.com/magento/magento2/
 
 Magento 2.4.7 (and some hosted builds) reject OAuth 1.0a with
 `Signature method HMAC-SHA1 is not supported`. Use a bearer token from
-`POST /rest/V1/integration/admin/token` (admin credentials) or a pre-issued
-integration token, and configure `credential: bearer:<token>`. The gateway
-surfaces Magento's message in `details.upstream_message`; automatic admin-token
-acquisition/refresh is not implemented (it would require storing admin
-credentials).
+`POST /rest/{store_code}/V1/integration/admin/token` (admin credentials) or a
+pre-issued integration token, and configure either `credential: admin:<username>:<password>`
+or `credential: bearer:<token>`. The admin form mints the token on the first
+request, refreshes it before the assumed 4-hour lifetime, and re-mints it once
+when Magento answers 401; the password is never logged or persisted. The
+`bearer:` form stays available for operators who do not want to store admin
+credentials, and `oauth1:` is unchanged. The gateway surfaces Magento's message
+in `details.upstream_message`; a token-endpoint rejection is reported as
+`unauthenticated` without echoing the upstream body.
+
+Admin credentials are strictly more powerful than an integration token: the
+minted token inherits the whole admin ACL role. Use a dedicated API-only admin
+with a least-privilege role (section 2.2), never a human administrator, and
+treat the credential as production-grade secret material. With 2FA enabled on
+the store the plain token endpoint is refused, so fall back to `bearer:` or
+`oauth1:`.
 
 #### Deployment variance
 
@@ -632,7 +651,7 @@ write.
 | Read-only deployments | Read-only manifest only; catalog, source-item and sales-document reads require the write manifest because 2.4.9 grants no read-only resource for them, and an instance with those resources is never described as read-only |
 | Store configuration | `Magento_Config::config` and its section children are never granted; core 2.4.9 has no REST write route for store config, and store-view administration remains the residual of `Magento_Backend::store` (section 2.2) |
 | Import formats | CSV and JSON; XLSX only through the bounded converter (64 MiB decompressed, 10,000 entries, shared-strings cap, macros rejected, external links ignored); gzip CSV off unless enabled; every cap after decompression; the bomb and macro cases are blocking tests (section 9, T-23/§5.8) |
-| Admin credentials | Disabled by default; used once to mint a token, never persisted |
+| Admin credentials | Opt-in through the `admin:<username>:<password>` credential form; the password stays in process memory, is never logged, persisted, or echoed in errors, and mints a token that is cached for 4 h − 5 min and re-minted once on 401. Admin ACL exceeds an integration's, so use a dedicated API-only admin with the least-privilege role, never a human administrator |
 | Credential logging | Method, path, status, duration, body hash only; `Authorization`, cookies, `Set-Cookie` redacted at the transport layer |
 | Write confirmation | `delete`, `replace`, and bulk deletes require the two-step confirmation protocol (ADR-0014): opaque `confirmation_id`, approval by a different human identity, parameter-hash binding, single use. No `confirm` boolean exists |
 | Audit fields | Actor, tool, instance, store code, natural key, request hash, status, upstream correlation id; no bodies |

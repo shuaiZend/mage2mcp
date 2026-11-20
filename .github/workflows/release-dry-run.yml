@@ -26,9 +26,13 @@ jobs:
   dry-run:
     name: release-dry-run
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: release-dry-run-job-${{ github.ref }}
+      cancel-in-progress: true
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.x"
           cache: true
@@ -37,7 +41,7 @@ jobs:
           VERSION: "dry-run"
         run: ./scripts/build-release.sh
       - name: Generate SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           path: .
           format: spdx-json
@@ -55,9 +59,24 @@ jobs:
           test -s dist/mage2mcp.sbom.spdx.json
           grep -q "mage2mcp-server_linux_amd64" dist/checksums.txt
           echo "release artifacts verified"
+      # The image build shares the `mage2mcp-docker` GHA layer cache with the `docker`
+      # job in ci.yml, so the Go module download layer and the distroless base image are
+      # pulled from cache instead of being rebuilt from scratch on every run.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build container image (no push)
-        run: docker build --build-arg VERSION=dry-run -t mage2mcp:dry-run .
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          tags: mage2mcp:dry-run
+          build-args: |
+            VERSION=dry-run
+          load: false
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=mage2mcp-docker
+          cache-to: type=gha,mode=max,scope=mage2mcp-docker
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-dry-run
           path: dist

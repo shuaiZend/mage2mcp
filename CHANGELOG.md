@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Magento `admin:<username>:<password>` credential form: the gateway mints an
+  admin bearer token from
+  `POST /rest/{store_code}/V1/integration/admin/token`, caches it for 4 hours
+  minus 5 minutes of skew, refreshes it before the assumed expiry, and re-mints
+  it once on a 401. The token request has a 15 s deadline and never follows a
+  redirect; the password and token are never logged, persisted, or echoed in
+  errors. `bearer:` and `oauth1:` are unchanged. Admin credentials are more
+  powerful than an integration token, so prefer a dedicated API-only admin with
+  a least-privilege ACL role.
+
+### Changed
+
+- CI: docs-only changes take a fast path through the classifier; Docker layers are
+  shared between the docker and release-dry-run jobs; golangci-lint runs once;
+  job-level concurrency and timeouts added; a `ci-gate` job aggregates the result.
+- GitHub Actions bumped to the current majors (checkout v7, setup-go v7,
+  setup-node v7, upload-artifact v7, download-artifact v8, docker actions v4/v6/v7,
+  cosign-installer v4, attest v4, gh-release v3, sbom-action v0.24, scorecard
+  v2.5, dependency-review v5) with SHA pins retained.
+
+### Fixed
+
+- `katex` (transitive dev dependency of markdownlint-cli2) overridden to
+  `^0.18.2`, closing GHSA-238p-pmpm-9mq7 / CVE-2026-103923.
+
+### Documentation
+
+- Added the product-copy run report (`docs/development/product-copy-run.md`) with
+  11 recorded MCP defects (D1–D11), and the GitHub Actions bump review
+  (`docs/development/actions-bump-review.md`).
+
 ## [0.9.0] - 2026-11-20
 
 Write-verification release: fixes W1–W6, W9, W11, W12 from the Magento demo

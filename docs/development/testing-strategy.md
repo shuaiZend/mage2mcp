@@ -243,6 +243,27 @@ A tagged suite that is invoked without its required environment fails loudly; it
 not silently skip, because a silent skip is indistinguishable from a pass. Skipping a
 security test blocks the release.
 
+### 8.1 Documentation-only fast path
+
+`.github/scripts/classify-changes.sh` classifies every run before the heavy jobs start
+and exports `go` and `run_heavy`. A pull request or push whose changed paths are all on
+the documentation allowlist (Markdown, `docs/`, the issue and pull-request templates,
+and the documentation lint and link-check configs) runs only `docs`, `dco`,
+`actions-pinned`, and `gitleaks`. The Go matrix, storage integration, Docker smoke
+test, e2e, `govulncheck`, and `gosec` jobs report `skipped` for that reason.
+
+The filter is fail-safe by construction: scheduled and manually dispatched runs, a push
+whose before-commit is unknown (force push, new branch), and any path outside the
+allowlist all run the full pipeline. A skipped job is never treated as a pass — the
+`ci-gate` job fails the run when any job that did run failed or was cancelled.
+
+Caching is part of the budget, not an optimisation detail: `actions/setup-go` restores
+the module and build caches keyed by `go.sum`, `golangci-lint` runs once (on the primary
+toolchain) instead of once per matrix entry, and the `docker` job and the release dry
+run share a single GitHub Actions layer cache scope (`mage2mcp-docker`), so the
+module-download layer is built once per dependency change rather than once per
+workflow.
+
 ## 9. Test data management
 
 - **Synthetic only.** No production data, ever, including "just one order to debug".
