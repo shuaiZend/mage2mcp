@@ -42,15 +42,18 @@ const (
 		"(POST /rest/{store_code}/V1/products) using the integration credential. " +
 		"This is a write operation: it changes catalog data, is not idempotent, and a retry can create a duplicate SKU. " +
 		"When quantity is supplied the product is created first and its default-source inventory is assigned afterwards, " +
-		"so an inventory failure leaves the product created and the error carries the SKU and stage in its details." +
+		"so an inventory failure leaves the product created and the error carries the SKU and stage in its details. " +
+		"Changing url_key changes the storefront URL; Magento does not create a 301 redirect for API writes." +
 		instanceResolutionNote
 	productUpdateToolDescription = "Updates one product in the configured Magento 2 REST catalog " +
+		"Changing url_key changes the storefront URL; Magento does not create a 301 redirect for API writes. " +
 		"(PUT /rest/{store_code}/V1/products/{sku}) using the integration credential. " +
 		"This is a write operation: it changes catalog data and is not idempotent as an agent action. " +
 		"Only supplied fields are sent, so Magento's merge semantics preserve omitted attributes; " +
 		"at least one of name, price, status, visibility, or attributes is required." +
 		instanceResolutionNote
-	configurableCreateToolDescription = "Creates a configurable product in the configured Magento 2 REST catalog using the integration credential: " +
+	configurableCreateToolDescription = "Creates a configurable product in the configured Magento 2 REST catalog using the integration credential. " +
+		"The parent price is derived from its children, and the parent stock status is set after linking; verify the storefront option selector. " +
 		"each child simple product is created (POST /rest/{store_code}/V1/products), then the parent with type_id=configurable " +
 		"and configurable_product_options, then one child link per child (POST /rest/{store_code}/V1/configurable-products/{sku}/child). " +
 		"This is a write operation and it is NOT atomic: a failure leaves every completed write in place and reports " +
@@ -65,7 +68,7 @@ const (
 		"(POST /rest/{store_code}/V1/inventory/source-items) using the integration credential. " +
 		"This is a write operation: quantity replaces the existing source quantity instead of adding to it, and the batch " +
 		"response carries no per-item outcome, so the operation is marked non-idempotent and callers verify by re-reading source items. " +
-		"At most 100 items are accepted per call." +
+		"At most 100 items are accepted per call. MSI source items alone do not update a configurable parent's legacy stock status; verify the parent is salable after assigning child stock." +
 		instanceResolutionNote
 
 	instanceProp         = `"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}`
@@ -99,7 +102,7 @@ const (
 
 	productCreateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + typeIDProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + quantityProp + `, ` + seoProps + `, ` + pricingProps + `}, "required": ["instance", "sku", "name", "attribute_set_id", "type_id", "price"], "additionalProperties": false}`
 	productUpdateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `, "category_ids": {"type": "array", "maxItems": 500, "items": {"type": "integer", "minimum": 1}, "description": "Replaces the product's category assignments when provided; an empty array clears them."}, "website_ids": {"type": "array", "maxItems": 50, "items": {"type": "integer", "minimum": 1}, "description": "Replaces the product's website assignments when provided."}}, "required": ["instance", "sku"], "additionalProperties": false}`
-	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `, ` + seoProps + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
+	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent": {"type": "object", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, "name": {"type": "string", "maxLength": 255}, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `, ` + seoProps + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
 	configurableAddChildSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "child_sku": {"type": "string", "pattern": "` + skuInputPattern + `"}}, "required": ["instance", "parent_sku", "child_sku"], "additionalProperties": false}`
 	inventoryAssignSchema      = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["sku", "source_code", "quantity"], "properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `"}, "source_code": {"type": "string", "pattern": "` + sourceCodeInputPattern + `"}, "quantity": {"type": "integer", "minimum": 0}, "status": {"type": "integer", "enum": [0, 1], "default": 1, "description": "1 in stock (default), 0 out of stock."}}}}}, "required": ["instance", "items"], "additionalProperties": false}`
 )
@@ -184,6 +187,7 @@ type variantValueInput struct {
 
 type childProductInput struct {
 	SKU        string            `json:"sku"`
+	Name       string            `json:"name"`
 	Attributes map[string]string `json:"attributes"`
 	Price      string            `json:"price"`
 	Quantity   *int              `json:"quantity"`
@@ -233,8 +237,9 @@ type productWriteOutput struct {
 }
 
 type configurableCreateOutput struct {
-	Parent   Product   `json:"parent"`
-	Children []Product `json:"children"`
+	Parent        Product   `json:"parent"`
+	Children      []Product `json:"children"`
+	ParentInStock bool      `json:"parent_in_stock"`
 }
 
 type configurableAddChildOutput struct {
@@ -457,7 +462,9 @@ func newConfigurableCreateTool(lookup serviceLookup) registry.Tool {
 				if err != nil {
 					return nil, configurableCreateOutput{}, err
 				}
-				return nil, configurableCreateOutput{Parent: result.Parent, Children: result.Children}, nil
+				return nil, configurableCreateOutput{
+					Parent: result.Parent, Children: result.Children, ParentInStock: result.ParentInStock,
+				}, nil
 			})
 		return nil
 	}
@@ -1062,11 +1069,11 @@ const (
 	categoryCreateToolName    = "magento.category.create"
 	categoryCreateToolTitle   = "Create Magento category"
 	categoryCreateDescription = "Magento write operation: creates a category under a parent " +
-		"(POST /rest/{store_code}/V1/categories) on the resolved instance. Requires human confirmation."
+		"(POST /rest/{store_code}/V1/categories) on the resolved instance. Requires human confirmation. Category changes can alter product URL keys and URL rewrites; confirm the blast radius before creating, moving, renaming, or deleting a category, and plan redirects/reindex for existing links."
 	categoryUpdateToolName    = "magento.category.update"
 	categoryUpdateToolTitle   = "Update Magento category"
 	categoryUpdateDescription = "Magento write operation: updates category name, active flag, position, or menu visibility " +
-		"(PUT /rest/{store_code}/V1/categories/{id}) on the resolved instance. Requires human confirmation."
+		"(PUT /rest/{store_code}/V1/categories/{id}) on the resolved instance. Requires human confirmation. Category changes can alter product URL keys and URL rewrites; confirm the blast radius before creating, moving, renaming, or deleting a category, and plan redirects/reindex for existing links."
 	categoryAssignToolName    = "magento.category.assign_product"
 	categoryAssignToolTitle   = "Assign a product to a category"
 	categoryAssignDescription = "Magento write operation: links a product to a category " +
@@ -1821,7 +1828,8 @@ const (
 	attributeOptionCreateToolTitle   = "Create a Magento attribute option"
 	attributeOptionCreateDescription = "Magento write operation: adds a value to a select or multiselect attribute " +
 		"(POST /rest/{store_code}/V1/products/attributes/{code}/options) on the resolved instance. " +
-		"Useful for adding configurable variant values before creating the product. Requires human confirmation."
+		"Useful for adding configurable variant values before creating the product. Requires human confirmation. " +
+		"Attribute options are schema: deleting an option that products reference (especially a configurable variant) breaks those products; check usage first."
 
 	attributeOptionCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"attribute_code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"},
@@ -2522,6 +2530,7 @@ const (
 
 type variationWire struct {
 	SKU        string            `json:"sku"`
+	Name       string            `json:"name"`
 	Attributes map[string]string `json:"attributes"`
 }
 

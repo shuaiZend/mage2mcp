@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/shuaiZend/mage2mcp?include_prereleases&sort=semver)](https://github.com/shuaiZend/mage2mcp/releases)
-[![Latest release v0.9.0](https://img.shields.io/badge/latest-v0.9.0-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0)
+[![Latest release v0.9.0](https://img.shields.io/badge/latest-v0.9.0-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](go.mod)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25%20%7C%202026--07--28-7c3aed.svg)](docs/mcp-conformance.md)
@@ -12,7 +12,7 @@ One endpoint, one auth model, one audit trail — with typed, documented tools t
 agents can actually use safely. Writes are two-step human-approved; reads are
 read-only by default and PII-safe.
 
-> **Status: v0.10.0 (pre-1.0).** 112 tools (101 Magento). Validated against a live
+> **Status: v0.11.0 (pre-1.0).** 112 tools (101 Magento). Validated against a live
 > Magento production store: 23 read-only checks plus a 30-day business drill-down
 > (924 orders) with no writes. Releases ship signed artifacts, SBOM, and a
 > multi-arch image. Interfaces may still change with an ADR before 1.0.
@@ -67,14 +67,14 @@ Highlights of the Magento surface:
 |---|---|
 | Source code | Production-grade Go gateway: MCP server, auth, RBAC, audit, metrics, PostgreSQL queue, Docker |
 | Tests and CI | Unit, integration (PostgreSQL), race, lint, security, supply-chain, and a full end-to-end job on every PR |
-| Releases | [v0.10.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0) with signed artifacts, checksums, SBOM, multi-arch GHCR image |
+| Releases | [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0) with signed artifacts, checksums, SBOM, multi-arch GHCR image |
 | Production validation | Read-only acceptance and a 30-day business report against a live Magento store |
 | Documentation | Architecture, ADRs (22), tool catalog, field reference, compatibility, operations, release notes |
 | License and community | [Apache-2.0](LICENSE), [NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md) |
 
 ## Releases
 
-The latest release is [**v0.9.0**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0)
+The latest release is [**v0.9.0**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0)
 (2026-11-20), the write-verification release: it fixes W1–W6, W9, W11, and W12 against
 a live Magento demo, surfaces upstream 400/422 messages, and renames the
 `magento.category.tree` output key to `categories`.
@@ -100,7 +100,7 @@ sha256sum --check checksums.txt
 
 | Release | Notes | Highlights |
 |---|---|---|
-| [v0.10.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0) | [release notes](docs/releases/v0.9.0.md) | Write verification fixes W1–W6, W9, W11, W12; upstream error messages |
+| [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0) | [release notes](docs/releases/v0.9.0.md) | Write verification fixes W1–W6, W9, W11, W12; upstream error messages |
 | [v0.8.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.1) | [release notes](docs/releases/v0.8.1.md) | Structured tool errors (G12) |
 | [v0.8.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.8.0) | [release notes](docs/releases/v0.8.0.md) | Business analysis fixes; `store.configs` and `categories.flat` |
 
@@ -118,6 +118,7 @@ also recorded in [CHANGELOG.md](CHANGELOG.md).
 | [docs/magento-fields.md](docs/magento-fields.md) | Field requirements and SEO guidance |
 | [docs/compatibility.md](docs/compatibility.md) | Supported components and stability promises |
 | [docs/operations/production-acceptance.md](docs/operations/production-acceptance.md) | Live read-only acceptance and fixes |
+| [docs/write-safety.md](docs/write-safety.md) | Catalog/URL warnings and the `write_safety` prompt |
 | [docs/development/mcp-gaps.md](docs/development/mcp-gaps.md) | Known gaps and their status |
 
 ## Quickstart (development)

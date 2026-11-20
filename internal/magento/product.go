@@ -42,6 +42,18 @@ type Product struct {
 	UpdatedAt      string  `json:"updated_at"`
 	CategoryIDs    []int   `json:"category_ids,omitempty"`
 	WebsiteIDs     []int   `json:"website_ids,omitempty"`
+
+	Description      string  `json:"description,omitempty"`
+	ShortDescription string  `json:"short_description,omitempty"`
+	URLKey           string  `json:"url_key,omitempty"`
+	MetaTitle        string  `json:"meta_title,omitempty"`
+	MetaDescription  string  `json:"meta_description,omitempty"`
+	MetaKeywords     string  `json:"meta_keywords,omitempty"`
+	Weight           float64 `json:"weight,omitempty"`
+
+	// Attributes carries the product's custom attributes (for example the
+	// variant attribute of a configurable child) as string values.
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
 // UnmarshalJSON lifts category_links and website_ids out of extension_attributes
@@ -56,9 +68,53 @@ func (p *Product) UnmarshalJSON(data []byte) error {
 			} `json:"category_links"`
 			WebsiteIDs []int `json:"website_ids"`
 		} `json:"extension_attributes"`
+		CustomAttributes []struct {
+			AttributeCode string          `json:"attribute_code"`
+			Value         json.RawMessage `json:"value"`
+		} `json:"custom_attributes"`
 	}{productAlias: (*productAlias)(p)}
 	if err := json.Unmarshal(data, aux); err != nil {
 		return err
+	}
+	if len(aux.CustomAttributes) > 0 {
+		p.Attributes = make(map[string]string, len(aux.CustomAttributes))
+		for _, attribute := range aux.CustomAttributes {
+			var text string
+			if err := json.Unmarshal(attribute.Value, &text); err != nil {
+				var number json.Number
+				if err := json.Unmarshal(attribute.Value, &number); err == nil {
+					text = number.String()
+				} else {
+					continue
+				}
+			}
+			p.Attributes[attribute.AttributeCode] = text
+		}
+		if p.Description == "" {
+			p.Description = p.Attributes["description"]
+		}
+		if p.ShortDescription == "" {
+			p.ShortDescription = p.Attributes["short_description"]
+		}
+		if p.URLKey == "" {
+			p.URLKey = p.Attributes["url_key"]
+		}
+		if p.MetaTitle == "" {
+			p.MetaTitle = p.Attributes["meta_title"]
+		}
+		if p.MetaDescription == "" {
+			p.MetaDescription = p.Attributes["meta_description"]
+		}
+		if p.MetaKeywords == "" {
+			p.MetaKeywords = p.Attributes["meta_keywords"]
+		}
+		if p.Weight == 0 {
+			if rawWeight := p.Attributes["weight"]; rawWeight != "" {
+				if parsed, err := strconv.ParseFloat(rawWeight, 64); err == nil {
+					p.Weight = parsed
+				}
+			}
+		}
 	}
 	p.CategoryIDs = p.CategoryIDs[:0]
 	for _, link := range aux.ExtensionAttributes.CategoryLinks {

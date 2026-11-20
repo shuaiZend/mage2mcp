@@ -97,8 +97,11 @@ func TestCreateConfigurableRequestSequence(t *testing.T) {
 	}
 
 	requests := rec.all()
-	if len(requests) != 5 {
-		t.Fatalf("requests = %d, want 5 (2 children, 1 parent, 2 links)", len(requests))
+	if len(requests) != 6 {
+		t.Fatalf("requests = %d, want 6 (2 children, 1 parent, 2 links, 1 parent stock)", len(requests))
+	}
+	if requests[5].Method != http.MethodPut || !strings.Contains(requests[5].Path, "/stockItems/") {
+		t.Fatalf("last request = %s %s, want the parent stock status", requests[5].Method, requests[5].Path)
 	}
 	for _, request := range requests {
 		assertOAuthHeader(t, request.Auth)
@@ -451,8 +454,11 @@ func TestCreateConfigurableAssignsChildQuantity(t *testing.T) {
 		t.Fatalf("CreateConfigurable: %v", err)
 	}
 	requests := rec.all()
-	if len(requests) != 6 {
-		t.Fatalf("requests = %d, want 6 (2 children, 1 inventory, 1 parent, 2 links)", len(requests))
+	if len(requests) != 7 {
+		t.Fatalf("requests = %d, want 7 (2 children, 1 inventory, 1 parent, 2 links, 1 parent stock)", len(requests))
+	}
+	if requests[6].Method != http.MethodPut || !strings.Contains(requests[6].Path, "/stockItems/") {
+		t.Fatalf("last request = %s %s, want the parent stock status", requests[6].Method, requests[6].Path)
 	}
 	if requests[1].Path != "/rest/default/V1/inventory/source-items" {
 		t.Fatalf("request 1 path = %s, want the child inventory assign", requests[1].Path)
@@ -644,5 +650,41 @@ func TestSetConfigurableOptionsValidation(t *testing.T) {
 		if err := svc.SetConfigurableOptions(ctx, tc.sku, tc.options); errs.CodeOf(err) != errs.CodeInvalidArgument {
 			t.Fatalf("case %d: err = %v", i, err)
 		}
+	}
+}
+
+func TestCreateConfigurableUsesChildName(t *testing.T) {
+	var names []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/products":
+			raw, _ := io.ReadAll(r.Body)
+			var body struct {
+				Product struct {
+					SKU  string `json:"sku"`
+					Name string `json:"name"`
+				} `json:"product"`
+			}
+			_ = json.Unmarshal(raw, &body)
+			names = append(names, body.Product.Name)
+			_, _ = w.Write([]byte(`{"id":1,"sku":"` + body.Product.SKU + `","type_id":"simple"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/child"):
+			_, _ = w.Write([]byte(`true`))
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/stockItems/"):
+			_, _ = w.Write([]byte(`true`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	in := validConfigurableInput()
+	in.Children[0].Name = "Custom Child Name"
+	if _, err := svc.CreateConfigurable(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	if len(names) == 0 || names[0] != "Custom Child Name" {
+		t.Fatalf("names = %v", names)
 	}
 }

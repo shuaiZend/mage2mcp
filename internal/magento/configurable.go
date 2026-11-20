@@ -50,6 +50,7 @@ type VariantValue struct {
 // inherits the parent price.
 type ChildProduct struct {
 	SKU        string
+	Name       string
 	Attributes map[string]string
 	Price      string
 	Quantity   *int
@@ -78,8 +79,9 @@ type CreateConfigurableInput struct {
 
 // ConfigurableProduct is a configurable parent together with its linked children.
 type ConfigurableProduct struct {
-	Parent   Product
-	Children []Product
+	Parent        Product
+	Children      []Product
+	ParentInStock bool `json:"parent_in_stock"`
 }
 
 type configurableOption struct {
@@ -142,7 +144,13 @@ func (s *Service) CreateConfigurable(ctx context.Context, in CreateConfigurableI
 			return nil, writeStageError(stageLinks, completed, child.SKU, err)
 		}
 	}
-	return &ConfigurableProduct{Parent: *parent, Children: children}, nil
+	inStock := false
+	if parent.ID > 0 {
+		if err := s.setParentStockStatus(ctx, in.Parent.SKU, parent.ID); err == nil {
+			inStock = true
+		}
+	}
+	return &ConfigurableProduct{Parent: *parent, Children: children, ParentInStock: inStock}, nil
 }
 
 func (s *Service) createChild(ctx context.Context, parent CreateProductInput, child ChildProduct) (*Product, error) {
@@ -150,8 +158,12 @@ func (s *Service) createChild(ctx context.Context, parent CreateProductInput, ch
 	if price == "" {
 		price = parent.Price
 	}
+	name := strings.TrimSpace(child.Name)
+	if name == "" {
+		name = childProductName(parent.Name, child.SKU)
+	}
 	return s.Create(ctx, CreateProductInput{
-		SKU: child.SKU, Name: childProductName(parent.Name, child.SKU), AttributeSetID: parent.AttributeSetID,
+		SKU: child.SKU, Name: name, AttributeSetID: parent.AttributeSetID,
 		TypeID: simpleTypeID, Price: price, Status: 1, Visibility: 1,
 		WebsiteIDs: parent.WebsiteIDs, Attributes: child.Attributes, Quantity: child.Quantity,
 		Description: child.Description, ShortDescription: child.ShortDescription, URLKey: child.URLKey,
@@ -540,6 +552,7 @@ const maxVariations = 50
 // VariationInput is one child product to create under an existing parent.
 type VariationInput struct {
 	SKU        string
+	Name       string
 	Attributes map[string]string
 }
 
@@ -727,4 +740,19 @@ func (s *Service) SetConfigurableOptions(ctx context.Context, sku string, option
 		}
 	}
 	return nil
+}
+
+// setParentStockStatus makes a configurable parent salable after its children
+// are linked. Magento keeps a legacy stock item for the parent whose
+// is_in_stock flag is not updated by MSI source items alone.
+func (s *Service) setParentStockStatus(ctx context.Context, sku string, productID int) error {
+	body := struct {
+		StockItem struct {
+			IsInStock bool `json:"is_in_stock"`
+		} `json:"stockItem"`
+	}{}
+	body.StockItem.IsInStock = true
+	_, err := s.client.do(ctx, http.MethodPut,
+		"/products/"+url.PathEscape(sku)+"/stockItems/"+strconv.Itoa(productID), nil, body)
+	return err
 }

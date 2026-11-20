@@ -5,6 +5,7 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -98,7 +99,41 @@ func (s *Service) CreateProductOption(ctx context.Context, sku string, in Custom
 	}}
 	raw, err := s.client.do(ctx, http.MethodPost, "/products/"+url.PathEscape(sku)+"/options", nil, body)
 	if err != nil {
-		return nil, err
+		if errs.CodeOf(err) != errs.CodeNotFound {
+			return nil, err
+		}
+		// Some Magento builds expose the custom-option route read-only. Fall
+		// back to saving the option through the product update endpoint.
+		fallback := struct {
+			Product struct {
+				SKU     string                `json:"sku"`
+				Options []customOptionPayload `json:"options"`
+			} `json:"product"`
+		}{}
+		fallback.Product.SKU = sku
+		fallback.Product.Options = []customOptionPayload{body.Option}
+		if _, fallbackErr := s.client.do(ctx, http.MethodPut, "/products/"+url.PathEscape(sku), nil, fallback); fallbackErr != nil {
+			e := errs.New(errs.CodeUnsupportedCapability,
+				"this Magento instance does not expose custom-option creation; saving the option through the product update also failed").
+				WithDetail("option_route_status", "404").
+				WithDetail("fallback_code", string(errs.CodeOf(fallbackErr)))
+			var typed *errs.Error
+			if errors.As(fallbackErr, &typed) {
+				if message := typed.Details["upstream_message"]; message != "" {
+					e = e.WithDetail("fallback_message", message)
+				}
+			}
+			return nil, e
+		}
+		options, listErr := s.ProductOptions(ctx, sku)
+		if listErr == nil {
+			for i := range options {
+				if options[i].Title == in.Title {
+					return &options[i], nil
+				}
+			}
+		}
+		return &ProductOption{Title: in.Title, Type: in.Type, IsRequire: in.IsRequire, SortOrder: in.SortOrder}, nil
 	}
 	var option ProductOption
 	if err := json.Unmarshal(raw, &option); err != nil {

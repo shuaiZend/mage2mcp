@@ -140,6 +140,7 @@ type productPayload struct {
 	AttributeSetID      int                `json:"attribute_set_id,omitempty"`
 	TypeID              string             `json:"type_id,omitempty"`
 	Price               string             `json:"price,omitempty"`
+	Weight              string             `json:"weight,omitempty"`
 	Status              int                `json:"status,omitempty"`
 	Visibility          int                `json:"visibility,omitempty"`
 	CustomAttributes    []productAttribute `json:"custom_attributes,omitempty"`
@@ -224,6 +225,9 @@ func (s *Service) requireClient() error {
 }
 
 func buildCreatePayload(in CreateProductInput) (productPayload, error) {
+	if _, ok := in.Attributes["weight"]; ok {
+		return productPayload{}, invalidf("weight must be set with the weight field, not as a custom attribute")
+	}
 	attributes, err := customAttributes(in.Attributes)
 	if err != nil {
 		return productPayload{}, err
@@ -241,7 +245,7 @@ func buildCreatePayload(in CreateProductInput) (productPayload, error) {
 	attributes = append(attributes, pricing...)
 	payload := productPayload{
 		SKU: in.SKU, Name: strings.TrimSpace(in.Name), AttributeSetID: in.AttributeSetID,
-		TypeID: in.TypeID, Price: in.Price, Status: in.Status, Visibility: in.Visibility,
+		TypeID: in.TypeID, Price: in.Price, Weight: in.Weight, Status: in.Status, Visibility: in.Visibility,
 		CustomAttributes: attributes,
 	}
 	ext := productExtension{WebsiteIDs: append([]int(nil), in.WebsiteIDs...)}
@@ -255,6 +259,9 @@ func buildCreatePayload(in CreateProductInput) (productPayload, error) {
 }
 
 func buildUpdatePayload(sku string, in UpdateProductInput) (productPayload, error) {
+	if _, ok := in.Attributes["weight"]; ok {
+		return productPayload{}, invalidf("weight must be set with the weight field, not as a custom attribute")
+	}
 	attributes, err := customAttributes(in.Attributes)
 	if err != nil {
 		return productPayload{}, err
@@ -293,6 +300,12 @@ func buildUpdatePayload(sku string, in UpdateProductInput) (productPayload, erro
 			return productPayload{}, err
 		}
 		payload.Name = strings.TrimSpace(*in.Name)
+	}
+	if in.Weight != nil {
+		if err := validatePricingFields(*in.Weight, "", "", "", "", 0); err != nil {
+			return productPayload{}, err
+		}
+		payload.Weight = *in.Weight
 	}
 	if in.Price != nil {
 		if err := validatePrice(*in.Price); err != nil {
@@ -605,7 +618,7 @@ var (
 )
 
 var pricingAttributeOrder = []string{
-	"weight", "special_price", "special_from_date", "special_to_date", "cost", "tax_class_id",
+	"special_price", "special_from_date", "special_to_date", "cost", "tax_class_id",
 }
 
 // validatePricingFields checks pricing/shipping attribute bounds. Dates are
@@ -634,8 +647,10 @@ func validatePricingFields(weight, specialPrice, specialFrom, specialTo, cost st
 	return nil
 }
 
-func pricingAttributes(weight, specialPrice, specialFrom, specialTo, cost string, taxClassID int) ([]productAttribute, error) {
-	values := []*string{stringPtrIfSet(weight), stringPtrIfSet(specialPrice), stringPtrIfSet(specialFrom), stringPtrIfSet(specialTo), stringPtrIfSet(cost)}
+func pricingAttributes(_, specialPrice, specialFrom, specialTo, cost string, taxClassID int) ([]productAttribute, error) {
+	// weight is a static product field, not a custom attribute; sending it as a
+	// custom attribute is silently ignored by Magento.
+	values := []*string{stringPtrIfSet(specialPrice), stringPtrIfSet(specialFrom), stringPtrIfSet(specialTo), stringPtrIfSet(cost)}
 	var taxPointer *int
 	if taxClassID > 0 {
 		taxPointer = &taxClassID

@@ -202,3 +202,19 @@ Then D4-D6 (verification and SEO correctness), then D7-D11 (API polish).
   (D1); the configurable variant model is a substitute.
 - The demo's indexing/cron schedule was not inspected; D3 was worked around at
   the stock-item level, not by reindexing.
+
+## Fix status (v0.11.0)
+
+| ID | Status | Fix |
+|---|---|---|
+| D1 | improved | `product.options.create` falls back to saving the option through `PUT /products/{sku}` when the option route is 404; on this demo both paths reject the write (the fallback returns `The ProductSku is empty`), so the tool now reports `unsupported_capability` with both statuses and messages instead of a bare 404. Verified live |
+| D2 | fixed | `weight` is sent as a top-level product field on create/update and rejected as a custom attribute; live-verified (0.35 persisted) |
+| D3 | fixed | `configurable.create` sets the parent legacy stock status after linking and reports `parent_in_stock`; live-verified `true` |
+| D4 | documented | `meta_keywords` is optional and excluded from the SEO score when absent; the audit no longer penalizes builds without the attribute |
+| D5 | fixed | `product.get`/`product.search` now include description, short description, url_key, meta fields, weight, and custom attributes; live-verified |
+| D6 | fixed | `configurable.children` includes each child's custom attributes (variant values); live-verified color 49/58 |
+| D7 | documented | parent price is derived from children; the tool description and `write_safety` prompt say so |
+| D8 | fixed | configurable children and variations accept an optional `name` |
+| D9 | fixed | `configurable.children` accepts `sku` as an alias for `parent_sku` |
+| D10 | fixed | optional SEO checks (meta_keywords) are excluded from the score denominator |
+| D11 | fixed | product write/read responses expose the applied SEO and weight fields |

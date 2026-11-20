@@ -34,6 +34,7 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [MCP conformance](mcp-conformance.md) | Best-practice matrix and the tests that prove it |
 | [Implemented tools](implemented-tools.md) | The tools registered in code today |
 | [Magento write fields](magento-fields.md) | Field requirements and SEO guidance for Magento writes |
+| [Write safety](write-safety.md) | Catalog/URL warnings and the `write_safety` prompt |
 | [Database design](database-design.md) | Schema, indexes, retention, migrations |
 | [Unified analytics](unified-analytics.md) | Cross-source metric semantics and join rules |
 | [Development plan](development-plan.md) | Phases, exit criteria, traceability matrix |
@@ -42,7 +43,8 @@ The consolidated evidence is in [development/research-baseline.md](development/r
 | [Production acceptance](operations/production-acceptance.md) | Read-only acceptance against a live Magento instance and the fixes it produced |
 | [Actions bump review](development/actions-bump-review.md) | Review of the GitHub Actions major-version bump (PR #46) |
 | [Product copy run](development/product-copy-run.md) | End-to-end product copy on the demo and the 11 MCP defects it found |
-| [v0.10.0 release notes](releases/v0.10.0.md) | Highlights, breaking changes, upgrade and verification checklist |
+| [v0.11.0 release notes](releases/v0.11.0.md) | Highlights, breaking changes, upgrade and verification checklist |
+| [v0.10.0 release notes](releases/v0.10.0.md) | Previous release notes |
 | [v0.9.0 release notes](releases/v0.9.0.md) | Previous release notes |
 | [v0.8.1 release notes](releases/v0.8.1.md) | Previous release notes |
 | [v0.8.0 release notes](releases/v0.8.0.md) | Previous release notes |
