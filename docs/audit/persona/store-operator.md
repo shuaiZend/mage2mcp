@@ -456,18 +456,21 @@ mcp magento.product.get '{"sku":"24-MB03"}'
 - **证据**:
 
 ```bash
-mcp magento.product.search '{"instance":"demo","limit":1}'   # 任一次 tools/list 之后看 schema：
-python3 - <<'PY'
-import json
-d=json.load(open('/tmp/tools.json'))
-for t in d['result']['tools']:
-    if t['name']=='magento.inventory.assign':
-        print(t['inputSchema']['properties']['items']['description'])
-    if t['name']=='magento.product.update':
-        print(t['inputSchema']['properties']['category_ids']['items'])
-PY
-# Each entry names an order item and a quantity; the quantities must not exceed what is still outstanding.
-# {'description': 'Requested page size.', 'minimum': 1, 'type': 'integer'}
+# 看 schema（-mode=schema 直接打印某个工具的 inputSchema）
+MCP_LIVE=1 MCP_ENDPOINT=http://127.0.0.1:18110/mcp MCP_INSTANCE=demo \
+go run -tags live ./test/live -mode=schema -tool=magento.inventory.assign | grep -A3 '"items"' | head -6
+#   "items": {
+#     "type": "array",
+#     "minItems": 1,
+#     "maxItems": 100,
+#     "description": "Lines to act on. Each entry names an order item and a quantity; the quantities must not exceed what is still outstanding.",
+
+MCP_LIVE=1 MCP_ENDPOINT=http://127.0.0.1:18110/mcp MCP_INSTANCE=demo \
+go run -tags live ./test/live -mode=schema -tool=magento.product.update | grep -A4 '"category_ids"'
+#   "category_ids": {
+#     "description": "Replaces the product's category assignments when provided; an empty array clears them.",
+#     "items": {
+#       "description": "Requested page size.",
 ```
 
 - **影响**: 按描述理解会以为 `inventory.assign` 会拒绝超过订单量的库存；实际不会。

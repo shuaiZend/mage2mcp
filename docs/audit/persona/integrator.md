@@ -361,9 +361,12 @@ magento.order.create      # 参数对应的 ledger 行处于 unknown（见证据
 - **证据 B（102 个工具里没有轮询入口）**:
 
 ```bash
-magento.instance.list   # 不存在；platform.info 的 tools[] 全量 102 项
-# 其中与 operation 相关：无。只有 magento.import.status（针对 import job_id），
-# 不接受 money 工具的 operation_id。
+# tools/list 全量 102 个工具，platform.info 的 tools[] 同样 102 项；
+# 其中与 operation 相关的一个都没有。唯一的「状态查询」是 magento.import.status，
+# 它只接受 import 的 job_id，不接受 money 工具的 operation_id。
+# 试一个看起来该存在的名字：
+magento.operation.status {"operation_id":"fe2c1a0f-a633-4c48-af05-df71a5b42338"}
+# → {"code":"internal","message":"an unexpected error occurred"}   ← 工具不存在，见 INT-20
 ```
 
 - **证据 C（真实卡死样本：生产库里 11 条 order.create 永久 unknown）**:
