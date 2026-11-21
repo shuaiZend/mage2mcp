@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.6] - 2026-11-22
+
+The semantic-layer pass: seven parallel domain tests, 51 findings, and the two release
+blockers they exposed. Full notes: [docs/releases/v0.11.6.md](docs/releases/v0.11.6.md).
+
+### Fixed
+
+- **Partial refunds and partial shipments were applied to the whole order.**
+  `/order/{id}/refund` and `/order/{id}/ship` take their parameters at the top level, but the
+  gateway wrapped them in `{"entity": {...}}`. Magento ignored the unknown field, received no
+  items, and applied the whole order: a refund of 1 of 2 items returned the full invoice
+  amount, and a shipment of 1 of 2 items shipped both. The invoice route was already correct,
+  which is why only two of the three documents were wrong.
+- `order.cancel` reported `canceled: true` when Magento answered `200` with `false`.
+- `customer.addresses.create/update` dropped `region_id` on the fallback paths, and an update
+  carrying only `region_id` was rejected.
+- Credit memo `total_qty` leaked a zero when Magento omitted the field.
+- The default RBAC policy did not bind an instance, so a viewer could read another store.
+- Every approval audit row was rejected by a CHECK constraint, so approvals had no audit
+  trail at all; migration 000009 admits `approve`, `approval` and `approved`.
+- A tool error returned as a result (rather than as an error) audited as succeeded.
+- `_meta.request_id` and the audit `request_id` were always empty.
+- A replayed confirmation was not validated, and a successful replay left an intent row with
+  no outcome.
+- Ledger-gated write outcomes carried no `request_id`, so money and catalog writes could not
+  be correlated.
+- Rate-limit exhaustion was reported as `upstream_timeout` instead of `rate_limited`.
+- Upstream 400 diagnostics were discarded; Magento's reason and field now reach the error
+  details, including through staged writes.
+- Inventory `unknown` outcomes were marked retryable; `products.bulk_update` silently folded
+  duplicate SKUs and accepted unknown ones.
+- Import jobs reported `succeeded` for a partial batch; `batch_id` and `rows` descriptions
+  were wrong; cancelling a cancelled job succeeded.
+- The RBAC policy was built before the auth branch, so a multi-store deployment with
+  authentication disabled could not start.
+- `idempotentHint` contradicted the idempotency the tool descriptions state, for 11 tools.
+- `cmd/admin` required `-as` even when an approver token supplied the identity.
+
+### Added
+
+- `magento.product.media.get` verified live; all 102 registered tools now have a live case.
+- The server instructions require discovering a source product's type, options, attributes
+  and categories before copying it, and asking a human before creating any taxonomy —
+  including when the source is not Magento and the model needs an explicit mapping.
+
+### Changed
+
+- The live matrix is deterministic: two cases that flipped on uncontrolled state now set up
+  their own preconditions.
+
 ## [0.11.5] - 2026-11-21
 
 An import fix that would have turned a bulk delisting into a bulk listing, and two rules

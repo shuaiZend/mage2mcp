@@ -1,14 +1,14 @@
 # Documentation
 
 This is the entry point for mage2mcp documentation. The documents below
-describe the shipped v0.11.5 gateway; design catalogues are kept alongside the
+describe the shipped v0.11.6 gateway; design catalogues are kept alongside the
 implemented surface and are marked where they are not as-built.
 
 ## Latest release
 
-[**v0.11.5**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.5) (2026-11-20) is
+[**v0.11.6**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.6) (2026-11-20) is
 the current pre-1.0 release: the production-readiness remediation. Read
-the [v0.11.5 release notes](releases/v0.11.5.md), the
+the [v0.11.6 release notes](releases/v0.11.6.md), the
 [Releases page](https://github.com/shuaiZend/mage2mcp/releases) for artifacts and
 signatures, and [CHANGELOG.md](../CHANGELOG.md) for the full history.
 
@@ -51,7 +51,7 @@ and the release audit is in [audit/](audit/).
 | [Production acceptance](operations/production-acceptance.md) | Read-only acceptance against a live Magento instance and the fixes it produced |
 | [Actions bump review](development/actions-bump-review.md) | Review of the GitHub Actions major-version bump (PR #46) |
 | [Product copy run](development/product-copy-run.md) | End-to-end product copy on the demo and the 11 MCP defects it found |
-| [v0.11.5 release notes](releases/v0.11.5.md) | Remediation highlights, breaking changes, upgrade and verification checklist |
+| [v0.11.6 release notes](releases/v0.11.6.md) | Remediation highlights, breaking changes, upgrade and verification checklist |
 | [v0.11.0 release notes](releases/v0.11.0.md) | Highlights, breaking changes, upgrade and verification checklist |
 | [v0.10.0 release notes](releases/v0.10.0.md) | Previous release notes |
 | [v0.9.0 release notes](releases/v0.9.0.md) | Previous release notes |

@@ -1,6 +1,6 @@
 # Security review
 
-**Status:** As-built review for v0.11.5
+**Status:** As-built review for v0.11.6
 (2026-11-20). This document records the controls that exist, where they live, and
 which test proves them. It supersedes the Phase 0 design review. Controls that
 are not implemented are marked `PLANNED` and their residual risk is stated in the
@@ -275,4 +275,4 @@ duplicate JSON keys accepted.
 | Date | Reviewer | Scope | Result |
 |---|---|---|---|
 | 2026-11-18 | Security architect (agent) | Phase 0 design | Controls defined; superseded |
-| 2026-11-20 | Security owner (agent) | As-built v0.11.5 (remediation) | Controls verified to the CONTRACT boundary; gaps listed above |
+| 2026-11-20 | Security owner (agent) | As-built v0.11.6 (remediation) | Controls verified to the CONTRACT boundary; gaps listed above |

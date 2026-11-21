@@ -40,7 +40,7 @@ changelog entry record it (see [Upgrade](operations/upgrade.md)).
 
 | Version | Status |
 |---|---|
-| `v0.11.x` (latest: v0.11.5) | Supported pre-release |
+| `v0.11.x` (latest: v0.11.6) | Supported pre-release |
 | `v0.10.0` | Superseded |
 | `v0.9.0` | Superseded |
 | `v0.8.1` | Superseded |
@@ -62,7 +62,7 @@ changelog entry record it (see [Upgrade](operations/upgrade.md)).
 | `v0.0.1` | Superseded |
 
 Security fixes are provided for the latest pre-release only until 1.0. The
-current release is v0.11.5; older minors are superseded and receive no fixes.
+current release is v0.11.6; older minors are superseded and receive no fixes.
 
 ## Verification status
 
