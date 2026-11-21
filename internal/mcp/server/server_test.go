@@ -2393,3 +2393,86 @@ func callToolNoApprove(t *testing.T, opts Options, subject, name string, args ma
 	}
 	return res
 }
+
+// CV-PROTO-01: a successful replay is a completed call and must write an
+// outcome audit row, not leave the intent dangling.
+func TestReplayWritesOutcomeAudit(t *testing.T) {
+	gate := &fakeGate{beginFn: func(OperationRequest) (OperationTicket, error) {
+		return OperationTicket{OperationID: "op-replay", Decision: DecisionReplay, Replayed: true,
+			ReplayResult: json.RawMessage(`{"invoice_id":555}`)}, nil
+	}}
+	reg := registry.New()
+	if err := reg.Register(gatedTool(t, "magento.invoice.capture", registry.PermissionWrite, nil)); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var phases, states, codes []string
+	opts := Options{Version: "test", Registry: reg,
+		BeginOperation: gate.begin, FinishOperation: gate.finish,
+		Audit: func(_ context.Context, _, _, phase, state, code string) {
+			mu.Lock()
+			defer mu.Unlock()
+			phases = append(phases, phase)
+			states = append(states, state)
+			codes = append(codes, code)
+		},
+	}
+	res := callWithOptions(t, opts, "agent-1", "magento.invoice.capture", map[string]any{"order_id": 42})
+	if res.IsError {
+		t.Fatalf("replay failed: %+v", res.Content)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(phases) != 2 || phases[0] != "intent" || phases[1] != "outcome" {
+		t.Fatalf("audit phases = %v, want intent then outcome", phases)
+	}
+	if states[1] != "succeeded" || codes[1] != "" {
+		t.Fatalf("replay outcome = state %q code %q, want succeeded/empty", states[1], codes[1])
+	}
+}
+
+// CV-PROTO-02: the outcome audit event built for a ledger-gated write carries
+// the same request_id as the intent and the result _meta. This test uses a real
+// write tool and a real BeginOperation/FinishOperation path, not a read tool.
+func TestLedgerGatedWriteOutcomeAuditHasRequestID(t *testing.T) {
+	gate := &fakeGate{}
+	reg := registry.New()
+	if err := reg.Register(gatedTool(t, "magento.product.update", registry.PermissionWrite, nil)); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var intentID string
+	opts := Options{Version: "test", Registry: reg,
+		BeginOperation: gate.begin, FinishOperation: gate.finish,
+		Audit: func(ctx context.Context, _, _, phase, _, _ string) {
+			if phase != "intent" {
+				return
+			}
+			mu.Lock()
+			intentID = RequestID(ctx)
+			mu.Unlock()
+		},
+	}
+	res := callWithOptions(t, opts, "agent-1", "magento.product.update", map[string]any{"instance": "store-us", "order_id": 42})
+	if res.IsError {
+		t.Fatalf("gated write failed: content=%+v structured=%+v", res.Content, res.StructuredContent)
+	}
+	metaID, _ := res.Meta["request_id"].(string)
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	if len(gate.finishes) != 1 || gate.finishes[0].Audit == nil {
+		t.Fatalf("finishes = %+v, want one outcome with audit", gate.finishes)
+	}
+	outcomeID := gate.finishes[0].Audit.RequestID
+	mu.Lock()
+	defer mu.Unlock()
+	if intentID == "" || outcomeID == "" || metaID == "" {
+		t.Fatalf("request ids: intent=%q outcome=%q meta=%q; want all non-empty", intentID, outcomeID, metaID)
+	}
+	if intentID != outcomeID || intentID != metaID {
+		t.Fatalf("request ids: intent=%q outcome=%q meta=%q; want all equal", intentID, outcomeID, metaID)
+	}
+	if gate.finishes[0].Audit.Phase != "outcome" || gate.finishes[0].Audit.Decision != "allow" {
+		t.Fatalf("outcome audit = %+v, want phase outcome/decision allow", gate.finishes[0].Audit)
+	}
+}
