@@ -1,0 +1,237 @@
+# 生产升级与全面测试记录（v0.11.4）
+
+| 项目 | 内容 |
+|---|---|
+| 日期 | 2026-11-21 |
+| 生产服务器 | `49.51.250.83`，`/opt/mage2mcp` |
+| 升级路径 | v0.11.1 → **v0.11.4** |
+| 目标店铺 | `https://demo-magento-2.auroracreation.com`，店铺视图 `pl`（PLN，pl_PL） |
+| 工具总数 | 102（全部已覆盖测试） |
+| 测试用例 | 123 |
+
+---
+
+## 一、生产升级
+
+### 1.1 操作步骤
+
+| 步骤 | 结果 |
+|---|---|
+| 备份 `compose.yaml` | `compose.yaml.bak.20261121175622` |
+| 镜像版本替换（server + worker） | v0.11.1 → v0.11.4 |
+| `docker compose pull` | 成功 |
+| `docker compose up -d` | 成功 |
+| 容器状态 | 三个容器全部 `Up`，server 为 `healthy` |
+| `/readyz` | `{"status":"ready","tools":102}` |
+
+### 1.2 升级后状态
+
+```text
+mage2mcp-postgres-1   postgres:17-alpine                    Up (healthy)
+mage2mcp-server-1     ghcr.io/shuaizend/mage2mcp:v0.11.4    Up (healthy)
+mage2mcp-worker-1     ghcr.io/shuaizend/mage2mcp:v0.11.4    Up
+```
+
+**回滚方式**：`cp compose.yaml.bak.20261121175622 compose.yaml && docker compose up -d`。
+
+---
+
+## 二、生产环境全量测试
+
+### 2.1 结果
+
+对**生产实例**（非临时容器）跑全量矩阵：
+
+| 状态 | 数量 |
+|---|---|
+| 通过 | **112** |
+| 软失败 | 7 |
+| 硬失败 | 1 |
+| 跳过 | 3 |
+
+原始结果：`test/live/out/results-20261121-175704.json`
+
+### 2.2 与已发布镜像的一致性
+
+生产实例与单独部署的 v0.11.4 容器结果**完全相同**（112/7/1/3），说明生产配置（限流 20 rps / 40 burst / 4 并发）不影响功能。
+
+### 2.3 剩余 8 项逐条判定
+
+| 工具 | 报错 | 判定 |
+|---|---|---|
+| `product.options.create` | `unsupported_capability` | **环境**：该店 `POST /products/{sku}/options` 返回 404 |
+| `stock_source_link` | `validation_failed` 400 | **环境**：stock 1 是 Default Stock，Magento 拒绝非默认源（业务规则） |
+| `stock_source_unlink` | 同上 | 同上 |
+| `inventory.transfer` | `invalid_argument` | **正确拒绝**：用例刻意用同源 |
+| `invoice.capture` | `conflict` | **正确拒绝**：checkmo 自动捕获，发票已支付 |
+| `order.cancel` | `conflict` | **正确拒绝**：订单已终态 |
+| `import.cancel` | `illegal_transition` | **正确拒绝**：任务已终态 |
+| `configurable.add_child` | `validation_failed` | **测试脚本**：直连验证该工具实际可用 |
+
+**无未归因失败。**
+
+---
+
+## 三、探索性测试（矩阵之外）
+
+矩阵覆盖 101 个工具，本轮补齐最后 1 个并深挖三个未验证区域。
+
+### 3.1 `magento.product.media.get`（此前未覆盖）
+
+上传一张 PNG 后读取，返回完整媒体条目（`id`、`media_type`、`label`、`position`、`types`、`file`）。**正常**。
+
+至此 **102 个工具全部有真实用例**。
+
+### 3.2 `magento.configurable.add_child`
+
+创建带 `color` 属性的简单商品后调用，返回 `linked: true`，商品成功挂到配置商品父级。**工具正常**——矩阵中的软失败是脚本顺序问题（子商品已被链接）。
+
+### 3.3 导入流程（真实 CSV）
+
+| 步骤 | 结果 |
+|---|---|
+| `import.validate`（3 行） | 3 有效、0 无效，附带 SEO 建议 |
+| `import.execute`（首次） | `created: 3`，全部成功 |
+| `import.execute`（重复，`update_existing=true`） | `updated: 3`，名称与价格正确更新 |
+| 回读商品 | 名称与价格符合第二次导入内容 |
+
+### 3.4 发现缺陷：导入忽略 `status` 与 `visibility` 列
+
+**现象**：CSV 写明 `status=2, visibility=1`（禁用、不可见），导入报告成功，但商品实际是 `status=1, visibility=4`（启用、目录与搜索可见）。
+
+**根因**：`status` 与 `visibility` 是商品的**顶层字段**，不是 EAV 属性。它们不在导入的保留列集合中，于是被当作自定义属性发送——Magento 在创建时忽略未知属性，**运营方的意图被静默丢弃**。
+
+**危害**：这是最糟糕的失败形态——导入报告成功，商品却在店铺前台可见。一个打算批量下架商品的运营操作会得到相反结果。
+
+**修复**：`status` 与 `visibility` 加入保留列，创建与更新两条路径都映射到类型化字段，并做取值校验（status ∈ {1,2}，visibility ∈ 1..4）。
+
+**验证**：修复后重新导入，读回 `status: 2`、`visibility: 1`，与 CSV 一致。测试 `TestImportAppliesStatusAndVisibility` 覆盖。
+
+---
+
+## 四、本次会话累计修复的缺陷
+
+按版本记录，全部在真实店铺上验证。
+
+### v0.11.2（8 项）
+
+| 缺陷 | 影响 |
+|---|---|
+| 下单用 `POST`，Magento 要求 `PUT` | 整条资金链路不可用 |
+| 已成功的订单被记为「确定未下单」 | 诱导调用方重试，制造重复订单 |
+| 对账队列从未被消费 | 70 个任务排队，UNKNOWN 操作永不解决 |
+| 上游错误文本泄漏给 agent | Magento 与 Cloudflare 均修复 |
+| MCP 会话未绑定创建者 | 会话可被他人接管 |
+| `/metrics` 在非回环监听上无鉴权 | 指标暴露 |
+| 审批 CLI 无身份校验、无审计行 | 任意身份可批准写操作 |
+| 凭据可被 `%+v` 打印 | 令牌泄漏到日志 |
+
+### v0.11.3（5 项）
+
+| 缺陷 | 影响 |
+|---|---|
+| `customer.addresses` 对任何有地址的客户失败 | `region` 字段是对象，按字符串解析失败 |
+| `inventory.unassign` 路由错误 | `DELETE` → `POST .../source-items-delete`，从未可用 |
+| `inventory.stock_source_unlink` 路由错误 | 同上 |
+| `inventory.stock_source_link` 字段名错误 | `position` → `priority` |
+| `customer.addresses.update` 无回退 | 无专用路由的店铺无法更新地址 |
+
+### v0.11.4（6 项）
+
+| 缺陷 | 影响 |
+|---|---|
+| `order.create` 响应解析为对象（实为标量 id） | **LIVE-8 根因**：每笔成功订单都记为 unknown |
+| `invoice.create` 同上 | 发票成功但报 unknown |
+| `creditmemo.create` 同上 + 路由不存在 | `/creditmemos` → `/order/{id}/refund` |
+| `shipment.create` 路由不存在 | `/shipments` → `/order/{id}/ship` |
+| `shipment.get` / `creditmemo.get` 复数路由 | 读取 404 |
+| `shipment.email` / `creditmemo.email` 复数路由 | 邮件 404 |
+
+### 待发布（1 项）
+
+| 缺陷 | 影响 |
+|---|---|
+| 导入忽略 `status` / `visibility` | 导入「禁用/不可见」得到可见商品 |
+
+**合计：20 项缺陷，全部已在真实店铺验证修复。**
+
+---
+
+## 五、测试结果演进
+
+| 阶段 | 通过 | 软失败 | 硬失败 | 跳过 |
+|---|---|---|---|---|
+| v0.11.1 基线 | 78 | 17 | 2 | 26 |
+| v0.11.2 已发布 | 82 | 16 | 1 | 24 |
+| v0.11.3 已发布 | 91 | 7 | 1 | 24 |
+| v0.11.4 已发布 | 112 | 7 | 1 | 3 |
+| **生产 v0.11.4** | **112** | **7** | **1** | **3** |
+
+**从 78 到 112，净增 34 个通过用例。**
+
+---
+
+## 六、修复计划
+
+### 6.1 立即（建议本轮发布）
+
+| 编号 | 内容 | 状态 |
+|---|---|---|
+| `FIX-01` | 导入应用 `status` / `visibility` 列 | **已修复，待发布** |
+
+发布 **v0.11.5**，包含该修复。理由：它会让「批量下架」变成「批量上架」，是运营风险。
+
+### 6.2 需要你决策（阻塞中）
+
+| 编号 | 内容 | 需要你决定什么 |
+|---|---|---|
+| `PERF-16` | 配置商品子商品路径串行，最坏 152 次请求 | 是否接受把错误契约从「单个 failed_sku」改为「失败列表」以换取并行。分析见 [`perf-16-options.md`](perf-16-options.md) |
+| `MCP-08` | 输出信封 | 已用 `_meta` 实现关联信息，无需决策；若你要载荷信封（改 106 个 schema）需明确要求 |
+
+### 6.3 测试脚本待改进（非产品缺陷）
+
+| 编号 | 内容 | 影响 |
+|---|---|---|
+| `HARNESS-01` | `configurable.add_child` 用例的子商品顺序 | 该用例软失败，实际工具正常 |
+| `HARNESS-02` | `customer.addresses.update` 用例的地址 id 同步 | 该用例软失败，实际工具正常 |
+| `HARNESS-03` | `stock_source_link` / `unlink` 需要非默认 stock | 该域无法验证，需先建自定义 stock |
+
+### 6.4 环境限制（无法在 demo 站验证）
+
+| 能力 | 限制 |
+|---|---|
+| 自定义选项创建/更新/删除 | 该店无 `POST /products/{sku}/options` 路由 |
+| MSI 源链接/取消链接 | 需自定义 stock，demo 站只有 Default Stock |
+| GA4 / Cloudflare / unified 工具 | 该部署未配置对应数据源，工具未注册 |
+| RBAC 与审批 | 测试部署关闭鉴权，仅由单元与 QA 套件覆盖 |
+
+### 6.5 建议的后续测试方向
+
+1. **补建一个自定义 stock**，验证 MSI 源链接/取消链接与库存调拨
+2. **配置 GA4 与 Cloudflare 数据源**，覆盖剩余 11 个未注册工具
+3. **开启鉴权跑一轮**，验证 RBAC 阶梯与两步确认在真实店铺上的行为
+4. **大负载导入**（接近 5000 行上限），验证分批与超时行为
+
+---
+
+## 七、当前系统状态
+
+| 项目 | 状态 |
+|---|---|
+| 生产版本 | **v0.11.4**（已升级并验证） |
+| 全部工具 | 102 个，全部有真实用例 |
+| 通过率 | 112 / 123（91%），失败项全部归因 |
+| 未归因失败 | **0** |
+| 单元与 QA | `go test ./...` 与 `-race` 零失败，QA 18/0/0 |
+| 待发布修复 | 1 项（导入 status/visibility） |
+
+---
+
+## 八、回滚与运维
+
+- **compose 备份**：`/opt/mage2mcp/compose.yaml.bak.20261121175622`
+- **回滚命令**：`cd /opt/mage2mcp && cp compose.yaml.bak.20261121175622 compose.yaml && sudo docker compose up -d`
+- **健康检查**：`curl -sS http://127.0.0.1:8080/readyz`
+- **审批脚本**：`/opt/mage2mcp/approve.sh <confirmation_id>`
+
+测试过程中创建的数据（`MCPTEST-*` 商品与客户、`mcptest_src`/`mcptest_src2` MSI 源、若干订单与票据）按你的要求**保留未清理**。

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An import that said "disabled, not visible" produced an enabled, visible product.**
+  `status` and `visibility` are top-level product fields, not EAV attributes, but they
+  were not in the reserved-column set, so they were sent as attributes. Magento ignores
+  unknown attributes on create, so the operator's intent was discarded silently while the
+  import reported success. Found by the production run on the demo store; see
+  [docs/audit/production-test-and-fix-plan-zh.md](docs/audit/production-test-and-fix-plan-zh.md).
+
 ## [0.11.4] - 2026-11-21
 
 Six defects in the money path, found by exercising the part of the surface that had never
