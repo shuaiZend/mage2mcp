@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-11-21
+
+Four more defects the v0.11.2 live run exposed once the customer-address failure was out
+of the way. Full notes: [docs/releases/v0.11.3.md](docs/releases/v0.11.3.md).
+
 ### Fixed
 
 - **Three inventory routes and one field name were wrong.** `inventory.unassign` and
