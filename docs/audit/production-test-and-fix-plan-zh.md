@@ -267,6 +267,51 @@ mage2mcp-worker-1     ghcr.io/shuaizend/mage2mcp:v0.11.4    Up
 | 前台搜索 "nillkin" | 命中 1 个商品 |
 | 导航菜单 | 包含 Phone Accessories |
 
+### 更新：改为配置商品（补齐源站的颜色选项）
+
+首版复制成了**简单商品**，与源站不符——源站是配置商品，带 `Color` 属性的两个选项。
+
+源站结构（从页面 JSON 配置解析）：
+
+```json
+{"93":{"code":"color","label":"Color",
+  "options":[{"id":"10","label":"Black"},{"id":"1742","label":"Clear Black"}]}}
+```
+
+修正步骤：
+
+| 步骤 | 结果 |
+|---|---|
+| 新建 `color` 选项 `Clear Black` | value **245**（`Black` 已存在，value 49） |
+| 删除首版简单商品 | 成功 |
+| 创建配置商品（同一 SKU） | 父商品 id **2145**，`type_id: configurable` |
+| 创建两个子商品 | `-BLACK`（id 2143）、`-CLEAR-BLACK`（id 2144），各 50 件，价格 29.99 |
+| 上传图片 | 父商品与两个子商品各一张，均设为 `image`/`small_image`/`thumbnail` |
+
+API 层确认：
+
+```
+type: configurable | status: 1 | visibility: 4
+configurable_product_links: [2143, 2144]
+configurable_product_options: [('93', 'Color', 2)]
+category_links: [{'category_id': '61'}]
+```
+
+前台确认（商品页）：
+
+| 检查项 | 结果 |
+|---|---|
+| swatch 渲染配置 | 存在，`Magento_Swatches/js/swatch-renderer` |
+| 选项数量 | 2（Black、Clear Black） |
+| 各选项价格 | 29.99 / 29.99 |
+| 页面显示价格 | `29,99 zł` |
+| 库存 | 有货 |
+| 加购按钮 | 存在 |
+
+前台确认（目录页 `/gear/phone-accessories.html`）：1 个商品卡片，价格 29.99，图片正常。
+
 ### 说明
 
 父分类 `Gear` 未启用锚定（Magento 默认），因此商品只在子分类页展示，不在 `gear.html` 出现。这是 Magento 的标准行为，不是缺陷。
+
+配置商品的颜色选项由 Magento 的 swatch 渲染器**在浏览器端**生成，HTML 里没有服务端的 `super_attribute` 标记；判断依据是页面内嵌的 `jsonConfig` 与 `optionPrices`。
