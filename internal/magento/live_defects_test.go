@@ -1201,3 +1201,31 @@ func TestImportAppliesStatusAndVisibility(t *testing.T) {
 		}
 	}
 }
+
+// The tool descriptions are what an agent reads, so a route stated there has to be the
+// route the code calls. Nine descriptions kept the pre-fix routes — POST /shipments,
+// DELETE /inventory/source-items, GET /shipments/{id} — after the code was corrected,
+// which is the same misleading class of bug one level up.
+func TestDocumentedRoutesMatchTheRoutesTheCodeCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+		want string
+		bad  string
+	}{
+		{"shipment.create", shipmentCreateDescription, "/order/{orderId}/ship", "/V1/shipments)"},
+		{"creditmemo.create", creditmemoCreateDescription, "/order/{orderId}/refund", "/V1/creditmemos)"},
+		{"order.create", orderCreateDescription, "PUT /rest/{store_code}/V1/carts/{cartId}/order", "POST /rest/{store_code}/V1/carts"},
+		{"shipment.get", shipmentGetToolDescription, "/V1/shipment/{id}", "/V1/shipments/{id}"},
+		{"creditmemo.get", creditmemoGetToolDescription, "/V1/creditmemo/{id}", "/V1/creditmemos/{id}"},
+		{"inventory.unassign", unassignSourceItemsDescription, "source-items-delete", "DELETE /rest/{store_code}/V1/inventory/source-items)"},
+		{"inventory.stock_source_unlink", stockSourceUnlinkDescription, "stock-source-links-delete", "DELETE /rest/{store_code}/V1/inventory/stock-source-links)"},
+	} {
+		if !strings.Contains(tc.text, tc.want) {
+			t.Fatalf("%s description does not state %q: %s", tc.name, tc.want, tc.text)
+		}
+		if strings.Contains(tc.text, tc.bad) {
+			t.Fatalf("%s description still states %q: %s", tc.name, tc.bad, tc.text)
+		}
+	}
+}

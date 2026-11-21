@@ -813,7 +813,7 @@ const (
 	unassignSourceItemsToolName    = "magento.inventory.unassign"
 	unassignSourceItemsToolTitle   = "Remove MSI source assignments"
 	unassignSourceItemsDescription = "Magento write operation: removes per-source inventory assignments " +
-		"(DELETE /rest/{store_code}/V1/inventory/source-items) on the resolved instance for at most 100 sku/source pairs. " +
+		"(POST /rest/{store_code}/V1/inventory/source-items-delete) on the resolved instance for at most 100 sku/source pairs. " +
 		"The product and its catalog stock status are unchanged; the assignment is removed. Requires human confirmation."
 
 	removeChildSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
@@ -1022,11 +1022,11 @@ const (
 	shipmentCreateToolName    = "magento.shipment.create"
 	shipmentCreateToolTitle   = "Create Magento shipment"
 	shipmentCreateDescription = "Magento write operation: creates a shipment for an order " +
-		"(POST /rest/{store_code}/V1/shipments) on the resolved instance, with 1-100 order-item lines and up to 20 tracking numbers. " +
+		"(POST /rest/{store_code}/V1/order/{orderId}/ship) on the resolved instance, with 1-100 order-item lines and up to 20 tracking numbers. " +
 		"Requires human confirmation."
 	creditmemoCreateToolName    = "magento.creditmemo.create"
 	creditmemoCreateToolTitle   = "Create Magento credit memo"
-	creditmemoCreateDescription = "Magento write operation: creates a credit memo (POST /rest/{store_code}/V1/creditmemos) with 1-100 order-item lines and " +
+	creditmemoCreateDescription = "Magento write operation: creates a credit memo (POST /rest/{store_code}/V1/order/{orderId}/refund) with 1-100 order-item lines and " +
 		"optional adjustments on the resolved instance. The order and its invoices are read first: the memo is linked to an invoice and a quantity above " +
 		"qty_invoiced - qty_refunded is rejected before any refund request. Idempotent when idempotency_key is supplied: a repeat " +
 		"with the same arguments replays the recorded credit memo. An ambiguous outcome is recorded as unknown and must be polled, " +
@@ -1611,7 +1611,7 @@ const (
 	orderCreateToolName    = "magento.order.create"
 	orderCreateToolTitle   = "Create a Magento order"
 	orderCreateDescription = "Magento write operation: places an order through the admin cart flow (cart, items, shipping information, then " +
-		"POST /rest/{store_code}/V1/carts/{cartId}/order) on the resolved instance. Totals are computed by Magento, never by the caller. " +
+		"PUT /rest/{store_code}/V1/carts/{cartId}/order) on the resolved instance. Totals are computed by Magento, never by the caller. " +
 		"Idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded order. An ambiguous " +
 		"placement is reconciled by reading the customer's recent orders back; an inconclusive read returns operation_unknown " +
 		"and must be polled, never retried. Requires human confirmation."
@@ -2553,9 +2553,9 @@ const (
 
 	invoiceEmailDescription = "Magento write operation: sends the invoice email (POST /rest/{store_code}/V1/invoices/{id}/emails) on the resolved instance. " +
 		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
-	shipmentEmailDescription = "Magento write operation: sends the shipment email (POST /rest/{store_code}/V1/shipments/{id}/emails) on the resolved instance. " +
+	shipmentEmailDescription = "Magento write operation: sends the shipment email (POST /rest/{store_code}/V1/shipment/{id}/emails) on the resolved instance. " +
 		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
-	creditmemoEmailDescription = "Magento write operation: sends the credit memo email (POST /rest/{store_code}/V1/creditmemos/{id}/emails) on the resolved instance. " +
+	creditmemoEmailDescription = "Magento write operation: sends the credit memo email (POST /rest/{store_code}/V1/creditmemo/{id}/emails) on the resolved instance. " +
 		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
 
 	documentEmailSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
@@ -2709,7 +2709,7 @@ const (
 	stockSourceUnlinkToolName    = "magento.inventory.stock_source_unlink"
 	stockSourceUnlinkToolTitle   = "Unlink a source from a Magento stock"
 	stockSourceUnlinkDescription = "Magento write operation: detaches an MSI source from a stock " +
-		"(DELETE /rest/{store_code}/V1/inventory/stock-source-links) on the resolved instance. Products keep their source items; " +
+		"(POST /rest/{store_code}/V1/inventory/stock-source-links-delete) on the resolved instance. Products keep their source items; " +
 		"the stock stops selling from that source. Destructive and confirmation-gated. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 

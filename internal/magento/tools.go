@@ -804,7 +804,7 @@ const (
 		"(GET /rest/{store_code}/V1/shipments filtered by order_id) with total quantity and tracking numbers. Read-only. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 	shipmentGetToolDescription = "Reads one shipment by id " +
-		"(GET /rest/{store_code}/V1/shipments/{id}) with total quantity and tracking numbers. Read-only. " +
+		"(GET /rest/{store_code}/V1/shipment/{id}) with total quantity and tracking numbers. Read-only. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	orderIDOnlySchema = `{"type": "object", "properties": {
@@ -981,7 +981,7 @@ const (
 		"(GET /rest/{store_code}/V1/creditmemos filtered by order_id) with totals and quantities. Read-only. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 	creditmemoGetToolDescription = "Reads one credit memo by id " +
-		"(GET /rest/{store_code}/V1/creditmemos/{id}) with totals and quantities. Read-only. " +
+		"(GET /rest/{store_code}/V1/creditmemo/{id}) with totals and quantities. Read-only. " +
 		"The instance input is resolved by the server when only one Magento instance is configured."
 
 	creditmemoIDSchema = `{"type": "object", "properties": {
