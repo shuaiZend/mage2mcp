@@ -420,6 +420,7 @@ ObserveOperation(ctx, "magento.order.create", "customer", "7") -> applied
 （保留注释说明原因）。
 
 **同时要求测试双向**：
+
 - `order.create` 的 customer 实体 → 必须 `ObservationInconclusive`
 - **其他** operation 的 customer 分支（如 customer.update）→ 必须仍能正常判定
 
