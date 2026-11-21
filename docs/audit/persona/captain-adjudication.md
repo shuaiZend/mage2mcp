@@ -356,3 +356,35 @@ t13 指出：它工作期间我的 `git add -A` 把它的改动一起提交进�
 
 这不算严重事故——内容是对的、门禁是绿的——但它让历史不可读，而**可读的历史是多 agent 协作的
 基本要求**：事后无法回答「这行是谁、为什么改的」。
+
+## 核验：QA 套件红了，但不是行为回归
+
+t9 交付后 QA 套件失败，三条断言报「ambiguous money outcome must not be marked retryable」。
+
+**我没有直接判定是回归，先查了实际值。** 用真实 fixture + 500 上游的探针：
+
+```text
+code=operation_unknown   retryable present=true   value=false
+```
+
+**行为是对的**：`retryable` 的**值**是 `false`。问题出在测试断言：
+
+```text
+test/qa/money_faults_test.go:72-74
+  if _, retryable := res.Structured["retryable"]; retryable {
+      t.Fatal(...)
+  }
+```
+
+`map[key]` 的第二个返回值是「键是否存在」，不是值。**键一存在就失败**，与值无关。
+
+而 t9 的 U-30 正是按 ADR-0010「每个错误都携带 `Retryable`，调用方不应从键缺席推断 false」
+让该键**始终存在**——这是有意的契约改进，测试没跟上。
+
+### 判定
+
+**不是产品回归，是测试断言过时。** 处理方式：改断言为检查**值**，并要求改完后实测
+「把 `Retryable` 设为 true 时测试确实失败」，确保它仍能抓到真回归。
+
+这条值得记：**「测试红了」不等于「代码坏了」。** 如果一个测试断言的是「键必须缺席」，而契约
+改成「键必须存在」，测试会红而行为是对的。**不查实际值就回退代码，会把一个契约改进当成回归修掉。**
