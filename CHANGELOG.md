@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-11-21
+
+An import fix that would have turned a bulk delisting into a bulk listing, and two rules
+in the server instructions for agents that copy products from another store. Full notes:
+[docs/releases/v0.11.5.md](docs/releases/v0.11.5.md).
+
 ### Added
 
 - **The server instructions now state the product-copy rule.** Before copying a product,

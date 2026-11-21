@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** as-built for v0.11.4
+**Status:** as-built for v0.11.5
 (2026-11-20). This document describes the code that ships. Components that are
 designed but not implemented are marked **PLANNED** and are not drawn as present.
 

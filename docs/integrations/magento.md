@@ -1,7 +1,7 @@
 # Magento 2 integration
 
 **Module:** `internal/magento` — **Primary target:** Magento 2.4.9 (Open Source and Adobe Commerce,
-self-hosted or PaaS). **Status:** as-built for v0.11.4; the
+self-hosted or PaaS). **Status:** as-built for v0.11.5; the
 gateway is a REST admin client only (ADR-0022). No live Magento instance was
 reachable, so every behavioural claim is `CONTRACT` (REST contract plus
 `httptest` fakes); vendor facts are `[V-docs]` or `[U]`. Nothing here is
