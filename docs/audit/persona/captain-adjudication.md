@@ -165,3 +165,30 @@ special_price: 9.990000        ← 重量泄漏进了促销价
 ### 判定
 
 **P0，发布阻断。** 这是本轮最严重的一条：一个日常的、看似无关的操作（改重量）会静默改变售价，且没有任何报错。同时 `internal/` 下**没有任何测试覆盖** `buildUpdatePayload` / `pricingAttributesFromPointers`——这正是它能活到现在的原因。
+
+## 裁决：order.go 的写入权归 t9，SalesSummary 接线延后
+
+t11（报表口径）开工前报了一个真实的范围冲突：验收要求「summary 与 analysis 的按天分桶用同一
+时区口径」，但 `magento.sales.summary` 的实现、schema、输出结构都在 `internal/magento/order.go`，
+而该文件同时被 t9（integrator 的订单读取修复）需要。
+
+**裁决：选 B，不把 order.go 分给两个 agent。**
+
+理由不是保守，是**并发改同一文件的覆盖在 git 里看不出来**——两个 agent 各自都会报告「改成功」，
+合并时一方的修改静默消失。P0（价格错位）正在 t9 手上，这个节骨眼上不值得引入文件级竞态。
+
+具体安排：
+
+| 项 | 归属 |
+|---|---|
+| analysis 侧时区日桶 + `timezone` 字段 + 日期不越窗 | t11（data-analyst） |
+| 共享 helper（包内可见） | t11，供后续复用 |
+| **summary 接线（SalesSummary 日桶、Timezone 字段）** | **t9 完成后由队长另建任务** |
+| U-54（1000 单误报 truncated）、U-56（366 天上限）、U-47（无 tax/refund 字段） | 同上，并入 summary 接线任务 |
+
+同时确认：`refunded_amount` 由 t11 修成**单据级退款总额**（含运费退款、减调整费）。它当前是行
+小计，比真实退款少——数值变化正是修复的意义。要求 t11 给出修前/修后数字对比，以及它与
+`sales.summary.revenue` 能否对上。
+
+**给 t11 的验收口径**：按 B 判，即「analysis 侧完成 + helper 可供接线」，summary 接线不在其验收内。
+要求它如实标注哪些验收项未闭环，不许凑完整。
