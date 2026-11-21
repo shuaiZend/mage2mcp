@@ -651,6 +651,10 @@ var reservedImportAttributes = map[string]bool{
 	"meta_title": true, "meta_keywords": true, "meta_description": true,
 	"weight": true, "special_price": true, "special_from_date": true,
 	"special_to_date": true, "cost": true, "tax_class_id": true,
+	// status and visibility are top-level product fields, not EAV attributes.
+	// Sending them as attributes made Magento ignore them, so an import that said
+	// "disabled, not visible" produced an enabled product on the storefront.
+	"status": true, "visibility": true,
 }
 
 // validateReservedAttribute validates a SEO/pricing attribute value from an
@@ -719,6 +723,20 @@ func applyImportAttributes(attrs map[string]string, in *CreateProductInput) erro
 		}
 		in.TaxClassID = id
 	}
+	if raw := reserved["status"]; raw != "" {
+		status, err := strconv.Atoi(raw)
+		if err != nil || (status != 1 && status != 2) {
+			return invalidf("status must be 1 (enabled) or 2 (disabled)")
+		}
+		in.Status = status
+	}
+	if raw := reserved["visibility"]; raw != "" {
+		visibility, err := strconv.Atoi(raw)
+		if err != nil || visibility < 1 || visibility > 4 {
+			return invalidf("visibility must be 1 (not visible), 2 (catalog), 3 (search) or 4 (catalog and search)")
+		}
+		in.Visibility = visibility
+	}
 	return nil
 }
 
@@ -765,6 +783,20 @@ func applyImportUpdateAttributes(attrs map[string]string, in *UpdateProductInput
 			return invalidf("tax_class_id must be an integer")
 		}
 		in.TaxClassID = &id
+	}
+	if raw, ok := reserved["status"]; ok && raw != "" {
+		status, err := strconv.Atoi(raw)
+		if err != nil || (status != 1 && status != 2) {
+			return invalidf("status must be 1 (enabled) or 2 (disabled)")
+		}
+		in.Status = &status
+	}
+	if raw, ok := reserved["visibility"]; ok && raw != "" {
+		visibility, err := strconv.Atoi(raw)
+		if err != nil || visibility < 1 || visibility > 4 {
+			return invalidf("visibility must be 1 (not visible), 2 (catalog), 3 (search) or 4 (catalog and search)")
+		}
+		in.Visibility = &visibility
 	}
 	return nil
 }

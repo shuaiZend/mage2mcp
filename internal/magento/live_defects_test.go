@@ -1156,3 +1156,48 @@ func TestDecodeCreatedDocumentIDAcceptsEveryShape(t *testing.T) {
 		}
 	}
 }
+
+// Found by the v0.11.4 production run: an import that said "disabled, not visible"
+// produced an enabled, visible product. status and visibility were not reserved
+// columns, so they were sent as EAV attributes, which Magento ignores on create — the
+// operator's intent was silently discarded.
+func TestImportAppliesStatusAndVisibility(t *testing.T) {
+	var body map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/products"):
+			_, _ = io.WriteString(w, `{"items":[],"total_count":0}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/products"):
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &body)
+			_, _ = io.WriteString(w, `{"id":1,"sku":"X","type_id":"simple"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	csv := "sku,name,type_id,price,attribute_set_id,status,visibility\n" +
+		"MCPTEST-VIS,Visible Product,simple,9.99,4,2,1\n"
+	if _, err := svc.ExecuteImport(context.Background(), "csv", []byte(csv), true); err != nil {
+		t.Fatalf("ExecuteImport: %v", err)
+	}
+	product, _ := body["product"].(map[string]any)
+	if product == nil {
+		t.Fatalf("body = %v", body)
+	}
+	if got, _ := product["status"].(float64); int(got) != 2 {
+		t.Fatalf("status = %v, want 2 (disabled): the import must not be silently overridden", product["status"])
+	}
+	if got, _ := product["visibility"].(float64); int(got) != 1 {
+		t.Fatalf("visibility = %v, want 1 (not visible)", product["visibility"])
+	}
+	// They must not also travel as attributes, which Magento ignores.
+	if attrs, ok := product["extension_attributes"].(map[string]any); ok {
+		if _, present := attrs["status"]; present {
+			t.Fatal("status must not be sent as an attribute")
+		}
+	}
+}
