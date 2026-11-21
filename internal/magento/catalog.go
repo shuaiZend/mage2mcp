@@ -337,7 +337,7 @@ type OptionBulkRow struct {
 
 // OptionBulkResult reports a partial-success option creation.
 type OptionBulkResult struct {
-	Total   int             `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Total   int             `json:"total" jsonschema:"Number of option labels in this request."`
 	Created int             `json:"created" jsonschema:"Rows that created a product."`
 	Failed  int             `json:"failed" jsonschema:"Rows that failed."`
 	Rows    []OptionBulkRow `json:"rows" jsonschema:"Per-row results, in input order."`

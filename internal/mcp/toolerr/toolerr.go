@@ -40,7 +40,7 @@ func Add[In, Out any](s *mcp.Server, t *mcp.Tool, h func(context.Context, *mcp.C
 			if validator != nil {
 				if err := validator(req.Params.Arguments); err != nil {
 					return errorResult(errs.New(errs.CodeInvalidArgument, "arguments do not match the tool schema").
-						WithDetail("validation", err.Error())), nil
+						WithDetail("validation", BoundedValidationDetail(err.Error()))), nil
 				}
 			}
 			if err := json.Unmarshal(req.Params.Arguments, &in); err != nil {
@@ -67,6 +67,17 @@ func Add[In, Out any](s *mcp.Server, t *mcp.Tool, h func(context.Context, *mcp.C
 		}
 		return res, nil
 	})
+}
+
+// BoundedValidationDetail keeps a schema-validation message under the
+// errs.WithDetail size cap. Without it a very large offending value makes
+// WithDetail drop the whole detail, so the agent gets no reason at all.
+func BoundedValidationDetail(msg string) string {
+	const max = 900 // 900 + len("validation") < errs' 1024 cap
+	if len(msg) <= max {
+		return msg
+	}
+	return msg[:max] + "... (truncated)"
 }
 
 // ValidateSchema enforces the registration contract on a tool's input schema:

@@ -139,7 +139,7 @@ type LinkBulkRow struct {
 
 // LinkBulkResult reports a partial-success bulk link change.
 type LinkBulkResult struct {
-	Total   int           `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Total   int           `json:"total" jsonschema:"Number of link targets in this request."`
 	Changed int           `json:"changed" jsonschema:"Fields that actually changed."`
 	Failed  int           `json:"failed" jsonschema:"Rows that failed."`
 	Rows    []LinkBulkRow `json:"rows" jsonschema:"Per-row results, in input order."`

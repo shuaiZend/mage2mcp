@@ -413,6 +413,36 @@ type writeDisclosure struct {
 	idempotency string
 }
 
+// idempotent reports whether the disclosure's idempotency statement declares a
+// repeat of the same call harmless. The prose is the single source of truth: the
+// protocol-level idempotentHint is derived from it (writeIdempotentHint), so the
+// description an agent reads and the annotation a client acts on cannot disagree.
+//
+// The classification is deliberately conservative:
+//   - "idempotent ..." (including "idempotent per SKU") is idempotent;
+//   - "idempotent when idempotency_key is supplied ..." is NOT: the annotation is
+//     a static bool, the same call without a key can duplicate, and a client that
+//     reads true would retry;
+//   - "resumable: ..." and "not idempotent ..." are not idempotent.
+func (d writeDisclosure) idempotent() bool {
+	statement := strings.ToLower(strings.TrimSpace(d.idempotency))
+	if !strings.HasPrefix(statement, "idempotent") {
+		return false
+	}
+	return !strings.Contains(statement, "when idempotency_key")
+}
+
+// writeIdempotentHint derives the protocol annotation for one write tool. A tool
+// with no disclosure entry is non-idempotent: the contract test fails on the
+// missing entry, and false is the safe default until it is added.
+func writeIdempotentHint(name string) bool {
+	disclosure, ok := writeDisclosures[name]
+	if !ok {
+		return false
+	}
+	return disclosure.idempotent()
+}
+
 var writeDisclosures = map[string]writeDisclosure{
 	"magento.attributes.options.bulk_create": {mutates: "the EAV attribute option set for one attribute code", idempotency: "not fully idempotent; duplicate labels are skipped, but earlier options are not rolled back"},
 	"magento.attributes.options.create":      {mutates: "the EAV attribute option set for one attribute code", idempotency: "not idempotent; a retry can create a duplicate option value"},
@@ -499,7 +529,7 @@ func writeToolMetadata(name, title, description, capability string) registry.Too
 		Capability: capability, Permission: registry.PermissionWrite, Timeout: writeToolTimeout,
 		RequiresConfirmation: true,
 		Annotations: mcp.ToolAnnotations{
-			ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveHint(),
+			ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(name), DestructiveHint: destructiveHint(),
 		},
 	}
 }
@@ -509,7 +539,7 @@ func mcpWriteTool(name, title, description, schema string) *mcp.Tool {
 		Name: name, Title: title, Description: discloseWrite(name, description),
 		InputSchema: json.RawMessage(schema),
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveHint(),
+			ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(name), DestructiveHint: destructiveHint(),
 		},
 	}
 }
@@ -772,7 +802,7 @@ func destructiveToolMetadata(name, title, description, capability string) regist
 		Capability: capability, Permission: registry.PermissionDestructive, Timeout: writeToolTimeout,
 		RequiresConfirmation: true,
 		Annotations: mcp.ToolAnnotations{
-			ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue(),
+			ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(name), DestructiveHint: destructiveTrue(),
 		},
 	}
 }
@@ -788,7 +818,7 @@ func newProductDeleteTool(lookup serviceLookup) registry.Tool {
 		toolerr.Add(srv, &mcp.Tool{
 			Name: productDeleteToolName, Title: productDeleteToolTitle, Description: discloseWrite(productDeleteToolName, productDeleteDescription),
 			InputSchema: json.RawMessage(productDeleteSchema),
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(productDeleteToolName), DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in productDeleteInput) (*mcp.CallToolResult, productDeleteOutput, error) {
 			svc, err := lookup(in.Instance)
 			if err != nil {
@@ -1591,7 +1621,7 @@ func newMediaDeleteTool(lookup serviceLookup) registry.Tool {
 		toolerr.Add(srv, &mcp.Tool{
 			Name: mediaDeleteToolName, Title: mediaDeleteToolTitle, Description: discloseWrite(mediaDeleteToolName, mediaDeleteDescription),
 			InputSchema: json.RawMessage(mediaDeleteSchema),
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(mediaDeleteToolName), DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in mediaDeleteInput) (*mcp.CallToolResult, mediaDeleteOutput, error) {
 			svc, err := lookup(in.Instance)
 			if err != nil {
@@ -1830,7 +1860,7 @@ func newInventoryTransferTool(lookup serviceLookup) registry.Tool {
 		toolerr.Add(srv, &mcp.Tool{
 			Name: inventoryTransferToolName, Title: inventoryTransferToolTitle, Description: discloseWrite(inventoryTransferToolName, inventoryTransferDescription),
 			InputSchema: json.RawMessage(inventoryTransferSchema),
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(inventoryTransferToolName), DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in inventoryTransferInput) (*mcp.CallToolResult, inventoryTransferOutput, error) {
 			svc, err := lookup(in.Instance)
 			if err != nil {
@@ -2039,7 +2069,7 @@ func newOrderCancelTool(lookup serviceLookup) registry.Tool {
 		toolerr.Add(srv, &mcp.Tool{
 			Name: orderCancelToolName, Title: orderCancelToolTitle, Description: discloseWrite(orderCancelToolName, orderCancelDescription),
 			InputSchema: json.RawMessage(orderCancelSchema),
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(orderCancelToolName), DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in orderCancelInput) (*mcp.CallToolResult, orderCancelOutput, error) {
 			svc, err := lookup(in.Instance)
 			if err != nil {
@@ -2136,7 +2166,7 @@ func newAttributeOptionDeleteTool(lookup serviceLookup) registry.Tool {
 		toolerr.Add(srv, &mcp.Tool{
 			Name: attributeOptionDeleteToolName, Title: attributeOptionDeleteToolTitle, Description: discloseWrite(attributeOptionDeleteToolName, attributeOptionDeleteDescription),
 			InputSchema: json.RawMessage(attributeOptionDeleteSchema),
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(attributeOptionDeleteToolName), DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in attributeOptionDeleteInput) (*mcp.CallToolResult, attributeOptionDeleteOutput, error) {
 			svc, err := lookup(in.Instance)
 			if err != nil {
@@ -2230,7 +2260,7 @@ func newCategoryDeleteTool(lookup serviceLookup) registry.Tool {
 		toolerr.Add(srv, &mcp.Tool{
 			Name: categoryDeleteToolName, Title: categoryDeleteToolTitle, Description: discloseWrite(categoryDeleteToolName, categoryDeleteDescription),
 			InputSchema: json.RawMessage(categoryDeleteSchema),
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(categoryDeleteToolName), DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in categoryDeleteInput) (*mcp.CallToolResult, categoryDeleteOutput, error) {
 			svc, err := lookup(in.Instance)
 			if err != nil {
@@ -2338,7 +2368,7 @@ func newCustomerAddressDeleteTool(lookup serviceLookup) registry.Tool {
 		toolerr.Add(srv, &mcp.Tool{
 			Name: customerAddressDeleteToolName, Title: customerAddressDeleteTitle, Description: discloseWrite(customerAddressDeleteToolName, customerAddressDeleteDescription),
 			InputSchema: json.RawMessage(customerAddressDeleteSchema),
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(customerAddressDeleteToolName), DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in customerAddressDeleteInput) (*mcp.CallToolResult, customerAddressDeleteOutput, error) {
 			svc, err := lookup(in.Instance)
 			if err != nil {
@@ -2737,7 +2767,7 @@ func newStockSourceUnlinkTool(lookup serviceLookup) registry.Tool {
 		toolerr.Add(srv, &mcp.Tool{
 			Name: stockSourceUnlinkToolName, Title: stockSourceUnlinkToolTitle, Description: discloseWrite(stockSourceUnlinkToolName, stockSourceUnlinkDescription),
 			InputSchema: json.RawMessage(stockSourceUnlinkSchema),
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(stockSourceUnlinkToolName), DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in stockSourceUnlinkInput) (*mcp.CallToolResult, stockSourceUnlinkOutput, error) {
 			svc, err := lookup(in.Instance)
 			if err != nil {
@@ -3032,7 +3062,7 @@ func newProductOptionDeleteTool(lookup serviceLookup) registry.Tool {
 		toolerr.Add(srv, &mcp.Tool{
 			Name: productOptionDeleteToolName, Title: productOptionDeleteToolTitle, Description: discloseWrite(productOptionDeleteToolName, productOptionDeleteDescription),
 			InputSchema: json.RawMessage(productOptionDeleteSchema),
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: destructiveTrue()},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: writeIdempotentHint(productOptionDeleteToolName), DestructiveHint: destructiveTrue()},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in productOptionDeleteInput) (*mcp.CallToolResult, productOptionDeleteOutput, error) {
 			svc, err := lookup(in.Instance)
 			if err != nil {

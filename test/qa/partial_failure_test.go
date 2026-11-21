@@ -102,7 +102,7 @@ func TestInventoryTransferPartialFailureIsHonest(t *testing.T) {
 	f := newFixture(t, fixtureOptions{
 		upstreams: map[string]string{inst: up.url()},
 		writes:    true,
-		policy:    mustPolicy(t),
+		policy:    mustPolicy(t, inst),
 	})
 	admin := f.session(t, "admin-1", "admin")
 	res := f.approvedWrite(t, admin, "magento.inventory.transfer", transferArgs(inst, "SKU-1", 3), "human-1")
@@ -156,7 +156,7 @@ func TestInventoryTransferRefusesFractionalQuantities(t *testing.T) {
 	f := newFixture(t, fixtureOptions{
 		upstreams: map[string]string{inst: up.url()},
 		writes:    true,
-		policy:    mustPolicy(t),
+		policy:    mustPolicy(t, inst),
 	})
 	admin := f.session(t, "admin-1", "admin")
 	res := f.approvedWrite(t, admin, "magento.inventory.transfer", transferArgs(inst, "SKU-1", 3), "human-1")

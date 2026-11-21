@@ -102,7 +102,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	policy, err := rbac.DefaultPolicy()
+	// The RBAC policy is only built when authentication is on: with auth off no
+	// grant is consulted, and building it would let the multi-store trust-domain
+	// rule block a deployment that never uses RBAC.
+	policy, err := defaultPolicy(cfg)
 	if err != nil {
 		return err
 	}
@@ -134,6 +137,7 @@ func run() error {
 			_ = auditor.Record(ctx, audit.Event{
 				Subject: subject, IdentityClass: class, Tool: tool, Instance: instance,
 				Decision: auditDecision(phase, state), Phase: phase, State: state, ErrorCode: code,
+				RequestID: server.RequestID(ctx),
 			})
 		},
 	})
@@ -255,6 +259,28 @@ func ga4TokenSource(credential string) (ga4.TokenSource, error) {
 		return nil, fmt.Errorf("ga4 credential is empty")
 	}
 	return ga4.StaticToken(trimmed), nil
+}
+
+// defaultPolicy builds the RBAC policy the gateway authorizes with.
+//
+// It is nil when authentication is off. That is not a weakening: authorizeFunc
+// returns no authorizer in that mode, so no grant is ever consulted, and a nil
+// *rbac.Policy denies rather than allows if one were ever passed to Authorize
+// (fail closed). Skipping construction keeps the multi-store trust-domain rule
+// below from blocking a deployment that has deliberately turned authentication
+// off — the rule protects an authorization decision that does not happen there.
+//
+// With authentication on, the policy binds one grant set per configured
+// instance, so a role authorized for one store cannot read another (SEM-02).
+// A module with more than one instance is refused instead of silently granting
+// every store: the shipped ladder cannot express per-store trust, and the
+// operator must choose per-instance grants or the explicit
+// DefaultPolicyAllInstances opt-in.
+func defaultPolicy(cfg config.Config) (*rbac.Policy, error) {
+	if !cfg.Auth.Enabled {
+		return nil, nil
+	}
+	return rbac.DefaultPolicy(configuredInstances(cfg))
 }
 
 // authorizeFunc returns nil when authentication is disabled (loopback-only

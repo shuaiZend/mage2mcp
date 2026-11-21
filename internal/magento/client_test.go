@@ -568,3 +568,115 @@ func TestResponseTooLargeIsExplicit(t *testing.T) {
 		}
 	})
 }
+
+// A 400 that carries Magento's errors[] must reach the caller with the reason and
+// the field name, not just "verify store_code and field values". Reverting the
+// extraction in statusError makes every assertion here fail.
+func TestStatusErrorPreservesUpstreamMessageAndField(t *testing.T) {
+	body := []byte(`{"message":"Validation Failed","errors":[` +
+		`{"message":"\"%field\" can not be empty.","parameters":{"field":"postcode"}}]}`)
+	err := statusError(http.MethodPost, "/inventory/sources", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("statusError returned %T, want a taxonomy error", err)
+	}
+	if got := errs.CodeOf(err); got != errs.CodeValidationFailed {
+		t.Fatalf("code = %s, want validation_failed", got)
+	}
+	// The agent-facing message stays generic: upstream text must not land here.
+	if strings.Contains(e.Message, "postcode") || strings.Contains(e.Message, "Validation Failed") {
+		t.Fatalf("message = %q, want the generic sentence (upstream text belongs in details)", e.Message)
+	}
+	if got := e.Details["upstream_field"]; got != "postcode" {
+		t.Fatalf("upstream_field = %q, want postcode", got)
+	}
+	message := e.Details["upstream_message"]
+	if !strings.Contains(message, "postcode") || !strings.Contains(message, "can not be empty") {
+		t.Fatalf("upstream_message = %q, want the placeholder resolved to the real field", message)
+	}
+	if e.Upstream == "" {
+		t.Fatal("the unscrubbed text must still reach the server log via Upstream")
+	}
+}
+
+// A business-rule rejection has no parameters but is still the whole point of the
+// diagnostic: the operator must see the rule, not a field hint.
+func TestStatusErrorPreservesBusinessRuleMessage(t *testing.T) {
+	body := []byte(`{"message":"Validation Failed","errors":[` +
+		`{"message":"Can not save link related to Default Source or Default Stock","parameters":[]}]}`)
+	err := statusError(http.MethodPost, "/inventory/stock-source-links", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	if got := e.Details["upstream_message"]; !strings.Contains(got, "Default Source or Default Stock") {
+		t.Fatalf("upstream_message = %q, want Magento's business rule", got)
+	}
+	if _, ok := e.Details["upstream_field"]; ok {
+		t.Fatal("a message without parameters must not invent a field")
+	}
+}
+
+// The reason is carried in details, so it must not carry PII or a credential-shaped
+// value even when Magento echoes one.
+func TestStatusErrorScrubsSensitiveUpstreamText(t *testing.T) {
+	body := []byte(`{"message":"Validation Failed","errors":[` +
+		`{"message":"Customer demo.admin+tag@example.com failed; token 0123456789abcdef0123456789abcdef","parameters":[]}]}`)
+	err := statusError(http.MethodPost, "/customers", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	message := e.Details["upstream_message"]
+	if strings.Contains(message, "demo.admin+tag@example.com") {
+		t.Fatalf("upstream_message leaked an email address: %q", message)
+	}
+	if strings.Contains(message, "0123456789abcdef0123456789abcdef") {
+		t.Fatalf("upstream_message leaked a credential-shaped value: %q", message)
+	}
+	if !strings.Contains(message, "<email>") || !strings.Contains(message, "<redacted>") {
+		t.Fatalf("upstream_message = %q, want the redaction markers", message)
+	}
+}
+
+// A bare top-level message still reaches details, and an unparseable body must not
+// panic or invent one.
+func TestStatusErrorHandlesPlainAndOpaqueBodies(t *testing.T) {
+	plain := statusError(http.MethodPost, "/orders", http.StatusBadRequest,
+		[]byte(`{"message":"We can't create a shipment without products."}`), "pl")
+	var e *errs.Error
+	if !errors.As(plain, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	if got := e.Details["upstream_message"]; !strings.Contains(got, "without products") {
+		t.Fatalf("upstream_message = %q, want the plain message", got)
+	}
+
+	opaque := statusError(http.MethodPost, "/orders", http.StatusBadRequest, []byte(`<html>bad gateway</html>`), "pl")
+	var o *errs.Error
+	if !errors.As(opaque, &o) {
+		t.Fatal("want a taxonomy error")
+	}
+	if _, ok := o.Details["upstream_message"]; ok {
+		t.Fatal("an unparseable body must not produce an upstream_message")
+	}
+	if got := errs.CodeOf(opaque); got != errs.CodeValidationFailed {
+		t.Fatalf("code = %s, want validation_failed", got)
+	}
+}
+
+// SEM-17: route redaction must keep action words and redact only identifiers.
+func TestRedactedRouteKeepsActionWords(t *testing.T) {
+	cases := map[string]string{
+		"/stockItems/WJ01":                     "/stockItems/{id}",
+		"/configurable-products/WJ01/children": "/configurable-products/{id}/children",
+		"/invoices/123/capture":                "/invoices/{id}/capture",
+		"/order/1/refund":                      "/order/{id}/refund",
+		"/shipments/1":                         "/shipments/{id}",
+	}
+	for in, want := range cases {
+		if got := redactedRoute(in); got != want {
+			t.Errorf("redactedRoute(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

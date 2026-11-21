@@ -106,8 +106,8 @@ origin pull.
 | Endpoint | Meaning |
 |---|---|
 | `GET /healthz` | process alive |
-| `GET /readyz` | the process can serve MCP; returns the registry tool count, including `platform.info` (a read-only deployment reports `tools:1`) |
-| `GET /metrics` | Prometheus metrics (same listener; not authenticated by the gateway) |
+| `GET /readyz` | ready when the process can serve MCP and, when configured, the durable store passes `ReadyCheck`; 503 otherwise. Returns the registry tool count, including `platform.info` (a read-only deployment reports `tools:1`) |
+| `GET /metrics` | Prometheus metrics (same listener; behind the auth middleware on a non-loopback listener, open on a loopback development listener) |
 
 `SIGTERM` drains in-flight requests for `server.shutdown_grace` (default 10s)
 before closing the database pool.
@@ -115,7 +115,9 @@ before closing the database pool.
 ## Capacity notes
 
 - One process handles all tool calls; scale vertically first. The SDK session
-  is stateful, so multi-replica deployments require sticky routing. The gateway
-  does not implement a rate limiter; limit concurrency at the agent or edge.
+  is stateful, so multi-replica deployments require sticky routing. Magento has
+  per-instance outbound limits (`limits:`, default 50 rps / burst 100 / 8
+  concurrent); there is no inbound limiter and Cloudflare/GA4 are not limited,
+  so limit those at the edge.
 - The worker is stateless apart from PostgreSQL and can run as a
   separate replica.

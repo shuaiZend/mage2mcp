@@ -141,6 +141,36 @@ func (s *Service) Consume(ctx context.Context, id, requester, tool, instance str
 	return s.store.Consume(ctx, id, requester, tool, instance, hash, s.now())
 }
 
+// Validate checks that id is an approval issued for this exact operation and
+// that it has not expired, without consuming it. It is the read-only guard for
+// a replay: the operation already succeeded, so consuming a new approval would
+// burn a token and would make concurrent losers reach a write step.
+func (s *Service) Validate(ctx context.Context, id, requester, tool, instance string, args json.RawMessage) error {
+	hash, err := CanonicalHash(args)
+	if err != nil {
+		return err
+	}
+	request, err := s.store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	switch {
+	case request.State == StateExpired || now.After(request.ExpiresAt):
+		return errs.New(errs.CodeConfirmationExpired, "confirmation has expired")
+	case request.State != StateApproved && request.State != StateConsumed:
+		return errs.New(errs.CodeConfirmationRequired, "confirmation has not been approved")
+	case request.Requester != "" && request.Requester != requester:
+		// The durable store keeps only requester_hash; when Get cannot expose
+		// the raw requester, the binding check falls back to tool/instance/args
+		// and the single-use Consume path still enforces the requester.
+		return errs.New(errs.CodePermissionDenied, "confirmation belongs to a different requester")
+	case request.Tool != tool || request.Instance != instance || request.ParamsHash != hash:
+		return errs.New(errs.CodeConfirmationMismatch, "confirmation does not match this operation")
+	}
+	return nil
+}
+
 // Pending lists requests awaiting approval.
 func (s *Service) Pending(ctx context.Context) ([]*Request, error) {
 	return s.store.ListPending(ctx)

@@ -48,7 +48,7 @@ database-backed controls are tested against PostgreSQL. No row is
 | # | Requirement | As-built position | Status | Evidence |
 |---|---|---|---|---|
 | S1 | Streamable HTTP with `Mcp-Session-Id` | The official SDK's `NewStreamableHTTPHandler`; stateful by default, 30-minute session timeout | TESTED (CONTRACT) | `internal/mcp/server/server_test.go` (`TestMCPClientListsAndCallsPlatformInfo`) |
-| S2 | Session IDs are cryptographically random and bound to the authenticated identity | The SDK generates the ID; the gateway **does not** bind it to the identity (SEC-15, accepted) | PLANNED | — |
+| S2 | Session IDs are cryptographically random and bound to the authenticated identity | The SDK generates the ID; the gateway binds it to the verified subject and answers 404 when a different subject presents it (SEC-15) | TESTED (CONTRACT) | `internal/mcp/server/session_test.go` (`TestSessionIsBoundToItsCreator`, `TestSessionBindingIsInertWithoutIdentity`) |
 | S3 | Sessions terminate on `DELETE` and expire on idle | SDK session timeout; no Redis, no server-side session store | IMPLEMENTED (SDK) | `server.go` options; no direct test |
 | S4 | Resumability via `Last-Event-ID` with an event store | **Not implemented**; no `EventStore` | PLANNED | — |
 | S5 | Origin validation and DNS-rebinding protection | The SDK's defaults are left in place; origin lockdown is a deployment control, not gateway-enforced | DEPLOYMENT CONTROL | — |
@@ -65,7 +65,7 @@ durable state are PostgreSQL.
 | A2 | **Audience binding** | `aud` must equal the configured Access application audience | TESTED (CONTRACT) | `internal/security/jwt/jwt_test.go` (`TestVerifyClaimRejections`) |
 | A3 | **Scope minimization** | Per-tool scope from the registry; default-deny RBAC; instance-scoped grants; read-only default | TESTED (CONTRACT) | `internal/security/rbac/rbac_test.go`; `server_test.go` (`TestAuthorizationReceivesRequiredScope`) |
 | A4 | **Confused deputy** | Every call is authorized against the caller's grants and the resolved instance; no shared upstream identity | TESTED (CONTRACT) | `server_test.go` (`TestCrossInstanceAuthorizationIsEnforced`) |
-| A5 | **Session hijacking** | Not bound to identity (SEC-15, accepted); transport auth still gates each request | PLANNED | — |
+| A5 | **Session hijacking** | Bound to the verified subject (SEC-15); a mismatched session id gets 404, and transport auth still gates each request | TESTED (CONTRACT) | `internal/mcp/server/session_test.go` (`TestSessionIsBoundToItsCreator`) |
 | A6 | **Local server compromise** | The gateway binds a configured interface; localhost protection and origin lockdown are deployment controls | DEPLOYMENT CONTROL | — |
 | A7 | RFC 9728 protected-resource metadata | **Not implemented**; Cloudflare Access deployments rely on the edge | PLANNED | — |
 | A8 | OAuth 2.1 resource-server mode | Out of scope for v0.x; Cloudflare Access or a direct OIDC issuer is the IdP | PLANNED | — |
@@ -87,7 +87,6 @@ durable state are PostgreSQL.
 
 | Gap | Status | Consequence |
 |---|---|---|
-| Session identity binding | PLANNED (SEC-15) | A stolen session id is usable for its lifetime; transport auth still gates each request |
 | Progress notifications and cancellation | PLANNED (ADR-0017) | Long work is a polled job, not a cancellable stream |
 | `resource_link` and an inline result cap | PLANNED (ADR-0017) | Large results are returned inline within per-tool caps |
 | `notifications/tools/list_changed` | PLANNED | The registry does not change at runtime |

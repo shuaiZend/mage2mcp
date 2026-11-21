@@ -106,7 +106,7 @@ type importStartInput struct {
 
 type importStartOutput struct {
 	JobID  string `json:"job_id" jsonschema:"Import job id, used by import.status and import.batch."`
-	Rows   int    `json:"rows" jsonschema:"Per-row results, in input order."`
+	Rows   int    `json:"rows" jsonschema:"Number of rows processed."`
 	Queued bool   `json:"queued" jsonschema:"True when the work was queued rather than executed inline."`
 }
 
@@ -183,7 +183,14 @@ func newImportStatusTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 				if err != nil {
 					return nil, importStatusOutput{}, err
 				}
-				return nil, importStatusOutput{Job: *record}, nil
+				reported := *record
+				// The queue records execution; a partial import did execute, but
+				// reporting "succeeded" next to a "partial" batch tells the caller
+				// the import was fully applied when it was not.
+				if reported.State == jobs.StateSucceeded && jobs.ResultIsPartial(reported.Result) {
+					reported.State = jobs.StatePartial
+				}
+				return nil, importStatusOutput{Job: reported}, nil
 			})
 		return nil
 	}
@@ -197,6 +204,17 @@ func newImportCancelTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 			func(ctx context.Context, _ *mcp.CallToolRequest, in importCancelInput) (*mcp.CallToolResult, importCancelOutput, error) {
 				if _, err := resolver.Resolve(in.Instance); err != nil {
 					return nil, importCancelOutput{}, err
+				}
+				// A job that is already canceled has nothing to cancel: returning
+				// success makes the caller believe it just stopped work that had
+				// already stopped. The queue rejects the other terminal states
+				// itself; only "canceled" used to fall through as a success.
+				if record, err := queue.GetJob(ctx, in.JobID, in.Instance, callerSubject(ctx)); err == nil &&
+					record != nil && record.State == jobs.StateCanceled {
+					return nil, importCancelOutput{}, errs.New(errs.CodeIllegalTransition,
+						"job is already canceled").
+						WithDetail("job_id", in.JobID).WithDetail("state", record.State).
+						WithCause(jobs.ErrNotCancelable)
 				}
 				if err := queue.Cancel(ctx, in.JobID, in.Instance, callerSubject(ctx)); err != nil {
 					return nil, importCancelOutput{}, err
@@ -273,7 +291,7 @@ type importResumeInput struct {
 
 type importResumeOutput struct {
 	JobID string `json:"job_id" jsonschema:"Import job id, used by import.status and import.batch."`
-	Rows  int    `json:"rows" jsonschema:"Per-row results, in input order."`
+	Rows  int    `json:"rows" jsonschema:"Number of rows processed."`
 }
 
 func newImportResumeTool(resolver *Resolver, queue ImportQueue, batches ImportBatchReader) registry.Tool {
@@ -359,7 +377,7 @@ const (
 
 	importBatchGetSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
-		"batch_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import batch id, which is the job id that produced it."}
+		"batch_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import batch id, as returned in import.batches[].id. It is not the job id; use the job id with import.status."}
 	}, "required": ["instance", "batch_id"], "additionalProperties": false}`
 )
 

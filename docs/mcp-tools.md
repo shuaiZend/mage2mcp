@@ -303,7 +303,8 @@ These are designed but **not registered**:
 
 | Class | Timeout | Behaviour |
 |---|---|---|
-| Read | 30 s | Returns `upstream_timeout` |
+| Read (Magento) | 30 s | Returns `upstream_timeout` |
+| Read (Cloudflare/GA4 reports) | 60 s | Returns `upstream_timeout`; metadata is 30 s |
 | Write | 60 s | The ledger records the outcome; an ambiguous failure is `unknown` |
 | Bulk write / analysis | 120 s | Per-item partial-success report |
 | Import start / status / cancel | 30 s | Queues or reads a PostgreSQL job |

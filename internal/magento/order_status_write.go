@@ -4,6 +4,7 @@ package magento
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -179,7 +180,7 @@ func (s *Service) CancelOrder(ctx context.Context, in CancelOrderInput) (*Cancel
 			WithDetail("order_state", order.State).
 			WithDetail("operation_id", run.ID())
 	}
-	_, postErr := s.client.do(ctx, http.MethodPost, "/orders/"+strconv.Itoa(in.OrderID)+"/cancel", nil, nil)
+	raw, postErr := s.client.do(ctx, http.MethodPost, "/orders/"+strconv.Itoa(in.OrderID)+"/cancel", nil, nil)
 	switch classifyOperationError(postErr) {
 	case operationNotApplied:
 		_ = run.Fail(ctx, string(errs.CodeOf(postErr)))
@@ -225,6 +226,22 @@ func (s *Service) CancelOrder(ctx context.Context, in CancelOrderInput) (*Cancel
 		}
 		_ = run.Unknown(ctx, upstreamCode)
 		return nil, operationUnknownError(run.ID(), "order cancellation", upstreamCode)
+	}
+	// Magento answers 200 with a JSON boolean. `false` means the order was NOT
+	// canceled (for example because it is already invoiced), so trusting the
+	// status code alone would report a cancellation that never happened.
+	var canceled bool
+	if err := json.Unmarshal(raw, &canceled); err != nil {
+		_ = run.Unknown(ctx, string(errs.CodeUpstreamUnavailable))
+		return nil, operationUnknownError(run.ID(), "order cancellation", string(errs.CodeUpstreamUnavailable))
+	}
+	if !canceled {
+		_ = run.Fail(ctx, string(errs.CodeConflict))
+		return nil, errs.New(errs.CodeConflict,
+			"Magento declined the cancellation and the order state did not change (an invoiced or otherwise non-cancelable order); verify the order before acting").
+			WithDetail("order_id", strconv.Itoa(in.OrderID)).
+			WithDetail("order_state", order.State).
+			WithDetail("operation_id", run.ID())
 	}
 	result := &CancelOrderResult{OrderID: in.OrderID, Canceled: true, OperationID: run.ID()}
 	if err := run.Succeed(ctx, "order:"+strconv.Itoa(in.OrderID), result); err != nil {

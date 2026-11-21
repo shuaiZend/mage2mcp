@@ -4,6 +4,10 @@ package magento
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -27,10 +31,59 @@ type BulkUpdateRow struct {
 // BulkUpdateResult reports a partial-success bulk update. Updates are applied
 // per SKU and never rolled back.
 type BulkUpdateResult struct {
-	Total   int             `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Total   int             `json:"total" jsonschema:"Number of SKUs in this request."`
 	Updated int             `json:"updated" jsonschema:"Rows that updated a product."`
 	Failed  int             `json:"failed" jsonschema:"Rows that failed."`
 	Rows    []BulkUpdateRow `json:"rows" jsonschema:"Per-row results, in input order."`
+}
+
+// ensureBulkSKUsExist rejects a bulk request that names a SKU with no product.
+//
+// The tool schema promises "every SKU must exist or the whole call is rejected";
+// without this check a typo produced a per-row failure (or, worse, a silent
+// no-op) while the caller read the result as partial success. The check is
+// best-effort: if the product search is unavailable the writes proceed and the
+// per-row results remain the record.
+func (s *Service) ensureBulkSKUsExist(ctx context.Context, skus []string) error {
+	query := make(url.Values)
+	query.Set("searchCriteria[pageSize]", strconv.Itoa(len(skus)))
+	query.Set("searchCriteria[filter_groups][0][filters][0][field]", "sku")
+	query.Set("searchCriteria[filter_groups][0][filters][0][value]", strings.Join(skus, ","))
+	query.Set("searchCriteria[filter_groups][0][filters][0][condition_type]", "in")
+	raw, err := s.client.do(ctx, http.MethodGet, "/products", query, nil)
+	if err != nil {
+		return nil
+	}
+	var payload struct {
+		Items []struct {
+			SKU string `json:"sku"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+	if payload.Items == nil {
+		// The response is not a product-search result (for example an instance
+		// whose search route answers with a product object): treat the check as
+		// unavailable rather than rejecting every SKU.
+		return nil
+	}
+	found := make(map[string]struct{}, len(payload.Items))
+	for _, item := range payload.Items {
+		found[strings.ToUpper(item.SKU)] = struct{}{}
+	}
+	missing := make([]string, 0, len(skus))
+	for _, sku := range skus {
+		if _, ok := found[strings.ToUpper(sku)]; !ok {
+			missing = append(missing, sku)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return errs.New(errs.CodeInvalidArgument,
+		"unknown SKU(s): "+strings.Join(missing, ", ")+"; no product was updated").
+		WithDetail("unknown_skus", strings.Join(missing, ","))
 }
 
 // BulkUpdateProducts applies the same partial update to up to 50 SKUs.
@@ -54,18 +107,23 @@ func (s *Service) BulkUpdateProducts(ctx context.Context, skus []string, update 
 		return nil, invalidf("at least one of status, visibility, or attributes is required")
 	}
 	seen := make(map[string]struct{}, len(skus))
-	unique := make([]string, 0, len(skus))
 	for _, sku := range skus {
 		if err := validateSKU(sku); err != nil {
 			return nil, err
 		}
 		key := strings.ToUpper(sku)
 		if _, duplicate := seen[key]; duplicate {
-			continue
+			// A duplicate used to be folded silently, which made Total disagree
+			// with the number of writes. Reject it instead: the schema promises
+			// that every SKU in the request is acted on.
+			return nil, invalidf("sku %q is duplicated in the request", sku)
 		}
 		seen[key] = struct{}{}
-		unique = append(unique, sku)
 	}
+	if err := s.ensureBulkSKUsExist(ctx, skus); err != nil {
+		return nil, err
+	}
+	unique := skus
 	// Bounded fan-out: the writes are independent and partial success is already
 	// modelled per row, so running them one at a time only multiplied the round-trips.
 	// The client limiter remains the real cap on concurrent requests.

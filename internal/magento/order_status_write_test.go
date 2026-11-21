@@ -312,3 +312,43 @@ func TestCancelOrderAmbiguousNeedsTwoReads(t *testing.T) {
 		}
 	})
 }
+
+// TestCancelOrderMagentoDeclines proves a 200 with body `false` is not reported as
+// a cancellation. Magento answers exactly that way for an order it will not
+// cancel (for example an already-invoiced one); trusting the status code alone
+// reported canceled:true for an order that never changed.
+func TestCancelOrderMagentoDeclines(t *testing.T) {
+	var posts int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/orders/42":
+			_, _ = io.WriteString(w, `{"entity_id":42,"increment_id":"000000042","state":"processing","grand_total":78,"order_currency_code":"USD"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/orders/42/cancel":
+			posts++
+			_, _ = io.WriteString(w, `false`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	ledger := newFakeLedger()
+	useLedger(t, ledger)
+	svc := testService(t, ts.URL)
+
+	result, err := svc.CancelOrder(context.Background(), CancelOrderInput{OrderID: 42, IdempotencyKey: "cancel-declined"})
+	if result != nil {
+		t.Fatalf("result = %+v, want nil for a declined cancellation", result)
+	}
+	if errs.CodeOf(err) != errs.CodeConflict {
+		t.Fatalf("err = %v, want conflict", err)
+	}
+	if posts != 1 {
+		t.Fatalf("POSTs = %d, want 1", posts)
+	}
+	// The ledger must record a failure, never a success, for a cancellation that
+	// did not happen.
+	if c := ledger.counts(); c.succeeds != 0 || c.fails != 1 {
+		t.Fatalf("ledger succeeds=%d fails=%d, want 0/1", c.succeeds, c.fails)
+	}
+}

@@ -102,7 +102,7 @@ type ImportWarning struct {
 // ImportPreview is the validation result. Nothing is written upstream.
 type ImportPreview struct {
 	Format            string           `json:"format" jsonschema:"Payload encoding: csv or json."`
-	Total             int              `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Total             int              `json:"total" jsonschema:"Number of rows in this payload."`
 	Valid             int              `json:"valid" jsonschema:"Rows that passed validation."`
 	Invalid           int              `json:"invalid" jsonschema:"Rows that failed validation."`
 	Errors            []ImportRowError `json:"errors,omitempty" jsonschema:"Validation errors, one per invalid row."`
@@ -382,7 +382,7 @@ func (s *Service) existingSKUs(ctx context.Context, rows []ImportRow) (map[strin
 
 // ImportResult reports a partial-success execution. It never claims atomicity.
 type ImportResult struct {
-	Total   int               `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Total   int               `json:"total" jsonschema:"Number of rows in this batch."`
 	Created int               `json:"created" jsonschema:"Rows that created a product."`
 	Updated int               `json:"updated" jsonschema:"Rows that updated a product."`
 	Skipped int               `json:"skipped" jsonschema:"Rows skipped because the product existed."`
@@ -609,7 +609,7 @@ type ImportFailure struct {
 
 // ImportReport is the bounded summary stored on an asynchronous import job.
 type ImportReport struct {
-	Total             int             `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Total             int             `json:"total" jsonschema:"Number of rows in this import."`
 	Created           int             `json:"created" jsonschema:"Rows that created a product."`
 	Updated           int             `json:"updated" jsonschema:"Rows that updated a product."`
 	Skipped           int             `json:"skipped" jsonschema:"Rows skipped because the product existed."`

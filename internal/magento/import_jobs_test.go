@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -793,5 +794,100 @@ func TestImportJobsCrossTenantIsolation(t *testing.T) {
 	}
 	if _, err := queue.GetJob(ctx, resumed.JobID, "store-a", "agent-b"); err == nil {
 		t.Fatal("resumed job is visible to another subject")
+	}
+}
+
+// SEM-IMP-01: a job that completed with failed rows must not report "succeeded"
+// while its batch says "partial".
+func TestImportStatusReportsPartialOutcome(t *testing.T) {
+	queue := &fakeImportQueue{record: &jobs.JobRecord{
+		ID: "11111111-1111-1111-1111-111111111111", Kind: jobs.TypeMagentoImport,
+		State: jobs.StateSucceeded, Attempts: 1, MaxAttempts: 1,
+		Result: `{"total":2,"created":1,"failed":1,"partial":true}`,
+	}}
+	session := newImportTestSession(t, queue)
+	result, err := callToolApproved(t, context.Background(), session, &mcp.CallToolParams{Name: importStatusToolName,
+		Arguments: map[string]any{"instance": "store-us", "job_id": "11111111-1111-1111-1111-111111111111"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("status error: %+v", result.Content)
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	if !strings.Contains(string(raw), `"state":"partial"`) {
+		t.Fatalf("status payload = %s, want state=partial", raw)
+	}
+	if strings.Contains(string(raw), `"state":"succeeded"`) {
+		t.Fatalf("status payload still claims succeeded: %s", raw)
+	}
+}
+
+// A fully successful import still reports succeeded.
+func TestImportStatusKeepsSucceededWhenComplete(t *testing.T) {
+	queue := &fakeImportQueue{record: &jobs.JobRecord{
+		ID: "11111111-1111-1111-1111-111111111111", Kind: jobs.TypeMagentoImport,
+		State: jobs.StateSucceeded, Attempts: 1, MaxAttempts: 1, Result: `{"total":2,"failed":0}`,
+	}}
+	session := newImportTestSession(t, queue)
+	result, err := callToolApproved(t, context.Background(), session, &mcp.CallToolParams{Name: importStatusToolName,
+		Arguments: map[string]any{"instance": "store-us", "job_id": "11111111-1111-1111-1111-111111111111"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	if !strings.Contains(string(raw), `"state":"succeeded"`) {
+		t.Fatalf("status payload = %s, want state=succeeded", raw)
+	}
+}
+
+// SEM-IMP-04: canceling an already-canceled job must not report success.
+func TestImportCancelRejectsCanceledJob(t *testing.T) {
+	queue := &fakeImportQueue{record: &jobs.JobRecord{
+		ID: "11111111-1111-1111-1111-111111111111", Kind: jobs.TypeMagentoImport,
+		State: jobs.StateCanceled, Attempts: 1, MaxAttempts: 1,
+	}}
+	session := newImportTestSession(t, queue)
+	result, err := callToolApproved(t, context.Background(), session, &mcp.CallToolParams{Name: importCancelToolName,
+		Arguments: map[string]any{"instance": "store-us", "job_id": "11111111-1111-1111-1111-111111111111"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatal("canceling an already-canceled job reported success")
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	if !strings.Contains(string(raw), "illegal_transition") {
+		t.Fatalf("cancel payload = %s, want illegal_transition", raw)
+	}
+	if queue.canceled != "" {
+		t.Fatalf("the queue was asked to cancel %q after the job had already stopped", queue.canceled)
+	}
+}
+
+// SEM-IMP-02 / SEM-IMP-03: the schemas must describe what the tools do.
+func TestImportSchemasDescribeIDsAndCounts(t *testing.T) {
+	if strings.Contains(importBatchGetSchema, "which is the job id") {
+		t.Fatal("import.batch still claims batch_id is the job id")
+	}
+	if !strings.Contains(importBatchGetSchema, "import.batches") {
+		t.Fatalf("import.batch does not point at import.batches[].id: %s", importBatchGetSchema)
+	}
+	// rows is an output field, so its description lives in the struct tag.
+	for name, output := range map[string]any{
+		"import.start":  importStartOutput{},
+		"import.resume": importResumeOutput{},
+	} {
+		field, ok := reflect.TypeOf(output).FieldByName("Rows")
+		if !ok {
+			t.Fatalf("%s has no Rows field", name)
+		}
+		description := field.Tag.Get("jsonschema")
+		if strings.Contains(description, "Per-row results") {
+			t.Fatalf("%s still describes rows as per-row results: %q", name, description)
+		}
+		if !strings.Contains(description, "Number of rows processed") {
+			t.Fatalf("%s does not describe rows as a count: %q", name, description)
+		}
 	}
 }

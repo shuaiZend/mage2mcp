@@ -53,7 +53,7 @@ instance, and there is none.
 | Input schema validation and typed error envelope | TESTED (CONTRACT) | `internal/mcp/toolerr/toolerr_test.go`, `internal/mcp/registry/registry_test.go` |
 | Log redaction | TESTED (CONTRACT) | `internal/observability/logger_test.go` |
 | Rate limiting / quota enforcement | IMPLEMENTED (Magento) | per-instance token bucket and concurrency cap; Cloudflare/GA4 not yet limited (SEC-11, PERF-05) |
-| Session bound to caller identity | PLANNED | none (SEC-15, accepted) |
+| Session bound to caller identity | IMPLEMENTED | `internal/mcp/server/session.go`; `session_test.go` (SEC-15) |
 | Audit hash chain / signed checkpoints / retention partitions | PLANNED | none (SEC-06) |
 | Egress IP allowlist / metadata-address guard | PLANNED | none (base URLs are validated, but no IP guard) |
 | Duplicate-key JSON pre-parse scanner | PLANNED | none |
@@ -188,7 +188,7 @@ flowchart LR
 |---|---|---|
 | A1 | One deployment serves several instances; tenancy is the instance | Cross-instance checks are the isolation boundary |
 | A2 | Origin lockdown (Tunnel or authenticated origin pull) is configured by the operator | **The gateway does not enforce it**; without it any reachable client can send a bearer token |
-| A3 | The MCP session is not bound to the caller identity (SEC-15) | A stolen session id is usable for its lifetime; transport auth still gates each request |
+| A3 | The MCP session is bound to the caller identity (SEC-15) | A different subject presenting the id gets 404; a stolen bearer token remains usable for its IdP lifetime, so transport auth still gates each request |
 | A4 | Magento access is REST only; there is no Magento GraphQL client | Storefront GraphQL verification is not available (ADR-0022) |
 | A5 | **Orders and customers are mutable.** Fifteen order/customer-mutating tools ship (eighteen with address tools) | The operation ledger and confirmation binding are the replay controls; see §8.12 |
 | A6 | Magento credentials are per-instance (bearer, OAuth 1.0a, or admin auto-token) | A shared credential would collapse the instance boundary |
@@ -199,7 +199,38 @@ flowchart LR
 | A11 | Ingress accepts a Cloudflare assertion or a bearer token; the IdP is the role authority | A permissive IdP role claim widens access |
 | A12 | No live Magento instance was available; all Magento coverage is CONTRACT | Magento 2.4.9 compatibility is unverified |
 | A13 | Raw-log ingestion (R2/ClickHouse) is not implemented | No log-analysis capability exists to protect |
-| A14 | `/metrics` and `/healthz` are served on the same listener without authentication | The operator must restrict the listener at the edge |
+| A14 | `/healthz` is open; `/metrics` is behind auth on a non-loopback listener and open on loopback | The operator must restrict a loopback listener at the edge and keep the metrics endpoint private |
+
+### 6.2 Instance isolation and wildcard grants
+
+Tenancy is the instance. The shipped policy is built by
+`rbac.DefaultPolicy(configuredInstances(cfg))`; it binds each configured module
+instance to the role ladder (viewer/analyst read, operator write, admin admin).
+
+- **No implicit wildcard.** `rbac.New` rejects a grant with an empty instance:
+  `rbac: grant 0 has no instance; name one, or use "*" for every instance`.
+  `matchesInstance` matches only the exact id or the explicit
+  `rbac.WildcardInstance` (`"*"`). An empty string matches no named instance.
+- **One instance per module is the default.** A module with more than one
+  instance fails startup:
+  `rbac: magento has 2 instances (demo, demo-alt); the default policy binds one instance per module. Grant per-instance policies explicitly, or call DefaultPolicyAllInstances() to treat them as one trust domain`.
+  Silently binding every store would recreate the SEM-02 cross-instance grant.
+- **Single-trust-domain opt-in is explicit.** `rbac.DefaultPolicyAllInstances()`
+  binds every grant to `"*"`. It is a deliberate code change for deployments
+  where all configured instances belong to one tenant; it removes cross-instance
+  isolation and must not be used for multi-tenant hosting.
+- **`platform.info` is the one wildcard read.** It returns gateway metadata
+  (version, protocol versions, tool names, instance ids, writes flag), never store
+  data, so every role may read it.
+- **Current wiring note.** `cmd/server` builds the policy before the
+  `auth.enabled` branch, so a multi-instance module also fails startup with
+  authentication disabled. The intended behavior is auth-enabled only; this is a
+  reported wiring issue, not a documented dev mode.
+
+Evidence: `internal/security/rbac/rbac_test.go` (`TestDefaultPolicyBindsInstances`,
+`TestDefaultPolicyRefusesToGuessATrustDomain`, `TestDefaultPolicyAllInstancesIsOptIn`,
+`TestUnboundGrantIsRejected`, `TestDefaultPolicyWithoutInstancesServesPlatformInfo`);
+`cmd/server/main.go` (`rbac.DefaultPolicy(configuredInstances(cfg))`).
 
 ## 7. STRIDE analysis
 
@@ -210,7 +241,7 @@ control is absent says so.
 
 | ID | Threat | Scenario | Control | Evidence / status |
 |---|---|---|---|---|
-| T-01 | Spoofing | Stolen assertion or bearer token replayed | Bearer credential with IdP lifetime; no token binding. Session binding is PLANNED (SEC-15) | `internal/security/auth/auth_test.go`; residual R-2 |
+| T-01 | Spoofing | Stolen assertion or bearer token replayed | Bearer credential with IdP lifetime; no token binding. Session binding is implemented (SEC-15): a different subject reusing a session id gets 404 | `internal/security/auth/auth_test.go`, `internal/mcp/server/session_test.go`; residual R-2 |
 | T-02 | Tampering | Duplicate assertion/authorization headers or smuggling | Exactly one header per kind; duplicate rejected before verification; assertion precedence | `TestMiddlewareRejectsBadAssertionHeaders`, `TestMiddlewareAssertionTakesPrecedence` |
 | T-03 | Information disclosure | Error reflects a token or claim | Auth errors carry a stable reason only; token never logged | `TestMiddlewareNeverLeaksToken`, `TestMiddlewareNeverLeaksAssertion` |
 | T-04 | Denial of service | Flood the listener | Per-instance outbound budget bounds load on Magento; the gateway listener itself has no inbound limiter, so the operator must still limit at the edge | residual R-3 |
@@ -555,8 +586,12 @@ Default deny. The shipped policy is:
 | `operator` | write (and read, by the ladder) |
 | `admin` | admin (and every lower scope) |
 
-A grant may be scoped to an instance; a grant on instance A never authorizes
-instance B. An explicit deny beats every allow. An unregistered tool is denied.
+Every grant names an instance; `rbac.New` rejects an empty instance. A grant on
+instance A never authorizes instance B. The wildcard `"*"` is explicit opt-in
+(`DefaultPolicyAllInstances`), and the default policy binds one instance per
+module; a multi-instance module fails startup. `platform.info` is the one
+wildcard read (gateway metadata only). An explicit deny beats every allow. An
+unregistered tool is denied.
 
 ### 9.3 Confirmation
 
@@ -617,7 +652,7 @@ static for the process lifetime.
 | ID | Risk | Why it remains | Mitigation / review trigger |
 |---|---|---|---|
 | R-1 | Prompt injection can influence a model | MCP has no instruction/data boundary; no provenance envelope | Confirmation, least privilege, no instruction-bearing tool output; add a provenance envelope and an injection corpus |
-| R-2 | A stolen token or session id is usable for its lifetime | Bearer credentials; session binding is PLANNED (SEC-15) | Short IdP lifetimes, Access policy, audit correlation; revisit with a session store |
+| R-2 | A stolen bearer token is usable for its lifetime | Bearer credentials; session binding is implemented (SEC-15), so a stolen session id cannot be reused by another subject | Short IdP lifetimes, Access policy, audit correlation; revisit with a session store |
 | R-3 | No inbound rate limiting, and no GA4/Cloudflare outbound budget | Magento outbound limits landed (SEC-11, PERF-05); the inbound path and the other two modules did not | Limit inbound at the edge; upstream quotas bound the rest |
 | R-4 | Origin lockdown is not enforced | Deployment control | Tunnel or authenticated origin pull; a public bind is the operator's choice |
 | R-5 | Audit is not tamper-evident | No hash chain/checkpoint/WORM sink (SEC-06) | Restrict DB grants, export to an immutable sink; implement the chain before regulated use |
@@ -659,7 +694,7 @@ cited path and must report zero missing.
 | End-to-end write/confirmation/import | `test/e2e/run.sh` | fake-Magento smoke test | TESTED (E2E, fake Magento) |
 | Rate limiting (Magento outbound) | `internal/magento/limits_test.go` | `TestLimiterAllowsBurstThenPaces`, `TestLimiterCapsConcurrency`, `TestLimiterWaitsAreBoundedByContext`, `TestClientBudgetSurfacesRateLimited` | TESTED (CONTRACT) |
 | Rate limiting (inbound, GA4, Cloudflare) | none | none | PLANNED |
-| Session binding | none | none | PLANNED |
+| Session binding | `internal/mcp/server/session_test.go` | `TestSessionIsBoundToItsCreator`, `TestSessionBindingIsInertWithoutIdentity` | TESTED (CONTRACT) |
 | Audit hash chain | none | none | PLANNED |
 | Egress IP guard | none | none | PLANNED |
 | Duplicate-key scan | none | none | PLANNED |

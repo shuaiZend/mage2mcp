@@ -12,13 +12,12 @@ reachable, so every behavioural claim is `CONTRACT` (REST contract plus
 
 | Area | Scope | Tag |
 |---|---|---|
-| Product types | Simple, Configurable, Virtual, Downloadable, Bundle | `[V-docs]` |
-| Lifecycle depth | Simple and Configurable: full create / update / query / delete | `[V-docs]` |
-| Lifecycle depth | Virtual, Downloadable, Bundle: create / update / query of the type-specific payload, no dedicated lifecycle automation | `[V-docs]` |
+| Product types | Simple, Configurable, Virtual; bundle/downloadable are rejected by the write schema | `CONTRACT` |
+| Lifecycle depth | Simple and Configurable: full create / update / query / delete; Virtual: create / update / query | `CONTRACT` |
 | Catalog structure | Attribute sets, attributes, attribute options, attribute groups, categories | `[V-docs]` |
 | Configurable | Parent, children, options, links, variant attributes, website and store scoping, media, categories, prices, MSI inventory, bulk import, validation, relationship sync, partial-failure recovery | `[V-docs]` |
 | Inventory | MSI sources, stocks, source-items, bulk assign/unassign/transfer, salable quantity | `[V-docs]` |
-| Sales | Read-only orders, invoices, shipments, credit memos, aggregate analytics | `[V-docs]` |
+| Sales | Read and write (confirmation-gated): orders, invoices, shipments, credit memos, cancellation, comments, holds; aggregate analytics | `CONTRACT` |
 | Verification | REST admin read-back (`configurable.children`, `product.get`); storefront GraphQL is not used (ADR-0022) | `CONTRACT` |
 
 **Non-goals.** Adobe Commerce as a Cloud Service (SaaS / IMS OAuth) is out of scope for v0.x: IMS
@@ -280,8 +279,9 @@ Routes per [Inventory Management](https://developer.adobe.com/commerce/webapi/re
 | Store views / groups / websites / config | GET | `/V1/store/storeViews`, `/storeGroups`, `/websites`, `/storeConfigs` | R | Yes | Low | `[V-docs]` | Resolve codes and ids; never hardcode |
 | Orders | GET, POST | `/V1/orders`, `/V1/orders/{id}`, `/V1/orders/items`; creation via the cart flow | R/W | No (create) | Critical | `[V-docs]` | Heavy payload; writes are confirmation- and ledger-gated, see 10 |
 | Order state | POST | `/V1/orders/{id}/comments`, `/hold`, `/unhold`, `/cancel`, `/emails` | W | No | High | `[V-docs]` | Confirmation-gated |
-| Invoices | GET, POST | `/V1/invoices`, `/V1/invoices/{id}`; create via `POST /V1/order/{orderId}/invoice`; `/V1/invoices/{id}/capture`, `/email` | R/W | No (create) | Critical | `[V-docs]` | The workflow route honours `capture`; the repository route does not, so the gateway does not use it |
-| Shipments / credit memos | GET, POST | `/V1/shipments`, `/V1/creditmemos` (+ `/{id}`, `/email`); create via the order document routes | R/W | No (create) | Critical | `[V-docs]` | Confirmation- and ledger-gated |
+| Invoices | GET, POST | `GET /V1/invoices`, `GET /V1/invoices/{id}`; create via `POST /V1/order/{orderId}/invoice`; `POST /V1/invoices/{id}/capture`, `POST /V1/invoices/{id}/emails` | R/W | No (create) | Critical | `[V-docs]` | The workflow route honours `capture`; the repository route does not, so the gateway does not use it |
+| Shipments | GET, POST | `GET /V1/shipments` (list); `GET /V1/shipment/{id}` (singular); create via `POST /V1/order/{orderId}/ship`; `POST /V1/shipment/{id}/emails` | R/W | No (create) | Critical | `[V-docs]` | Confirmation- and ledger-gated |
+| Credit memos | GET, POST | `GET /V1/creditmemos` (list); `GET /V1/creditmemo/{id}` (singular); create via `POST /V1/order/{orderId}/refund`; `POST /V1/creditmemo/{id}/emails` | R/W | No (create) | Critical | `[V-docs]` | Confirmation- and ledger-gated |
 
 ### 3.7 Async, bulk status, import, schema (design reference; not used)
 
@@ -380,7 +380,7 @@ enums.
 | Child covers every option | Incomplete combinations cannot be selected | Matrix expansion | `validation_failed: PHONE-01-BLK-128 missing 'storage'` |
 | Parent and child share a website | Otherwise variants are invisible | Pre-flight on website ids | `validation_failed: child websites [1] not subset of parent [1,2]` |
 | Parent visibility 4, child 1 | Prevents duplicate listings | Payload normalization | `validation_failed: configurable parent visibility must be 4` |
-| `type_id` matches payload shape | Type-specific payloads are otherwise ignored | Tool input schema | `invalid_argument: type_id 'bundle' requires bundle_options` |
+| `type_id` is simple, virtual, or configurable | Bundle/downloadable options and links cannot be created here | Tool input schema | `invalid_argument: type_id 'bundle' is not supported` |
 | Quantity non-negative; source exists | A bad value or code rejects the batch | Tool schema, `GET /V1/inventory/sources` | `not_found: source 'wh2' does not exist` |
 | Store code valid | A typo writes to the wrong scope | Operator configuration; the gateway does not validate it at startup | Upstream 400/404 naming the store code |
 | Media MIME allowed and size bounded | Magento validates both | Gateway pre-check: `image/jpeg`, `image/png`, `image/webp`, `image/gif`, ≤ 5 MiB decoded | `validation_failed: mime_type must be one of image/jpeg, image/png, image/webp, image/gif` |
@@ -584,15 +584,19 @@ duration, and a request hash, never the token, body, or customer data.
 ## 12. Timeouts, retries, pagination
 
 Magento publishes **no universal REST rate limit**. Real limits come from
-PHP-FPM workers, nginx, the PaaS WAF, and database capacity. The gateway does
-**not** implement a per-instance concurrency semaphore, token bucket, rate
-limiter, retry loop, or circuit breaker. Those are **PLANNED** (SEC-11,
-PERF-05); limit concurrency at the agent or edge.
+PHP-FPM workers, nginx, the PaaS WAF, and database capacity. The gateway adds a
+**per-instance outbound budget** for Magento: a token bucket (default 50
+requests/s, burst 100) and a concurrency cap (default 8), configured by
+`datasources.magento.instances[].limits`. An exhausted budget returns a
+retryable `rate_limited` without reaching Magento. There is no automatic retry
+loop or circuit breaker, and Cloudflare/GA4 do not honour `limits`; inbound
+limiting and their quota accounting are **PLANNED** (SEC-11).
 
 | Control | As built | Notes |
 |---|---|---|
 | Per-request timeout | 30 s default (`magento.DefaultTimeout`) | A write timeout becomes `operation_unknown`, not `failed` |
-| Tool timeout | 30 s read, 60 s write, 120 s bulk/analysis | Enforced by the MCP middleware |
+| Outbound budget | 50 rps / burst 100 / 8 concurrent per instance; `limits` overrides | Token bucket + semaphore; `rate_limited` when exhausted |
+| Tool timeout | 30 s Magento read, 60 s write, 120 s bulk/analysis; 60 s Cloudflare/GA4 reports | Enforced by the MCP middleware |
 | Automatic retries | none | `retryable` is a hint for the caller; the gateway does not retry |
 | Non-idempotent write retry | never automatic | A timed-out POST may have succeeded; the ledger/reconciler decides |
 | Circuit breaker | none | PLANNED |

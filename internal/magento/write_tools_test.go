@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -82,8 +83,11 @@ func TestRegisterWritesMetadata(t *testing.T) {
 		if tool.Annotations.ReadOnlyHint {
 			t.Fatalf("write tool %q must not set readOnlyHint", name)
 		}
-		if tool.Annotations.IdempotentHint {
-			t.Fatalf("write tool %q must not set idempotentHint", name)
+		// idempotentHint is derived from writeDisclosures, not hand-set; the
+		// exact per-tool expectation is pinned by
+		// TestWriteToolIdempotencyMatchesDisclosures.
+		if got, want := tool.Annotations.IdempotentHint, writeIdempotentHint(name); got != want {
+			t.Fatalf("write tool %q idempotentHint = %v, want %v (derived from writeDisclosures)", name, got, want)
 		}
 		destructive := tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint
 		if name == productDeleteToolName || name == mediaDeleteToolName || name == inventoryTransferToolName || name == orderCancelToolName || name == attributeOptionDeleteToolName || name == categoryDeleteToolName || name == customerAddressDeleteToolName || name == stockSourceUnlinkToolName || name == productOptionDeleteToolName {
@@ -749,4 +753,173 @@ func callToolApproved(t *testing.T, ctx context.Context, session *mcp.ClientSess
 	}
 	approved["confirmation_id"] = id
 	return session.CallTool(ctx, &mcp.CallToolParams{Name: params.Name, Arguments: approved})
+}
+
+// TestWriteToolIdempotencyMatchesDisclosures is the SEM-DOC-10 regression: the
+// protocol annotation and the prose disclosure must tell an agent the same thing.
+//
+// It enumerates every registered write tool instead of asserting per tool, so a
+// write tool added later is covered the moment it is registered: the tool must
+// have a writeDisclosures entry, and its idempotentHint must equal what that
+// entry declares. Hard-coding IdempotentHint anywhere makes this fail.
+func TestWriteToolIdempotencyMatchesDisclosures(t *testing.T) {
+	reg := registry.New()
+	if err := RegisterWrites(reg, testService(t, "https://shop.example.com")); err != nil {
+		t.Fatalf("RegisterWrites: %v", err)
+	}
+	// The import write tools live behind the queue, so the write surface is
+	// RegisterWrites plus RegisterImportJobs.
+	resolver, err := NewResolver(map[string]*Service{"store-us": testService(t, "https://shop.example.com")})
+	if err != nil {
+		t.Fatalf("NewResolver: %v", err)
+	}
+	if err := RegisterImportJobs(reg, resolver, &fakeImportQueue{}); err != nil {
+		t.Fatalf("RegisterImportJobs: %v", err)
+	}
+
+	// Every registered write tool must be described by the single table, and its
+	// hint must be what the table declares.
+	registered := make(map[string]bool, reg.Len())
+	for _, tool := range reg.List() {
+		if tool.Permission == registry.PermissionRead {
+			continue
+		}
+		registered[tool.Name] = true
+		if _, ok := writeDisclosures[tool.Name]; !ok {
+			t.Fatalf("write tool %q has no writeDisclosures entry; the table is the single source of truth", tool.Name)
+		}
+		if got, want := tool.Annotations.IdempotentHint, writeIdempotentHint(tool.Name); got != want {
+			t.Fatalf("registry %q idempotentHint = %v, want %v", tool.Name, got, want)
+		}
+	}
+	if len(registered) == 0 {
+		t.Fatal("no write tools registered")
+	}
+
+	// The table must not describe anything that is not a registered write tool.
+	for name := range writeDisclosures {
+		if !registered[name] {
+			t.Fatalf("writeDisclosures describes %q, which is not a registered write tool", name)
+		}
+	}
+
+	// Every idempotency statement must fall into a classification this package
+	// understands; a novel phrasing fails here instead of silently becoming
+	// "not idempotent".
+	for name, disclosure := range writeDisclosures {
+		statement := strings.ToLower(strings.TrimSpace(disclosure.idempotency))
+		switch {
+		case strings.HasPrefix(statement, "idempotent"),
+			strings.HasPrefix(statement, "not idempotent"),
+			strings.HasPrefix(statement, "not fully idempotent"),
+			strings.HasPrefix(statement, "resumable"):
+		default:
+			t.Fatalf("%s idempotency statement is unclassified: %q", name, disclosure.idempotency)
+		}
+	}
+
+	// The declared expectation for the tools this task names explicitly.
+	idempotent := []string{
+		"magento.category.update",
+		"magento.category.assign_product",
+		"magento.customer.update",
+		"magento.customer.addresses.update",
+		"magento.product.media.update",
+		"magento.product.options.update",
+		"magento.product.tier_prices.set",
+		"magento.product.update",
+		"magento.configurable.update",
+	}
+	for _, name := range idempotent {
+		tool, ok := reg.Lookup(name)
+		if !ok {
+			t.Fatalf("%q is not registered", name)
+		}
+		if !tool.Annotations.IdempotentHint {
+			t.Fatalf("%q repeats the same fields without changing the record, so idempotentHint must be true", name)
+		}
+		if !strings.HasPrefix(strings.ToLower(writeDisclosures[name].idempotency), "idempotent") {
+			t.Fatalf("%q disclosure does not declare idempotency: %q", name, writeDisclosures[name].idempotency)
+		}
+	}
+	notIdempotent := []string{
+		"magento.product.create",
+		"magento.order.create",
+		"magento.order.cancel",
+		"magento.invoice.capture",
+		"magento.creditmemo.create",
+		"magento.import.start",
+		"magento.product.delete",
+		"magento.inventory.transfer",
+	}
+	for _, name := range notIdempotent {
+		tool, ok := reg.Lookup(name)
+		if !ok {
+			t.Fatalf("%q is not registered", name)
+		}
+		if tool.Annotations.IdempotentHint {
+			t.Fatalf("%q must not claim idempotency (a retry can duplicate or needs an idempotency_key)", name)
+		}
+	}
+
+	// The hint a client actually reads comes from the mcp.Tool registered on the
+	// server, not from the registry copy: check that channel too.
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg, Confirm: magentoConfirmService(t)})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil).
+		Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer func() { _ = session.Close() }()
+	listed, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(listed.Tools) != reg.Len() {
+		t.Fatalf("client sees %d tools, registry has %d", len(listed.Tools), reg.Len())
+	}
+	checked := 0
+	for _, tool := range listed.Tools {
+		if !registered[tool.Name] {
+			continue // read tools carry no disclosure
+		}
+		if tool.Annotations == nil {
+			t.Fatalf("client-visible tool %q has no annotations", tool.Name)
+		}
+		if got, want := tool.Annotations.IdempotentHint, writeIdempotentHint(tool.Name); got != want {
+			t.Fatalf("client-visible %q idempotentHint = %v, want %v", tool.Name, got, want)
+		}
+		checked++
+	}
+	if checked != len(registered) {
+		t.Fatalf("checked %d client-visible write tools, want %d", checked, len(registered))
+	}
+}
+
+// TestWriteToolSourceHasNoHardcodedIdempotentHint keeps the derivation honest at
+// the source level: a new tool that pastes "IdempotentHint: false" into its
+// literal would pass the registry test only until someone noticed the two
+// channels disagreeing again.
+func TestWriteToolSourceHasNoHardcodedIdempotentHint(t *testing.T) {
+	source, err := os.ReadFile("write_tools.go")
+	if err != nil {
+		t.Fatalf("read write_tools.go: %v", err)
+	}
+	if strings.Contains(string(source), "IdempotentHint: false") {
+		t.Fatal("write_tools.go hard-codes IdempotentHint; derive it with writeIdempotentHint(name)")
+	}
+	if strings.Contains(string(source), "IdempotentHint: true") {
+		t.Fatal("write_tools.go hard-codes IdempotentHint; derive it with writeIdempotentHint(name)")
+	}
 }

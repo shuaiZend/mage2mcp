@@ -1551,3 +1551,41 @@ func TestCreateVariationsRepairsOrphanOnRetry(t *testing.T) {
 		t.Fatal("the orphan was not linked")
 	}
 }
+
+// t68: the staged-write wrapper carries the upstream field name, and only a
+// message that names no identifier.
+func TestStagedWritePreservesSafeUpstreamDiagnostics(t *testing.T) {
+	safe := errs.New(errs.CodeValidationFailed, "Magento rejected the request").
+		WithDetail("upstream_field", "regionId").
+		WithDetail("upstream_message", "regionId is required").
+		WithUpstream("raw upstream")
+	err := stageFailure(stageOptions, "PHONE-01", safe)
+	var typed *errs.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("error = %T, want *errs.Error", err)
+	}
+	if got := typed.Details["upstream_field"]; got != "regionId" {
+		t.Fatalf("upstream_field = %q, want regionId (details=%v)", got, typed.Details)
+	}
+	if got := typed.Details["upstream_message"]; got != "regionId is required" {
+		t.Fatalf("upstream_message = %q, want the safe reason", got)
+	}
+	if strings.Contains(err.Error(), "regionId is required") {
+		t.Fatalf("agent-facing message leaked upstream text: %v", err)
+	}
+
+	unsafe := errs.New(errs.CodeValidationFailed, "Magento rejected the request").
+		WithDetail("upstream_field", "links").
+		WithDetail("upstream_message", `ACL resource Vendor_Module::Product is required`).
+		WithUpstream("raw upstream")
+	err = stageFailure(stageLinks, "PHONE-01", unsafe)
+	if !errors.As(err, &typed) {
+		t.Fatalf("error = %T, want *errs.Error", err)
+	}
+	if got := typed.Details["upstream_field"]; got != "links" {
+		t.Fatalf("upstream_field = %q, want links", got)
+	}
+	if _, leaked := typed.Details["upstream_message"]; leaked {
+		t.Fatalf("unsafe upstream message leaked: %v", typed.Details)
+	}
+}

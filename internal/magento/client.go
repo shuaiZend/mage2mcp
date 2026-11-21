@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -340,10 +341,23 @@ func statusError(method, path string, status int, body []byte, storeCode string)
 	if storeCode != "" {
 		e = e.WithDetail("store_code", storeCode)
 	}
-	if upstream := upstreamMessage(body); upstream != "" {
-		// Server-side only: Magento's validation text echoes SKUs, attribute codes
-		// and ACL resource names, so it is logged rather than returned (SEC-10).
-		e = e.WithUpstream(upstream)
+	// Magento's reason is the only thing that lets a caller correct its own
+	// request ("postcode can not be empty", "Can not save link related to Default
+	// Source or Default Stock"). The agent-facing Message above stays generic; the
+	// scrubbed reason and the field names go into details, and the unscrubbed text
+	// stays in Upstream for the server log.
+	if diag := parseUpstreamDiagnostic(body); diag.Message != "" || len(diag.Fields) > 0 {
+		if diag.Message != "" && upstreamTextIsSafe(diag.Message) {
+			// Only a reason that names no identifier may reach the caller; the raw
+			// text always reaches the log through Upstream below.
+			e = e.WithDetail("upstream_message", diag.Message)
+		}
+		if len(diag.Fields) > 0 {
+			e = e.WithDetail("upstream_field", strings.Join(diag.Fields, ","))
+		}
+		if diag.Raw != "" {
+			e = e.WithUpstream(diag.Raw)
+		}
 	}
 	if ambiguous {
 		e = markAmbiguous(e)
@@ -364,6 +378,9 @@ var routeWords = map[string]struct{}{
 	"emails": {}, "hold": {}, "unhold": {}, "cancel": {}, "capture": {}, "items": {},
 	"shipping-information": {}, "totals": {}, "order": {}, "store": {}, "storeConfigs": {},
 	"taxClasses": {}, "directory": {}, "countries": {}, "groups": {},
+	"stockItems": {}, "configurable-products": {}, "children": {},
+	"invoice": {}, "shipment": {}, "creditmemo": {}, "refund": {}, "refunds": {},
+	"transactions": {}, "payment": {},
 }
 
 // redactedRoute replaces identifier segments with {id} so an operation label can
@@ -387,14 +404,210 @@ func redactedRoute(path string) string {
 
 // upstreamMessage extracts Magento's validation message without echoing request
 // parameters, strips control characters, and bounds the length.
-func upstreamMessage(body []byte) string {
+// upstreamDiagnostic is Magento's own account of why it rejected a request,
+// reduced to what a caller can act on: the most specific message (with Magento's
+// "%field" placeholders resolved) and the field names Magento named.
+type upstreamDiagnostic struct {
+	// Message is the most specific reason, scrubbed and bounded.
+	Message string
+	// Fields are the parameter values that name the offending field, for example
+	// postcode or regionId. Identifiers only, never free text.
+	Fields []string
+	// Raw is the unscrubbed text, kept for the server log only.
+	Raw string
+}
+
+const (
+	// maxUpstreamDetailRunes bounds what reaches a caller: enough to diagnose,
+	// too short to become a data channel.
+	maxUpstreamDetailRunes = 300
+	maxUpstreamFields      = 3
+)
+
+var (
+	// upstreamFieldRE accepts a field name and nothing that looks like data.
+	upstreamFieldRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.\-]{0,63}$`)
+	// upstreamEmailRE and upstreamTokenRE redact PII and credential-shaped values
+	// before any upstream text is serialised.
+	upstreamEmailRE = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+	upstreamTokenRE = regexp.MustCompile(`[A-Za-z0-9_\-]{32,}`)
+	// upstreamPlaceholderRE matches Magento's "%field"-style placeholders.
+	// Magento writes placeholders as "%field"; the quotes are part of the template,
+	// so they are consumed with it and the field name stands on its own.
+	upstreamPlaceholderRE = regexp.MustCompile(`"?%([A-Za-z][A-Za-z0-9_]*)"?`)
+	// The next three detect the identifiers SEC-10 keeps out of the agent-visible
+	// surface: ACL resource names, quoted attribute codes, and SKU-shaped tokens.
+	upstreamACLRE    = regexp.MustCompile(`[A-Za-z_]+::[A-Za-z_]+`)
+	upstreamQuotedRE = regexp.MustCompile(`"[^"]*"`)
+	upstreamSKURE    = regexp.MustCompile(`[A-Z0-9][A-Z0-9_-]*[0-9][A-Z0-9_-]*`)
+)
+
+// upstreamTextIsSafe reports whether Magento's reason can be carried in a detail.
+// SEC-10 keeps upstream text server-side because it echoes SKUs, attribute codes
+// and ACL resource names; a reason that names none of those is just a rule
+// statement ("Can not save link related to Default Source or Default Stock") and
+// is exactly what a caller needs to correct its request. Anything carrying an
+// identifier stays in Upstream, the server log.
+func upstreamTextIsSafe(text string) bool {
+	if text == "" {
+		return false
+	}
+	return !upstreamACLRE.MatchString(text) &&
+		!upstreamQuotedRE.MatchString(text) &&
+		!upstreamSKURE.MatchString(text)
+}
+
+// parseUpstreamDiagnostic extracts Magento's reason from an error body. Magento
+// has two shapes: a bare {"message": ...}, and {"message":"Validation Failed",
+// "errors":[{"message":"\"%field\" can not be empty.","parameters":{"field":
+// "postcode"}}]}. The bare top-level "Validation Failed" carries no information,
+// so the errors array is preferred.
+func parseUpstreamDiagnostic(body []byte) upstreamDiagnostic {
 	if len(body) == 0 {
-		return ""
+		return upstreamDiagnostic{}
 	}
+	// parameters is RawMessage because Magento sends [] (an array) when it has no
+	// parameters; unmarshalling straight into a map would discard the whole body,
+	// which is exactly how the business-rule reasons were being lost.
 	var payload struct {
-		Message string `json:"message"`
+		Message    string          `json:"message"`
+		Parameters json.RawMessage `json:"parameters"`
+		Errors     []struct {
+			Message    string          `json:"message"`
+			Parameters json.RawMessage `json:"parameters"`
+		} `json:"errors"`
 	}
-	if err := json.Unmarshal(body, &payload); err != nil || payload.Message == "" {
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return upstreamDiagnostic{}
+	}
+
+	rawParts := make([]string, 0, len(payload.Errors)+1)
+	if payload.Message != "" {
+		rawParts = append(rawParts, payload.Message)
+	}
+
+	var diag upstreamDiagnostic
+	// Prefer the first error that says something more specific than the generic
+	// envelope, and resolve its placeholders against its own parameters.
+	for _, item := range payload.Errors {
+		if item.Message != "" {
+			rawParts = append(rawParts, item.Message)
+		}
+		if diag.Message != "" || isGenericUpstreamMessage(item.Message) {
+			continue
+		}
+		params := upstreamParamMap(item.Parameters)
+		diag.Message = resolveUpstreamPlaceholders(item.Message, params)
+		diag.Fields = upstreamFields(params)
+	}
+	if diag.Message == "" && !isGenericUpstreamMessage(payload.Message) {
+		params := upstreamParamMap(payload.Parameters)
+		diag.Message = resolveUpstreamPlaceholders(payload.Message, params)
+		diag.Fields = upstreamFields(params)
+	}
+	// Field names are useful even when every message was generic.
+	if len(diag.Fields) == 0 {
+		for _, item := range payload.Errors {
+			if fields := upstreamFields(upstreamParamMap(item.Parameters)); len(fields) > 0 {
+				diag.Fields = fields
+				break
+			}
+		}
+	}
+	if len(diag.Fields) == 0 {
+		diag.Fields = upstreamFields(upstreamParamMap(payload.Parameters))
+	}
+
+	diag.Message = scrubUpstreamText(diag.Message)
+	diag.Raw = strings.Join(rawParts, " | ")
+	if runes := []rune(diag.Raw); len(runes) > maxUpstreamMessageBytes {
+		diag.Raw = string(runes[:maxUpstreamMessageBytes])
+	}
+	return diag
+}
+
+// upstreamParamMap tolerates Magento's shapes: an object, an empty array, or
+// absent. Anything that is not a JSON object yields no parameters rather than
+// discarding the message that came with it.
+func upstreamParamMap(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil
+	}
+	return params
+}
+
+func isGenericUpstreamMessage(message string) bool {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return true
+	}
+	switch strings.ToLower(trimmed) {
+	case "validation failed", "bad request", "error", "invalid request":
+		return true
+	}
+	return false
+}
+
+// resolveUpstreamPlaceholders turns Magento's "%field" templates into the text a
+// caller can act on. A placeholder with no matching parameter is left intact: it
+// still tells the reader which field was meant.
+func resolveUpstreamPlaceholders(message string, parameters map[string]any) string {
+	if len(parameters) == 0 || !strings.Contains(message, "%") {
+		return message
+	}
+	lower := make(map[string]string, len(parameters))
+	for key, value := range parameters {
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		lower[strings.ToLower(key)] = text
+	}
+	return upstreamPlaceholderRE.ReplaceAllStringFunc(message, func(token string) string {
+		name := strings.ToLower(strings.Trim(token, `"`)[1:])
+		if value, ok := lower[name]; ok {
+			return value
+		}
+		return token
+	})
+}
+
+// upstreamFields keeps only parameter values that look like field names, so a
+// parameter carrying a value or a message can never become the reported field.
+func upstreamFields(parameters map[string]any) []string {
+	if len(parameters) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(parameters))
+	for key := range parameters {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	fields := make([]string, 0, maxUpstreamFields)
+	seen := make(map[string]bool, maxUpstreamFields)
+	for _, key := range keys {
+		value, ok := parameters[key].(string)
+		if !ok || !upstreamFieldRE.MatchString(value) || seen[value] {
+			continue
+		}
+		seen[value] = true
+		fields = append(fields, value)
+		if len(fields) == maxUpstreamFields {
+			break
+		}
+	}
+	return fields
+}
+
+// scrubUpstreamText removes control characters, redacts PII and credential-shaped
+// values, and bounds the length. This is what makes it safe to carry Magento's
+// text in a detail instead of only in the server log.
+func scrubUpstreamText(text string) string {
+	if text == "" {
 		return ""
 	}
 	clean := strings.Map(func(r rune) rune {
@@ -402,10 +615,12 @@ func upstreamMessage(body []byte) string {
 			return -1
 		}
 		return r
-	}, payload.Message)
+	}, text)
+	clean = upstreamEmailRE.ReplaceAllString(clean, "<email>")
+	clean = upstreamTokenRE.ReplaceAllString(clean, "<redacted>")
 	clean = strings.TrimSpace(clean)
-	if runes := []rune(clean); len(runes) > 300 {
-		clean = string(runes[:300])
+	if runes := []rune(clean); len(runes) > maxUpstreamDetailRunes {
+		clean = string(runes[:maxUpstreamDetailRunes]) + "…"
 	}
 	return clean
 }

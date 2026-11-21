@@ -91,7 +91,7 @@ type SecurityEventsOutput struct {
 	Events        []SecurityEvent `json:"events" jsonschema:"Events returned by this call."`
 	Sampled       bool            `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
 	RetentionDays int             `json:"retention_days" jsonschema:"How many days of history this store keeps."`
-	Truncated     bool            `json:"truncated" jsonschema:"True when more records exist than were returned."`
+	Truncated     bool            `json:"truncated" jsonschema:"True when this page is full; more records may exist."`
 }
 
 // Quality carries data-quality caveats attached to an analytics result.
@@ -116,7 +116,7 @@ type SecurityOutput struct {
 	// Actions maps a Cloudflare action value to its event count.
 	Actions map[string]int `json:"actions" jsonschema:"Actions returned by this call."`
 	// Total is the sum of Actions; events, not requests.
-	Total int `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Total int `json:"total" jsonschema:"Sum of the action counts in this window; events, not requests."`
 	// Sampled reports that the adaptive dataset is sampled.
 	Sampled bool `json:"sampled" jsonschema:"True when the answer is a sample rather than the full set."`
 	// RetentionDays is the documented Security Events retention.

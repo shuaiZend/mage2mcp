@@ -1,8 +1,9 @@
 # Architecture
 
-**Status:** as-built for v0.11.5
-(2026-11-20). This document describes the code that ships. Components that are
-designed but not implemented are marked **PLANNED** and are not drawn as present.
+**Status:** as-built for v0.11.5 (working tree `v0.11.5-4`; post-tag changes are
+limited to tool descriptions and tests). This document describes the code that
+ships. Components that are designed but not implemented are marked **PLANNED**
+and are not drawn as present.
 
 **Verification boundary.** No live Magento, Cloudflare, or GA4 instance was
 available. Magento behaviour is verified against the REST contract and
@@ -195,10 +196,33 @@ Rules that are enforced:
 - `platform.info` reports the version, protocol versions, registry tool names,
   configured instances, and whether writes are enabled.
 
+### Authorization and instance isolation
+
+Authorization is default-deny and instance-scoped. With authentication enabled,
+`cmd/server` builds `rbac.DefaultPolicy(configuredInstances(cfg))`: viewer/analyst
+read, operator write, admin admin, each grant bound to a concrete instance. An
+empty instance is rejected by `rbac.New`; the literal `"*"` is the only wildcard,
+and `platform.info` alone is granted at `"*"` (gateway metadata, no store data).
+
+The default policy binds **one instance per module**. A module with more than one
+instance fails startup rather than silently granting every store:
+
+```text
+rbac: magento has 2 instances (demo, demo-alt); the default policy binds one instance per module. Grant per-instance policies explicitly, or call DefaultPolicyAllInstances() to treat them as one trust domain
+```
+
+`DefaultPolicyAllInstances()` is the explicit single-trust-domain opt-in; it
+binds every grant to `"*"` and removes cross-instance isolation, so it is only
+for deployments where all instances are one tenant. The policy is currently
+constructed before the `auth.enabled` branch, so a multi-instance module also
+fails with authentication disabled; that is a reported code issue, not a
+supported development mode.
+
 **Not implemented:** capability-driven registration, runtime module disable,
 `notifications/tools/list_changed`, and a per-instance `/readyz` degraded state.
-`/readyz` returns 200 with the registry tool count whenever the process can serve
-MCP.
+`/readyz` returns 200 when the process can serve MCP and, when a database is
+configured, the durable-store `ReadyCheck` succeeds; it returns 503 with
+`status: not ready` when that check fails.
 
 ## 7. Configuration and instances
 
@@ -270,9 +294,12 @@ row missing.
   `ExpectContinueTimeout` 1 s. Redirects are refused. This is the only tuned
   transport; Cloudflare and GA4 use the standard client with per-request
   timeouts.
-- **No per-instance semaphore, token bucket, or quota limiter exists.** The
-  gateway does not rate-limit tool calls or account for Cloudflare/GA4 quotas;
-  that is **PLANNED** (SEC-11, PERF-05). Limit concurrency at the agent or edge.
+- **Magento enforces a per-instance outbound budget.** Each instance has a token
+  bucket (default 50 requests/s, burst 100) and a concurrency cap (default 8),
+  configured by `datasources.magento.instances[].limits`; an exhausted budget
+  returns a retryable `rate_limited` without reaching Magento. Cloudflare and GA4
+  do not honour `limits`; inbound rate limiting and their quota accounting are
+  **PLANNED** (SEC-11).
 - All upstream calls take `context.Context` and honour cancellation.
 - The worker's concurrency is bounded by the job queue; a task holds a lease and
   a fencing token.
@@ -292,10 +319,12 @@ row missing.
 - The caller's credential is never forwarded upstream; each module uses its
   per-instance vendor credential.
 - `/healthz`, `/readyz`, and `/metrics` are served on the same listener.
-  `/metrics` is not authenticated by the gateway; restrict it at the edge.
-- The MCP session is not bound to the caller identity (SEC-15); there is no
-  `EventStore`, no resumability, no progress notification, and no `resource_link`
-  path. Those are **PLANNED**.
+  `/metrics` is put behind the auth middleware when the listener is not
+  loopback (the production default); a loopback development listener may leave
+  it open. Restrict it at the edge in either case.
+- The MCP session is bound to the verified subject (SEC-15): a different subject
+  presenting the id gets 404. There is still no `EventStore`, no resumability,
+  no progress notification, and no `resource_link` path; those are **PLANNED**.
 
 ## 12. Observability
 
@@ -309,7 +338,8 @@ row missing.
   `mage2mcp_jobs_total{queue,state}`, and `mage2mcp_build_info`. There is no
   quota metric.
 - `/healthz` reports process liveness. `/readyz` reports that the process can
-  serve MCP and the registry tool count. There is no `/livez`.
+  serve MCP, the registry tool count, and (when configured) that the durable
+  store is reachable; an unreachable store yields 503. There is no `/livez`.
 - Audit events are separate from logs and are not sampled.
 
 ## 13. Deployment topology
@@ -354,10 +384,9 @@ not have to implement it. Cross-source work defines a consumer-side interface in
 | Component | Status |
 |---|---|
 | Raw Cloudflare log ingestion (R2/ClickHouse) and `cloudflare.logs.*` tools | PLANNED |
-| Per-instance rate limiting, concurrency semaphores, quota accounting | PLANNED |
+| Inbound rate limiting and Cloudflare/GA4 quota accounting | PLANNED |
 | Multi-instance unified bindings | PLANNED (single CF + single GA4 only) |
 | Audit hash chain, signed checkpoints, retention partitions | PLANNED |
-| Session identity binding | PLANNED (SEC-15) |
 | Progress notifications, cancellation propagation, `resource_link`, `tools/list_changed`, `/livez` | PLANNED |
 | Secret-manager adapter and literal-secret rejection | PLANNED |
 | Magento GraphQL verification | Not planned; REST admin only (ADR-0022) |

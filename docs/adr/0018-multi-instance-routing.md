@@ -53,8 +53,9 @@ Magento).
   upstream request. No tool name changes and no schema change: `instance` is
   already present.
 - RBAC is evaluated per call as today, with the instance passed through to the
-  policy. A grant scoped to instance A never authorizes instance B; a grant with
-  an empty instance scope applies to all instances of that tool.
+  policy. A grant scoped to instance A never authorizes instance B; every grant
+  names an instance, and the wildcard `"*"` is an explicit opt-in
+  (`DefaultPolicyAllInstances`), never an empty-instance default.
 - Audit records the resolved instance and the grant that matched, so a
   cross-instance call is attributable.
 - Bindings reference instance ids; a unified tool authorizes the binding and

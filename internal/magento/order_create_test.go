@@ -205,7 +205,11 @@ func (f *orderFake) handler() http.HandlerFunc {
 		case r.Method == http.MethodPut && r.URL.Path == "/rest/default/V1/carts/42/order":
 			if placeStatus != 0 {
 				w.WriteHeader(placeStatus)
-				_, _ = io.WriteString(w, `{"message":"The order could not be placed."}`)
+				body := placeBody
+				if body == "" {
+					body = `{"message":"The order could not be placed."}`
+				}
+				_, _ = io.WriteString(w, body)
 				return
 			}
 			_, _ = io.WriteString(w, placeBody)
@@ -548,5 +552,38 @@ func TestCreateOrderRejectsStoreID(t *testing.T) {
 	}
 	if got := posts.Load(); got != 0 {
 		t.Fatalf("upstream POSTs = %d, want 0: the request must be refused before any call", got)
+	}
+}
+
+// SEM-06 / t68: an order placement rejected for a missing region_id must carry
+// the upstream field name through the staged-write wrapper.
+func TestCreateOrderPreservesUpstreamField(t *testing.T) {
+	fake := &orderFake{
+		placeStatus: http.StatusBadRequest,
+		placeBody:   `{"message":"Validation Failed","errors":[{"message":"\"%field\" is required.","parameters":{"field":"regionId"}}]}`,
+	}
+	ts := httptest.NewServer(fake.handler())
+	defer ts.Close()
+	useLedger(t, newFakeLedger())
+	svc := testService(t, ts.URL)
+	in := validOrderInput()
+	in.IdempotencyKey = "order-region-field"
+
+	_, err := svc.CreateOrder(context.Background(), in)
+	if err == nil {
+		t.Fatal("CreateOrder accepted a 400")
+	}
+	var typed *errs.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("error = %T %v, want *errs.Error", err, err)
+	}
+	if got := typed.Details["upstream_field"]; got != "regionId" {
+		t.Fatalf("upstream_field = %q, want regionId (details=%v)", got, typed.Details)
+	}
+	if got := typed.Details["upstream_message"]; got == "" {
+		t.Fatalf("upstream_message missing (details=%v)", typed.Details)
+	}
+	if strings.Contains(err.Error(), "regionId is required") {
+		t.Fatalf("agent-facing message leaked upstream text: %v", err)
 	}
 }

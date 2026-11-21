@@ -18,7 +18,8 @@ import (
 
 func TestCreateShipment(t *testing.T) {
 	var method, path string
-	var body shipmentCreateBody
+	var body shipmentOrderBody
+	var rawBody []byte
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
@@ -29,6 +30,7 @@ func TestCreateShipment(t *testing.T) {
 		}
 		method, path = r.Method, r.URL.Path
 		raw, _ := io.ReadAll(r.Body)
+		rawBody = raw
 		if err := json.Unmarshal(raw, &body); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
@@ -49,11 +51,23 @@ func TestCreateShipment(t *testing.T) {
 	if method != http.MethodPost || path != "/rest/default/V1/order/42/ship" {
 		t.Fatalf("request = %s %s", method, path)
 	}
-	if body.Entity.OrderID != 42 || len(body.Entity.Items) != 1 || len(body.Entity.Tracks) != 1 {
+	if len(body.Items) != 1 || body.Items[0].OrderItemID != 1 || body.Items[0].Qty != 2 {
+		t.Fatalf("body = %+v, want the requested line top-level", body)
+	}
+	if len(body.Tracks) != 1 || body.Tracks[0].TrackNumber != "1Z999" {
+		t.Fatalf("tracks = %+v", body.Tracks)
+	}
+	if !body.Notify || !body.AppendComment || body.Comment == nil || body.Comment.Comment != "Shipped today" {
 		t.Fatalf("body = %+v", body)
 	}
-	if body.Entity.Tracks[0].TrackNumber != "1Z999" || !body.Entity.Notify || body.Entity.Comment.Comment != "Shipped today" {
-		t.Fatalf("body = %+v", body)
+	// The route takes top-level parameters; an {"entity": ...} wrapper makes
+	// Magento receive no items and ship the whole order.
+	var raw map[string]any
+	if err := json.Unmarshal(rawBody, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, wrapped := raw["entity"]; wrapped {
+		t.Fatalf("shipment body must not be wrapped in entity: %s", raw)
 	}
 	if shipment.EntityID != 3 || len(shipment.Tracks) != 1 || shipment.Tracks[0].TrackNumber != "1Z999" {
 		t.Fatalf("shipment = %+v", shipment)
@@ -71,6 +85,8 @@ type creditmemoFake struct {
 	// refunded is added to the order's qty_refunded after a successful write, so
 	// a repeat sees the quantity already spent.
 	refunded float64
+	// creditmemoJSON overrides the credit memo read-back; empty uses the default.
+	creditmemoJSON string
 }
 
 func (f *creditmemoFake) handler(t *testing.T) http.HandlerFunc {
@@ -89,8 +105,12 @@ func (f *creditmemoFake) handler(t *testing.T) http.HandlerFunc {
 		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/invoices":
 			_, _ = io.WriteString(w, f.invoices)
 		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/creditmemo/9":
-			_, _ = io.WriteString(w, `{"entity_id":9,"increment_id":"000000009","order_id":42,"invoice_id":7,`+
-				`"grand_total":25,"adjustment":-5,"order_currency_code":"USD"}`)
+			payload := f.creditmemoJSON
+			if payload == "" {
+				payload = `{"entity_id":9,"increment_id":"000000009","order_id":42,"invoice_id":7,` +
+					`"grand_total":25,"adjustment":-5,"order_currency_code":"USD"}`
+			}
+			_, _ = io.WriteString(w, payload)
 		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/order/42/refund":
 			raw, _ := io.ReadAll(r.Body)
 			f.mu.Lock()
@@ -147,18 +167,24 @@ func TestCreateCreditmemo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCreditmemo: %v", err)
 	}
-	var body creditmemoCreateBody
+	var body refundOrderBody
 	if err := json.Unmarshal(fake.postBody, &body); err != nil {
 		t.Fatalf("body: %v", err)
 	}
-	if body.Entity.OrderID != 42 || body.Entity.InvoiceID != 7 {
-		t.Fatalf("body = %+v, want the invoice linkage", body.Entity)
+	if body.Arguments == nil || body.Arguments.AdjustmentPositive != 10 || body.Arguments.AdjustmentNegative != 15 {
+		t.Fatalf("body = %+v, want the adjustments in arguments", body)
 	}
-	if body.Entity.AdjustmentPositive != 10 || body.Entity.AdjustmentNegative != 15 {
-		t.Fatalf("body = %+v", body.Entity)
+	if len(body.Items) != 1 || body.Items[0].OrderItemID != 1 || body.Items[0].Qty != 1 {
+		t.Fatalf("items = %+v, want the requested line top-level", body.Items)
 	}
-	if len(body.Entity.Items) != 1 || body.Entity.Items[0].OrderItemID != 1 || body.Entity.Items[0].Qty != 1 {
-		t.Fatalf("items = %+v", body.Entity.Items)
+	// The route takes top-level parameters; an {"entity": ...} wrapper makes
+	// Magento receive no items and refund the whole invoice.
+	var raw map[string]any
+	if err := json.Unmarshal(fake.postBody, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, wrapped := raw["entity"]; wrapped {
+		t.Fatalf("refund body must not be wrapped in entity: %s", raw)
 	}
 	if result.Creditmemo.EntityID != 9 || result.Creditmemo.Adjustment != -5 {
 		t.Fatalf("creditmemo = %+v", result.Creditmemo)
@@ -346,5 +372,58 @@ func TestCreateCreditmemoReplaysAfterFullRefund(t *testing.T) {
 	}
 	if posts := postsIn(fake.requests); posts != postsAfterFirst {
 		t.Fatalf("POSTs = %d, want %d (no second refund)", posts, postsAfterFirst)
+	}
+}
+
+// TestCreateCreditmemoPartialQuantityIsSentAndReported proves the partial refund
+// path end to end at the tool boundary: the requested quantity is what goes on
+// the wire, and the reported total_qty is the refunded quantity — not a zero
+// leaked from a field Magento omits.
+func TestCreateCreditmemoPartialQuantityIsSentAndReported(t *testing.T) {
+	fake := &creditmemoFake{orderJSON: refundableOrder, invoices: singleInvoice}
+	// The read-back carries no total_qty (Magento's creditmemo resource omits it)
+	// but does carry the refunded item row.
+	fake.creditmemoJSON = `{"entity_id":9,"increment_id":"000000009","order_id":42,"invoice_id":7,` +
+		`"grand_total":25,"subtotal":25,"shipping_amount":0,"order_currency_code":"USD",` +
+		`"items":[{"order_item_id":1,"qty":1,"row_total":25}]}`
+	ts := httptest.NewServer(fake.handler(t))
+	defer ts.Close()
+	useLedger(t, newFakeLedger())
+	svc := testService(t, ts.URL)
+
+	result, err := svc.CreateCreditmemo(context.Background(), CreditmemoCreateInput{
+		OrderID: 42, Items: []DocumentLine{{OrderItemID: 1, Qty: 1}}, IdempotencyKey: "refund-partial",
+	})
+	if err != nil {
+		t.Fatalf("CreateCreditmemo: %v", err)
+	}
+	var body refundOrderBody
+	if err := json.Unmarshal(fake.postBody, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 || body.Items[0].Qty != 1 {
+		t.Fatalf("wire items = %+v, want the requested 1 unit", body.Items)
+	}
+	if result.Creditmemo.TotalQty == nil || *result.Creditmemo.TotalQty != 1 {
+		t.Fatalf("total_qty = %v, want 1 (the refunded quantity)", result.Creditmemo.TotalQty)
+	}
+}
+
+// TestCreditmemoTotalQtyIsOmittedWhenUnknown proves a credit memo whose quantity
+// Magento does not report is rendered without a false zero.
+func TestCreditmemoTotalQtyIsOmittedWhenUnknown(t *testing.T) {
+	cm, err := decodeCreditmemo([]byte(`{"entity_id":9,"grand_total":0,"order_currency_code":"USD"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cm.TotalQty != nil {
+		t.Fatalf("total_qty = %v, want nil when Magento does not report it", *cm.TotalQty)
+	}
+	raw, err := json.Marshal(cm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "total_qty") {
+		t.Fatalf("unknown total_qty leaked as a value: %s", raw)
 	}
 }

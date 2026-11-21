@@ -5,12 +5,14 @@
 | Endpoint | Use |
 |---|---|
 | `GET /healthz` | liveness probe; process is up |
-| `GET /readyz` | readiness probe; the process can serve MCP and the registry tool count |
-| `GET /metrics` | Prometheus scrape |
+| `GET /readyz` | readiness probe; the process can serve MCP, the registry tool count, and (when configured) the durable store `ReadyCheck` (503 when it fails) |
+| `GET /metrics` | Prometheus scrape (behind auth on a non-loopback listener; open on loopback) |
 
-`/metrics` is served on the same listener as `/mcp` and is **not authenticated
-by the gateway**. Restrict it with the edge/Access policy or a private network.
-It exposes no secrets and no tool arguments, but it does reveal traffic patterns.
+`/metrics` is served on the same listener as `/mcp`. On a non-loopback listener
+the server puts it behind the same auth middleware as `/mcp`; a loopback
+development listener leaves it open. Restrict it with the edge/Access policy or
+a private network in either case. It exposes no secrets and no tool arguments,
+but it does reveal traffic patterns.
 
 ## Key metrics
 
@@ -62,4 +64,5 @@ WHERE state = 'pending' AND created_at < now() - interval '5 minutes';
 - PostgreSQL connection saturation and audit table growth (no retention job or
   partitions; plan an export/retention procedure).
 - Certificate and JWKS reachability for Cloudflare Access.
-- `/metrics` is unauthenticated; alert on unexpected access if it is exposed.
+- `/metrics` is authenticated on non-loopback listeners; on loopback development
+  it is open, so do not expose that listener off-host.

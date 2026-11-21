@@ -2120,3 +2120,276 @@ func TestServerInstructionsRequireDiscoveryBeforeCopying(t *testing.T) {
 		}
 	}
 }
+
+// SEM-04: toolerr folds handler errors into IsError with a nil Go error. The
+// non-gated audit path must classify the result, not just err.
+func TestSelfLedgeredErrorAuditIsNotAllow(t *testing.T) {
+	var mu sync.Mutex
+	var states, codes []string
+	reg := registry.New()
+	tool := gatedTool(t, "magento.invoice.capture", registry.PermissionWrite,
+		errs.New(errs.CodeNotFound, "invoice not found"))
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{
+		Version: "test", Registry: reg,
+		SelfLedgeredTools: map[string]bool{"magento.invoice.capture": true},
+		Audit: func(_ context.Context, _, _, phase, state, code string) {
+			if phase != "outcome" {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			states = append(states, state)
+			codes = append(codes, code)
+		},
+	}
+	res := callWithOptions(t, opts, "agent-1", "magento.invoice.capture", map[string]any{"order_id": 42})
+	if !res.IsError {
+		t.Fatal("handler error was not returned")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(states) != 1 || states[0] != "failed" || len(codes) != 1 || codes[0] != string(errs.CodeNotFound) {
+		t.Fatalf("audit outcome = states %v codes %v, want failed/not_found", states, codes)
+	}
+}
+
+// SEM-18: the request id is installed on the context and appears in both the
+// audit callback and the result _meta.
+func TestRequestIDFlowsToAuditAndMeta(t *testing.T) {
+	reg := registry.New()
+	if err := reg.Register(authzStubTool(t, "magento.product.get", registry.PermissionRead, nil)); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var ids []string
+	opts := Options{Version: "test", Registry: reg,
+		Audit: func(ctx context.Context, _, _, _, _, _ string) {
+			mu.Lock()
+			defer mu.Unlock()
+			ids = append(ids, RequestID(ctx))
+		},
+	}
+	res := callWithOptions(t, opts, "agent-1", "magento.product.get", map[string]any{"instance": "store-us"})
+	if res.IsError {
+		t.Fatalf("call failed: %+v", res.Content)
+	}
+	meta, _ := res.Meta["request_id"].(string)
+	if meta == "" {
+		t.Fatalf("result _meta has no request_id: %+v", res.Meta)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ids) < 2 || ids[0] == "" || ids[0] != ids[1] || ids[0] != meta {
+		t.Fatalf("audit request ids = %v, meta = %q; want two equal non-empty ids", ids, meta)
+	}
+}
+
+// SEM-22: a budget error that arrives at the deadline stays rate_limited and
+// retryable; it is not rewritten to upstream_timeout.
+func TestRateLimitedNotMaskedByTimeout(t *testing.T) {
+	reg := registry.New()
+	tool := registry.Tool{
+		Name: "magento.product.rate", Title: "Rate-limited tool",
+		Description: "Rate-limit fixture.", Capability: "magento.product.read",
+		Permission: registry.PermissionRead, Timeout: 20 * time.Millisecond,
+		Annotations: mcp.ToolAnnotations{ReadOnlyHint: true},
+	}
+	tool.Register = func(srv *mcp.Server) error {
+		toolerr.Add(srv, &mcp.Tool{Name: tool.Name, Title: tool.Title, Description: tool.Description,
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+			func(ctx context.Context, _ *mcp.CallToolRequest, _ authzInput) (*mcp.CallToolResult, authzOutput, error) {
+				<-ctx.Done()
+				e := errs.New(errs.CodeRateLimited, "instance request budget exhausted")
+				e.Retryable = true
+				return nil, authzOutput{}, e
+			})
+		return nil
+	}
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewMCP(Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := callToolHTTP(t, srv, reg, "magento.product.rate", nil)
+	body := resultMap(t, res)
+	if body["code"] != string(errs.CodeRateLimited) {
+		t.Fatalf("code = %v, want rate_limited (not upstream_timeout)", body["code"])
+	}
+	if body["retryable"] != true {
+		t.Fatalf("retryable = %v, want true: %+v", body["retryable"], body)
+	}
+}
+
+// SEM-19: a replay validates any supplied confirmation. A never-issued UUID and
+// an expired approval must not become a successful replay.
+func TestReplayValidatesConfirmation(t *testing.T) {
+	store := confirm.NewMemoryStore()
+	svc, err := confirm.NewService(store, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := map[string]any{"instance": "store-us", "order_id": 42}
+	raw, _ := json.Marshal(args)
+	hash, err := confirm.CanonicalHash(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := svc.Require(context.Background(), "magento.invoice.capture", "store-us", "write", "order 42", "agent-1", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Approve(context.Background(), req.ID, "human-1"); err != nil {
+		t.Fatal(err)
+	}
+	gate := &fakeGate{beginFn: func(OperationRequest) (OperationTicket, error) {
+		return OperationTicket{OperationID: "op-1", Decision: DecisionReplay, Replayed: true,
+			ReplayResult: json.RawMessage(`{"invoice_id":555}`)}, nil
+	}}
+	reg := registry.New()
+	replayTool := gatedTool(t, "magento.invoice.capture", registry.PermissionWrite, nil)
+	replayTool.RequiresConfirmation = true
+	if err := reg.Register(replayTool); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{Version: "test", Registry: reg, Confirm: svc,
+		BeginOperation: gate.begin, FinishOperation: gate.finish}
+	valid := callWithOptions(t, opts, "agent-1", "magento.invoice.capture",
+		map[string]any{"instance": "store-us", "order_id": 42, "confirmation_id": req.ID})
+	if valid.IsError {
+		t.Fatalf("valid replay failed: content=%+v structured=%+v", valid.Content, valid.StructuredContent)
+	}
+	if got, _ := store.Get(context.Background(), req.ID); got == nil || got.State != confirm.StateApproved {
+		t.Fatalf("read-only replay validation changed the approval: %+v", got)
+	}
+
+	random := callWithOptions(t, opts, "agent-1", "magento.invoice.capture",
+		map[string]any{"instance": "store-us", "order_id": 42, "confirmation_id": "00000000-0000-4000-8000-000000000000"})
+	if !random.IsError || resultMap(t, random)["code"] != string(errs.CodeNotFound) {
+		t.Fatalf("never-issued confirmation replay = %+v, want not_found", random.StructuredContent)
+	}
+
+	expired := &confirm.Request{
+		ID: "11111111-1111-4111-8111-111111111111", Tool: "magento.invoice.capture",
+		Instance: "store-us", Scope: "write", ParamsHash: hash, Requester: "agent-1",
+		State: confirm.StateApproved, ExpiresAt: time.Now().Add(-time.Minute),
+	}
+	if err := store.Create(context.Background(), expired); err != nil {
+		t.Fatal(err)
+	}
+	expiredRes := callWithOptions(t, opts, "agent-1", "magento.invoice.capture",
+		map[string]any{"instance": "store-us", "order_id": 42, "confirmation_id": expired.ID})
+	if !expiredRes.IsError || resultMap(t, expiredRes)["code"] != string(errs.CodeConfirmationExpired) {
+		t.Fatalf("expired confirmation replay = %+v, want confirmation_expired", expiredRes.StructuredContent)
+	}
+}
+
+// SEM-41: early policy paths carry the same correlation _meta as a handler result.
+func TestEarlyPolicyResultsCarryMeta(t *testing.T) {
+	t.Run("denied", func(t *testing.T) {
+		reg := registry.New()
+		if err := reg.Register(authzStubTool(t, "magento.product.get", registry.PermissionRead, nil)); err != nil {
+			t.Fatal(err)
+		}
+		opts := Options{Version: "test", Registry: reg,
+			Authorize: func(context.Context, string, string, string) error {
+				return errs.New(errs.CodePermissionDenied, "denied")
+			}}
+		res := callWithOptions(t, opts, "agent-1", "magento.product.get", map[string]any{"instance": "store-us"})
+		if res.Meta == nil || res.Meta["request_id"] == nil || res.Meta["request_id"] == "" {
+			t.Fatalf("denied result meta = %+v", res.Meta)
+		}
+	})
+	t.Run("confirmation_required", func(t *testing.T) {
+		reg := registry.New()
+		if err := reg.Register(gatedTool(t, "magento.invoice.capture", registry.PermissionWrite, nil)); err != nil {
+			t.Fatal(err)
+		}
+		svc, err := confirm.NewService(confirm.NewMemoryStore(), time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opts := Options{Version: "test", Registry: reg, Confirm: svc}
+		res := callToolNoApprove(t, opts, "agent-1", "magento.invoice.capture", map[string]any{"order_id": 42})
+		if res.Meta == nil || res.Meta["request_id"] == nil || res.Meta["request_id"] == "" {
+			t.Fatalf("confirmation_required meta = %+v", res.Meta)
+		}
+	})
+	t.Run("replay", func(t *testing.T) {
+		gate := &fakeGate{beginFn: func(OperationRequest) (OperationTicket, error) {
+			return OperationTicket{OperationID: "op-1", Decision: DecisionReplay, Replayed: true,
+				ReplayResult: json.RawMessage(`{"ok":true}`)}, nil
+		}}
+		reg := registry.New()
+		if err := reg.Register(gatedTool(t, "magento.invoice.capture", registry.PermissionWrite, nil)); err != nil {
+			t.Fatal(err)
+		}
+		opts := Options{Version: "test", Registry: reg,
+			BeginOperation: gate.begin, FinishOperation: gate.finish}
+		res := callWithOptions(t, opts, "agent-1", "magento.invoice.capture", map[string]any{"order_id": 42})
+		if res.Meta == nil || res.Meta["request_id"] == nil || res.Meta["request_id"] == "" {
+			t.Fatalf("replay meta = %+v", res.Meta)
+		}
+	})
+}
+
+// SEM-42: a schema rejection larger than errs' 1024-byte detail cap still
+// carries details.validation (bounded), rather than dropping it.
+func TestSchemaValidationDetailSurvivesBoundedDetail(t *testing.T) {
+	reg := registry.New()
+	tool := registry.Tool{
+		Name: "magento.product.schema", Title: "Schema fixture",
+		Description: "Schema detail fixture.", Capability: "magento.product.read",
+		Permission: registry.PermissionRead, Timeout: 5 * time.Second,
+		Annotations: mcp.ToolAnnotations{ReadOnlyHint: true},
+	}
+	tool.Register = func(srv *mcp.Server) error {
+		toolerr.Add(srv, &mcp.Tool{
+			Name: tool.Name, Title: tool.Title, Description: tool.Description,
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"value":{"type":"string","maxLength":10}},"required":["value"],"additionalProperties":false}`),
+		}, func(context.Context, *mcp.CallToolRequest, authzInput) (*mcp.CallToolResult, authzOutput, error) {
+			return nil, authzOutput{OK: true}, nil
+		})
+		return nil
+	}
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewMCP(Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := callToolHTTP(t, srv, reg, "magento.product.schema", map[string]any{"value": strings.Repeat("x", 2000)})
+	body := resultMap(t, res)
+	details, _ := body["details"].(map[string]any)
+	validation, _ := details["validation"].(string)
+	if validation == "" || len(validation) > 1024 {
+		t.Fatalf("details.validation = %q (len %d), want non-empty <=1024", validation, len(validation))
+	}
+}
+
+// callToolNoApprove is callWithOptions without the automatic approval retry, so
+// the early confirmation_required result can be inspected.
+func callToolNoApprove(t *testing.T, opts Options, subject, name string, args map[string]any) *mcp.CallToolResult {
+	t.Helper()
+	handler := HandlerForTest(t, opts, subject)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}

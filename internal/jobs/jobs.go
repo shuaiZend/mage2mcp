@@ -49,6 +49,42 @@ const QueueImport = "import"
 // same token, and it must never treat the loss as success.
 var ErrLeaseLost = errors.New("jobs: lease lost")
 
+// Job states as reported to callers. "partial" is not a queue state (the queue
+// records execution: queued, running, succeeded, failed, canceled); it is the
+// business outcome of an import that completed with per-row failures, and the
+// import tools report it in place of a misleading "succeeded".
+const (
+	StateQueued    = "queued"
+	StateRunning   = "running"
+	StateSucceeded = "succeeded"
+	StatePartial   = "partial"
+	StateFailed    = "failed"
+	StateCanceled  = "canceled"
+)
+
+// ResultPartialKey marks a job result whose execution completed but whose work
+// did not fully succeed. It travels in the job result so import.status can report
+// the business outcome without a queue state the database does not have.
+const ResultPartialKey = "partial"
+
+// ResultIsPartial reports whether a stored job result is partial: either the
+// explicit marker, or an import report that recorded failed rows. The fallback
+// keeps jobs written before the marker existed honest.
+func ResultIsPartial(result string) bool {
+	if result == "" {
+		return false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		return false
+	}
+	if partial, _ := payload[ResultPartialKey].(bool); partial {
+		return true
+	}
+	failed, _ := payload["failed"].(float64)
+	return failed > 0
+}
+
 // ErrNotCancelable means the task exists but is in a state from which it cannot
 // be canceled (already terminal), or does not exist at all. Implementations
 // return a typed conflict/not-found error that wraps this sentinel.
@@ -61,7 +97,7 @@ type JobRecord struct {
 	// platform-scoped jobs.
 	InstanceID  string          `json:"instance_id,omitempty" jsonschema:"Configured instance the import ran against."`
 	Kind        string          `json:"kind" jsonschema:"Kind of the entry."`
-	State       string          `json:"state" jsonschema:"queued, running, succeeded, partial, failed or cancelled."`
+	State       string          `json:"state" jsonschema:"queued, running, succeeded, partial, failed or canceled. partial means the job finished but some rows failed; it is reported for import jobs whose batch is partial."`
 	Attempts    int             `json:"attempts" jsonschema:"How many times the job has run."`
 	MaxAttempts int             `json:"max_attempts" jsonschema:"How many attempts the job is allowed."`
 	ErrorCode   string          `json:"error_code,omitempty" jsonschema:"Taxonomy code of the failure, when there is one."`
@@ -484,7 +520,7 @@ type ImportBatch struct {
 	JobID      string               `json:"job_id,omitempty" jsonschema:"Import job id, used by import.status and import.batch."`
 	Format     string               `json:"format" jsonschema:"Payload encoding: csv or json."`
 	State      string               `json:"state" jsonschema:"Current state."`
-	Total      int                  `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Total      int                  `json:"total" jsonschema:"Number of rows in this import batch."`
 	Processed  int                  `json:"processed" jsonschema:"Rows processed so far."`
 	Created    int                  `json:"created" jsonschema:"Rows that created a product."`
 	Updated    int                  `json:"updated" jsonschema:"Rows that updated a product."`

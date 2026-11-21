@@ -95,6 +95,54 @@ change.
 | `audience` | string | — | Required when enabled. Expected `aud` claim (the Access application AUD tag). |
 | `jwks_url` | string | — | Required when enabled; must start with `https://`. JWKS endpoint used to fetch signing keys lazily. |
 
+## RBAC and instance isolation
+
+Authorization is compiled into the binary; there is no YAML policy file.
+`cmd/server` builds `rbac.DefaultPolicy(configuredInstances(cfg))` at startup
+(currently before the `auth.enabled` branch) from the same instance map the
+resolvers and `platform.info` use; when authentication is enabled, that policy is
+the authorizer.
+
+- **One instance per module is the shipped default.** The policy binds each
+  configured module instance to the role ladder: `viewer`/`analyst` read,
+  `operator` write, `admin` admin. A grant for one instance never authorizes
+  another.
+- **Every grant must name an instance.** `rbac.New` rejects an empty instance with
+  `rbac: grant 0 has no instance; name one, or use "*" for every instance`.
+  Empty string is **not** a wildcard.
+- **Wildcard is explicit.** `matchesInstance` accepts an exact id or the literal
+  `rbac.WildcardInstance` (`"*"`). `platform.info` is granted at `"*"` for every
+  role because it returns only gateway metadata, never store data.
+- **Multiple instances in one module fail startup.** The default ladder cannot
+  express "store A yes, store B no", so it refuses instead of silently granting
+  every store:
+
+  ```text
+  mage2mcp: rbac: magento has 2 instances (demo, demo-alt); the default policy binds one instance per module. Grant per-instance policies explicitly, or call DefaultPolicyAllInstances() to treat them as one trust domain
+  ```
+
+  This is the SEM-02 security default, not a configuration fault. The same check
+  runs before the `auth.enabled` branch today, so it also rejects a multi-instance
+  module with authentication disabled; that is a known wiring issue: policy
+  construction should move inside the auth-enabled branch. Use one instance per
+  module until the wiring is changed.
+
+**How to resolve a multi-instance module.** Pick one:
+
+1. Configure one instance per module (the normal shape: one Magento store, one
+   Cloudflare zone, one GA4 property). No code change.
+2. Write per-instance grants explicitly with `rbac.New` and pass that policy to
+   the server. This is a code change; there is no YAML policy surface yet.
+3. Opt in to one trust domain with `rbac.DefaultPolicyAllInstances()` instead of
+   `rbac.DefaultPolicy(...)`. This is a code change in `cmd/server`; every grant
+   becomes `"*"`, so **any role grant applies to every instance** and the
+   cross-instance isolation is gone. Use it only when all configured instances
+   belong to one tenant.
+
+Do not disable authentication to work around the startup error: `auth.enabled:
+false` makes every tool anonymous and is allowed only on a loopback development
+listener.
+
 ## `log`
 
 | Key | Type | Default | Validation / effect |
@@ -219,9 +267,10 @@ validation with an actionable message; it previously failed later during module
 registration with a misleading "bindings require both ... to be enabled" error.
 Multi-zone or multi-property bindings are not supported yet. Remove the
 `bindings` block (and the unified tool disappears) until the adapters are
-resolver-aware. The ADR still carries the older status "implementation in
-progress" and a positive-consequence bullet that claims multi-instance bindings
-work; this section is the as-built statement until the ADR is refreshed.
+resolver-aware. ADR-0018 is updated (per-tool routing implemented; unified
+bindings still single-instance), but its positive-consequence bullet still
+overstates multi-instance bindings; this section is the as-built statement until
+that bullet is corrected.
 
 Working shape:
 
@@ -316,6 +365,7 @@ Startup fails when any of these is true:
 - `database.url` is set but is not a `postgres://`/`postgresql://` URL, or `max_conns` is not positive.
 - An enabled module has no instances, an instance has no `id` or `credential`, an instance id repeats within a module, or an id is reused across modules.
 - A binding id is empty or duplicated, a binding member is empty or references an unknown instance, a binding is declared while a module is disabled, or a binding is declared with more than one Cloudflare or GA4 instance.
+- The compiled RBAC policy cannot bind a module with more than one instance; startup fails with the `rbac: ... has N instances ...` error above (currently regardless of `auth.enabled`).
 
 The regression test `TestShippedConfigsValidate` loads every YAML file under
 `configs/` with the environment each template documents and fails if a shipped

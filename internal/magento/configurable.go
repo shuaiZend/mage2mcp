@@ -929,7 +929,7 @@ func stageFailure(stage, sku string, cause error) error {
 // Without them the caller is told "verify store_code and field values" when the
 // real problem is a specific attribute value, and the retry that follows
 // re-creates products.
-var upstreamDetailKeys = []string{"upstream_status", "upstream_code", "store_code"}
+var upstreamDetailKeys = []string{"upstream_status", "upstream_code", "store_code", "upstream_field"}
 
 // maxUpstreamMessageBytes bounds the upstream text copied into a detail. The full
 // message can be long and can quote store data; a bounded prefix is enough to
@@ -957,6 +957,12 @@ func preserveUpstream(e *errs.Error, cause error) error {
 	if message := strings.TrimSpace(from.Details["upstream_message"]); message != "" {
 		if len(message) > maxUpstreamMessageBytes {
 			message = message[:maxUpstreamMessageBytes] + "…"
+		}
+		// The field name is identifier-shaped and safe. The message is only
+		// forwarded when it names no ACL resource, quoted token, or SKU; the raw
+		// text stays in Upstream for the server log either way.
+		if upstreamTextIsSafe(message) {
+			e = e.WithDetail("upstream_message", message)
 		}
 		e = e.WithUpstream(message)
 	}
@@ -1076,7 +1082,7 @@ type VariationRow struct {
 
 // VariationResult reports a partial-success variation creation.
 type VariationResult struct {
-	Total   int            `json:"total" jsonschema:"Number of records the store holds; may exceed the number returned."`
+	Total   int            `json:"total" jsonschema:"Number of variations in this request."`
 	Created int            `json:"created" jsonschema:"Rows that created a product."`
 	Linked  int            `json:"linked" jsonschema:"True when the child is now linked to the parent."`
 	Skipped int            `json:"skipped" jsonschema:"Rows skipped because the product existed."`

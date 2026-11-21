@@ -3,6 +3,7 @@
 package rbac
 
 import (
+	"strings"
 	"testing"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
@@ -24,10 +25,11 @@ func analyst() *auth.Identity {
 
 func TestNewRejectsInvalidGrants(t *testing.T) {
 	cases := [][]Grant{
-		{{Role: "", Tool: "x", Scope: ScopeRead, Effect: EffectAllow}},
-		{{Role: "r", Tool: "", Scope: ScopeRead, Effect: EffectAllow}},
-		{{Role: "r", Tool: "x", Scope: "superuser", Effect: EffectAllow}},
-		{{Role: "r", Tool: "x", Scope: ScopeRead, Effect: "maybe"}},
+		{{Role: "", Tool: "x", Instance: "i", Scope: ScopeRead, Effect: EffectAllow}},
+		{{Role: "r", Tool: "", Instance: "i", Scope: ScopeRead, Effect: EffectAllow}},
+		{{Role: "r", Tool: "x", Instance: "i", Scope: "superuser", Effect: EffectAllow}},
+		{{Role: "r", Tool: "x", Instance: "i", Scope: ScopeRead, Effect: "maybe"}},
+		{{Role: "r", Tool: "x", Scope: ScopeRead, Effect: EffectAllow}},
 	}
 	for i, grants := range cases {
 		if _, err := New(grants); err == nil {
@@ -46,8 +48,8 @@ func TestDefaultDeny(t *testing.T) {
 
 func TestAllowExactAndPrefix(t *testing.T) {
 	p := mustPolicy(t,
-		Grant{Role: "analyst", Tool: "magento.product.get", Scope: ScopeRead, Effect: EffectAllow},
-		Grant{Role: "analyst", Tool: "ga4.analytics", Scope: ScopeRead, Effect: EffectAllow},
+		Grant{Role: "analyst", Tool: "magento.product.get", Instance: "store-us", Scope: ScopeRead, Effect: EffectAllow},
+		Grant{Role: "analyst", Tool: "ga4.analytics", Instance: "giztop", Scope: ScopeRead, Effect: EffectAllow},
 	)
 	if err := p.Authorize(analyst(), "magento.product.get", "store-us", ScopeRead); err != nil {
 		t.Fatalf("exact allow: %v", err)
@@ -72,8 +74,8 @@ func TestInstanceScoping(t *testing.T) {
 
 func TestDenyOverridesAllow(t *testing.T) {
 	p := mustPolicy(t,
-		Grant{Role: "operator", Tool: "magento.product", Scope: ScopeWrite, Effect: EffectAllow},
-		Grant{Role: "operator", Tool: "magento.product.delete", Scope: ScopeDestructive, Effect: EffectDeny},
+		Grant{Role: "operator", Tool: "magento.product", Instance: "store-us", Scope: ScopeWrite, Effect: EffectAllow},
+		Grant{Role: "operator", Tool: "magento.product.delete", Instance: "store-us", Scope: ScopeDestructive, Effect: EffectDeny},
 	)
 	op := &auth.Identity{Subject: "user-2", Class: auth.ClassHuman, Roles: []string{"operator"}}
 	if err := p.Authorize(op, "magento.product.update", "store-us", ScopeWrite); err != nil {
@@ -85,14 +87,14 @@ func TestDenyOverridesAllow(t *testing.T) {
 }
 
 func TestScopeHierarchy(t *testing.T) {
-	p := mustPolicy(t, Grant{Role: "admin", Tool: "*", Scope: ScopeAdmin, Effect: EffectAllow})
+	p := mustPolicy(t, Grant{Role: "admin", Tool: "*", Instance: "store-us", Scope: ScopeAdmin, Effect: EffectAllow})
 	admin := &auth.Identity{Subject: "admin-1", Class: auth.ClassHuman, Roles: []string{"admin"}}
 	for _, scope := range []string{ScopeRead, ScopeWrite, ScopeDestructive, ScopeAdmin} {
 		if err := p.Authorize(admin, "magento.product.delete", "store-us", scope); err != nil {
 			t.Fatalf("admin should cover %s: %v", scope, err)
 		}
 	}
-	readOnly := mustPolicy(t, Grant{Role: "viewer", Tool: "*", Scope: ScopeRead, Effect: EffectAllow})
+	readOnly := mustPolicy(t, Grant{Role: "viewer", Tool: "*", Instance: "store-us", Scope: ScopeRead, Effect: EffectAllow})
 	viewer := &auth.Identity{Subject: "v", Roles: []string{"viewer"}}
 	if err := readOnly.Authorize(viewer, "magento.product.update", "store-us", ScopeWrite); err == nil {
 		t.Fatal("read grant must not cover write")
@@ -104,14 +106,14 @@ func TestNilIdentityOrPolicyDenies(t *testing.T) {
 	if err := p.Authorize(analyst(), "magento.product.get", "i", ScopeRead); err == nil {
 		t.Fatal("nil policy must deny")
 	}
-	valid := mustPolicy(t, Grant{Role: "analyst", Tool: "*", Scope: ScopeRead, Effect: EffectAllow})
+	valid := mustPolicy(t, Grant{Role: "analyst", Tool: "*", Instance: "i", Scope: ScopeRead, Effect: EffectAllow})
 	if err := valid.Authorize(nil, "magento.product.get", "i", ScopeRead); err == nil {
 		t.Fatal("nil identity must deny")
 	}
 }
 
 func TestUnknownRequiredScopeDenies(t *testing.T) {
-	p := mustPolicy(t, Grant{Role: "analyst", Tool: "*", Scope: ScopeAdmin, Effect: EffectAllow})
+	p := mustPolicy(t, Grant{Role: "analyst", Tool: "*", Instance: "i", Scope: ScopeAdmin, Effect: EffectAllow})
 	if err := p.Authorize(analyst(), "magento.product.get", "i", "root"); err == nil {
 		t.Fatal("unknown required scope must deny")
 	}
@@ -126,7 +128,7 @@ func identityFor(role string) *auth.Identity {
 // stay read-only, a write grant stops below destructive, and only the admin
 // rung covers destructive and admin calls.
 func TestDefaultPolicyExpressesTheLadder(t *testing.T) {
-	p, err := DefaultPolicy()
+	p, err := DefaultPolicy(map[string][]string{"magento": {"store-us"}})
 	if err != nil {
 		t.Fatalf("DefaultPolicy: %v", err)
 	}
@@ -178,13 +180,13 @@ func TestDefaultPolicyExpressesTheLadder(t *testing.T) {
 // TestDefaultPolicyDenyStillBeatsAllow proves the shipped policy has not traded
 // away deny-beats-allow: a deny grant layered on a covering allow still wins.
 func TestDefaultPolicyDenyStillBeatsAllow(t *testing.T) {
-	p, err := DefaultPolicy()
+	p, err := DefaultPolicy(map[string][]string{"magento": {"store-us"}})
 	if err != nil {
 		t.Fatalf("DefaultPolicy: %v", err)
 	}
 	denied, err := New([]Grant{
-		{Role: "operator", Tool: "*", Scope: ScopeWrite, Effect: EffectAllow},
-		{Role: "operator", Tool: "magento.product.delete", Scope: ScopeWrite, Effect: EffectDeny},
+		{Role: "operator", Tool: "*", Instance: "store-us", Scope: ScopeWrite, Effect: EffectAllow},
+		{Role: "operator", Tool: "magento.product.delete", Instance: "store-us", Scope: ScopeWrite, Effect: EffectDeny},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -202,7 +204,7 @@ func TestDefaultPolicyDenyStillBeatsAllow(t *testing.T) {
 // name the policy does not grant must reach nothing, and a near-miss spelling
 // must not be normalised into a grant.
 func TestUnknownRoleCannotWidenAccess(t *testing.T) {
-	p, err := DefaultPolicy()
+	p, err := DefaultPolicy(map[string][]string{"magento": {"store-us"}})
 	if err != nil {
 		t.Fatalf("DefaultPolicy: %v", err)
 	}
@@ -239,5 +241,125 @@ func TestUnknownRoleCannotWidenAccess(t *testing.T) {
 				t.Fatalf("roles=%q: code = %v, want permission_denied", tc.roles, errs.CodeOf(err))
 			}
 		})
+	}
+}
+
+// TestDefaultPolicyBindsInstances is the SEM-02 regression. The shipped policy
+// used to carry an instance-less wildcard grant, so a viewer authorized for one
+// store could read every configured store. Reverting to that wildcard makes the
+// demo-alt case below succeed and fails this test.
+func TestDefaultPolicyBindsInstances(t *testing.T) {
+	p, err := DefaultPolicy(map[string][]string{"magento": {"demo"}})
+	if err != nil {
+		t.Fatalf("DefaultPolicy: %v", err)
+	}
+	viewer := identityFor("viewer")
+	if err := p.Authorize(viewer, "magento.product.get", "demo", ScopeRead); err != nil {
+		t.Fatalf("viewer must read the configured instance demo: %v", err)
+	}
+	err = p.Authorize(viewer, "magento.product.get", "demo-alt", ScopeRead)
+	if err == nil {
+		t.Fatal("viewer must not read an instance the policy does not bind (SEM-02)")
+	}
+	if code := errs.CodeOf(err); code != errs.CodePermissionDenied {
+		t.Fatalf("cross-instance denial code = %v, want permission_denied", code)
+	}
+	// The same binding must hold for the higher rungs: operator writes demo and
+	// nothing else.
+	operator := identityFor("operator")
+	if err := p.Authorize(operator, "magento.product.update", "demo", ScopeWrite); err != nil {
+		t.Fatalf("operator must write the configured instance: %v", err)
+	}
+	if err := p.Authorize(operator, "magento.product.update", "demo-alt", ScopeWrite); err == nil {
+		t.Fatal("operator must not write an unbound instance")
+	}
+}
+
+// TestDefaultPolicyRefusesToGuessATrustDomain pins the fail-closed default for a
+// multi-instance deployment: silently binding every instance would restore the
+// cross-instance grant SEM-02 removed.
+func TestDefaultPolicyRefusesToGuessATrustDomain(t *testing.T) {
+	_, err := DefaultPolicy(map[string][]string{"magento": {"demo", "demo-alt"}})
+	if err == nil {
+		t.Fatal("a multi-instance deployment must not get a default policy")
+	}
+	for _, want := range []string{"magento has 2 instances", "demo", "demo-alt", "DefaultPolicyAllInstances"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err.Error(), want)
+		}
+	}
+}
+
+// TestDefaultPolicyBindsEveryModule keeps the shipped all-modules deployment
+// working: one instance per module is the normal shape, and the ladder binds
+// each of them.
+func TestDefaultPolicyBindsEveryModule(t *testing.T) {
+	p, err := DefaultPolicy(map[string][]string{
+		"magento":    {"demo"},
+		"cloudflare": {"cf-zone"},
+		"ga4":        {"ga-property"},
+	})
+	if err != nil {
+		t.Fatalf("DefaultPolicy: %v", err)
+	}
+	viewer := identityFor("viewer")
+	for _, instance := range []string{"demo", "cf-zone", "ga-property"} {
+		if err := p.Authorize(viewer, "magento.product.get", instance, ScopeRead); err != nil {
+			t.Fatalf("viewer must read %s: %v", instance, err)
+		}
+	}
+	// A second Magento store is not bound, so it stays unreachable.
+	if err := p.Authorize(viewer, "magento.product.get", "demo-alt", ScopeRead); err == nil {
+		t.Fatal("a store outside the bound set must stay unreachable")
+	}
+}
+
+// TestDefaultPolicyAllInstancesIsOptIn proves the single-trust-domain behaviour
+// still exists, but only when it is asked for explicitly.
+func TestDefaultPolicyAllInstancesIsOptIn(t *testing.T) {
+	p, err := DefaultPolicyAllInstances()
+	if err != nil {
+		t.Fatalf("DefaultPolicyAllInstances: %v", err)
+	}
+	viewer := identityFor("viewer")
+	for _, instance := range []string{"demo", "demo-alt", "any-other"} {
+		if err := p.Authorize(viewer, "magento.product.get", instance, ScopeRead); err != nil {
+			t.Fatalf("explicit wildcard policy denied %s: %v", instance, err)
+		}
+	}
+	if err := p.Authorize(viewer, "magento.product.update", "demo", ScopeWrite); err == nil {
+		t.Fatal("the wildcard opt-in must not widen the scope ladder")
+	}
+}
+
+// TestDefaultPolicyWithoutInstancesServesPlatformInfo keeps a data-source-free
+// deployment usable: platform.info is authorized, data tools are not.
+func TestDefaultPolicyWithoutInstancesServesPlatformInfo(t *testing.T) {
+	p, err := DefaultPolicy(nil)
+	if err != nil {
+		t.Fatalf("DefaultPolicy(nil): %v", err)
+	}
+	viewer := identityFor("viewer")
+	if err := p.Authorize(viewer, "platform.info", "", ScopeRead); err != nil {
+		t.Fatalf("platform.info must stay readable: %v", err)
+	}
+	if err := p.Authorize(viewer, "magento.product.get", "", ScopeRead); err == nil {
+		t.Fatal("no instance is configured, so no data tool may be authorized")
+	}
+}
+
+// TestUnboundGrantIsRejected closes the other half of SEM-02: a grant without an
+// instance must not exist at all, so it can never match a named instance.
+func TestUnboundGrantIsRejected(t *testing.T) {
+	_, err := New([]Grant{{Role: "viewer", Tool: "*", Scope: ScopeRead, Effect: EffectAllow}})
+	if err == nil {
+		t.Fatal("a grant with no instance must be rejected")
+	}
+	if !strings.Contains(err.Error(), "instance") {
+		t.Fatalf("error %q does not explain the instance requirement", err.Error())
+	}
+	// The wildcard is the only way to span instances, and it must be explicit.
+	if _, err := New([]Grant{{Role: "viewer", Tool: "*", Instance: WildcardInstance, Scope: ScopeRead, Effect: EffectAllow}}); err != nil {
+		t.Fatalf("explicit wildcard grant rejected: %v", err)
 	}
 }

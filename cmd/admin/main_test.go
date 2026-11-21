@@ -5,15 +5,17 @@ package main
 import (
 	"bytes"
 	"context"
-	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
+	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
+	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
 
 // The approval CLI had no tests at all. These pin the contract that matters for
@@ -220,4 +222,58 @@ func (f *fakeVerifier) Verify(context.Context, string) (*auth.Identity, error) {
 		return nil, f.err
 	}
 	return &auth.Identity{Subject: f.subject}, nil
+}
+
+// TestRecordApprovalPersistsUnderAuditConstraints is the SEM-03 regression: the
+// approval row has to satisfy the database's decision/phase/state constraints.
+// Before migration 000009 the insert failed with
+// `violates check constraint "audit_events_decision_check"`, so an approval left
+// no audit trail at all. Rolling the migration back fails this test.
+//
+// It needs a disposable PostgreSQL, like the internal/storage integration tests.
+func TestRecordApprovalPersistsUnderAuditConstraints(t *testing.T) {
+	url := os.Getenv("MAGE2MCP_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("MAGE2MCP_TEST_DATABASE_URL is not set; skipping PostgreSQL integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	store, err := storage.Open(ctx, storage.Config{URL: url, MaxConns: 2})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(store.Close)
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	recorder := storage.NewAuditRecorder(store)
+	request := &confirm.Request{
+		ID: "conf-approval-audit", Tool: "magento.product.delete",
+		Instance: "store-us", Scope: "destructive", Requester: "agent-a",
+	}
+	if err := recordApproval(ctx, recorder, request, "reviewer@example.com"); err != nil {
+		t.Fatalf("recordApproval against the real schema: %v", err)
+	}
+
+	rows, err := store.ListAudit(ctx, "magento.product.delete", 20)
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	for _, row := range rows {
+		if row.Phase != "approval" {
+			continue
+		}
+		if row.Decision != "approve" {
+			t.Fatalf("decision = %q, want approve", row.Decision)
+		}
+		if row.State != "approved" {
+			t.Fatalf("state = %q, want approved", row.State)
+		}
+		if row.Instance != "store-us" {
+			t.Fatalf("instance = %q, want store-us", row.Instance)
+		}
+		return
+	}
+	t.Fatalf("no audit row with phase=approval was written; rows = %+v", rows)
 }

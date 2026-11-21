@@ -90,11 +90,14 @@ func (s *Service) CreateShipment(ctx context.Context, in ShipmentCreateInput) (*
 	for _, track := range in.Tracks {
 		tracks = append(tracks, shipmentTrackBody(track))
 	}
-	body := shipmentCreateBody{Entity: shipmentEntityBody{
-		OrderID: in.OrderID, Items: items, Tracks: tracks,
-		Comment: documentComment{Comment: in.Comment, IsVisibleOnFront: false},
-		Notify:  in.Notify,
-	}}
+	body := shipmentOrderBody{
+		Items: items, Tracks: tracks,
+		AppendComment: in.Comment != "",
+		Notify:        in.Notify,
+	}
+	if in.Comment != "" {
+		body.Comment = &documentComment{Comment: in.Comment, IsVisibleOnFront: false}
+	}
 	// The create route is /order/{id}/ship and it answers with the new shipment id;
 	// /shipments is not a route at all, and the id is not the shipment object.
 	raw, err := s.client.do(ctx, http.MethodPost,
@@ -182,12 +185,17 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 	for _, line := range in.Items {
 		items = append(items, invoiceItemBody(line))
 	}
-	body := creditmemoCreateBody{Entity: creditmemoEntityBody{
-		OrderID: in.OrderID, InvoiceID: invoiceID, Items: items,
-		AdjustmentPositive: in.AdjustmentPositive, AdjustmentNegative: in.AdjustmentNegative,
-		Comment: documentComment{Comment: in.Comment, IsVisibleOnFront: false},
-		Notify:  in.Notify,
-	}}
+	body := refundOrderBody{
+		Items: items, AppendComment: in.Comment != "", Notify: in.Notify,
+	}
+	if in.Comment != "" {
+		body.Comment = &documentComment{Comment: in.Comment, IsVisibleOnFront: false}
+	}
+	if in.AdjustmentPositive != 0 || in.AdjustmentNegative != 0 {
+		body.Arguments = &refundOrderArguments{
+			AdjustmentPositive: in.AdjustmentPositive, AdjustmentNegative: in.AdjustmentNegative,
+		}
+	}
 	// The create route is /order/{id}/refund; /creditmemos is not a route, and the
 	// answer is the new credit memo id as a JSON scalar rather than the document.
 	raw, postErr := s.client.do(ctx, http.MethodPost,
@@ -211,6 +219,15 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 		return nil, operationUnknownError(run.ID(), "credit memo creation", string(errs.CodeOf(readErr)))
 	}
 	creditmemo := *created
+	if creditmemo.TotalQty == nil && len(in.Items) > 0 {
+		// The read-back carried neither total_qty nor item rows; the quantity that
+		// was refunded is exactly the quantity this call requested.
+		total := 0.0
+		for _, line := range in.Items {
+			total += line.Qty
+		}
+		creditmemo.TotalQty = &total
+	}
 	result := &CreditmemoCreateResult{Creditmemo: creditmemo, InvoiceID: invoiceID, OperationID: run.ID()}
 	ref := "creditmemo:" + creditmemo.IncrementID
 	if creditmemo.IncrementID == "" {
@@ -345,16 +362,17 @@ type documentComment struct {
 	IsVisibleOnFront bool   `json:"is_visible_on_front"`
 }
 
-type shipmentCreateBody struct {
-	Entity shipmentEntityBody `json:"entity"`
-}
-
-type shipmentEntityBody struct {
-	OrderID int                 `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
-	Items   []invoiceItemBody   `json:"items" jsonschema:"Entries returned by this call."`
-	Tracks  []shipmentTrackBody `json:"tracks,omitempty" jsonschema:"Tracking numbers attached to the shipment."`
-	Comment documentComment     `json:"comment"`
-	Notify  bool                `json:"notify"`
+// shipmentOrderBody is the body of POST /order/{orderId}/ship
+// (ShipOrderInterface::execute). The parameters are TOP-LEVEL: the route does not
+// accept an {"entity": ...} wrapper. A wrapped body is silently ignored, Magento
+// receives no items, and the whole order is shipped instead of the requested
+// lines.
+type shipmentOrderBody struct {
+	Items         []invoiceItemBody   `json:"items"`
+	Tracks        []shipmentTrackBody `json:"tracks,omitempty"`
+	Comment       *documentComment    `json:"comment,omitempty"`
+	AppendComment bool                `json:"appendComment"`
+	Notify        bool                `json:"notify"`
 }
 
 type shipmentTrackBody struct {
@@ -363,18 +381,24 @@ type shipmentTrackBody struct {
 	CarrierCode string `json:"carrier_code"`
 }
 
-type creditmemoCreateBody struct {
-	Entity creditmemoEntityBody `json:"entity"`
+// refundOrderBody is the body of POST /order/{orderId}/refund
+// (RefundOrderInterface::execute). The parameters are TOP-LEVEL: the route does
+// not accept an {"entity": ...} wrapper. A wrapped body is silently ignored,
+// Magento receives no items, and the whole invoice is refunded instead of the
+// requested lines.
+type refundOrderBody struct {
+	Items         []invoiceItemBody     `json:"items"`
+	Comment       *documentComment      `json:"comment,omitempty"`
+	Arguments     *refundOrderArguments `json:"arguments,omitempty"`
+	AppendComment bool                  `json:"appendComment"`
+	Notify        bool                  `json:"notify"`
 }
 
-type creditmemoEntityBody struct {
-	OrderID            int               `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
-	InvoiceID          int               `json:"invoice_id,omitempty"`
-	Items              []invoiceItemBody `json:"items" jsonschema:"Entries returned by this call."`
-	AdjustmentPositive float64           `json:"adjustment_positive,omitempty"`
-	AdjustmentNegative float64           `json:"adjustment_negative,omitempty"`
-	Comment            documentComment   `json:"comment"`
-	Notify             bool              `json:"notify"`
+// refundOrderArguments carries the optional credit-memo adjustments; they are a
+// parameter of the refund route, not top-level fields.
+type refundOrderArguments struct {
+	AdjustmentPositive float64 `json:"adjustment_positive,omitempty"`
+	AdjustmentNegative float64 `json:"adjustment_negative,omitempty"`
 }
 
 func validateDocumentLines(orderID int, lines []DocumentLine) error {

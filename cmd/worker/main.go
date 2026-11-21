@@ -149,6 +149,18 @@ func run() error {
 			if err != nil {
 				return fmt.Errorf("encode import report: %w", err)
 			}
+			if state == "partial" {
+				// The queue records execution, so the job still completes; the
+				// partial marker carries the business outcome so import.status can
+				// report "partial" instead of a misleading "succeeded".
+				var report map[string]any
+				if err := json.Unmarshal(raw, &report); err == nil {
+					report[jobs.ResultPartialKey] = true
+					if marked, err := json.Marshal(report); err == nil {
+						raw = marked
+					}
+				}
+			}
 			if err := queue.SetResult(ctx, task.ID, task.LeaseToken, string(raw)); err != nil {
 				if errors.Is(err, jobs.ErrLeaseLost) {
 					// Another attempt owns the row; its outcome is the truth.

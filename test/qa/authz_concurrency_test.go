@@ -13,9 +13,12 @@ import (
 	"github.com/shuaiZend/mage2mcp/internal/security/rbac"
 )
 
-func mustPolicy(t *testing.T) *rbac.Policy {
+// mustPolicy returns the shipped ladder bound to one instance. The parameter is
+// not variadic on purpose: every fixture must name the instance it authorizes,
+// so a policy that silently authorizes nothing cannot slip in.
+func mustPolicy(t *testing.T, instance string) *rbac.Policy {
 	t.Helper()
-	policy, err := rbac.DefaultPolicy()
+	policy, err := rbac.DefaultPolicy(map[string][]string{"magento": {instance}})
 	if err != nil {
 		t.Fatalf("qa: default policy: %v", err)
 	}
@@ -45,7 +48,7 @@ func TestConcurrentViewerCannotWriteWhileOperatorReads(t *testing.T) {
 	f := newFixture(t, fixtureOptions{
 		upstreams: map[string]string{inst: up.url()},
 		writes:    true,
-		policy:    mustPolicy(t),
+		policy:    mustPolicy(t, inst),
 	})
 	viewer := f.session(t, "viewer-1", "viewer")
 	operator := f.session(t, "operator-1", "operator")
@@ -127,7 +130,7 @@ func TestUnknownRoleGrantsNothing(t *testing.T) {
 	f := newFixture(t, fixtureOptions{
 		upstreams: map[string]string{inst: up.url()},
 		writes:    true,
-		policy:    mustPolicy(t),
+		policy:    mustPolicy(t, inst),
 	})
 	session := f.session(t, "nobody-1", "superuser", "admin-of-everything")
 	res := f.call(t, session, "magento.product.get", map[string]any{"instance": inst, "sku": "SKU-1"})
@@ -148,7 +151,7 @@ func TestAuthorizationIsFailClosedForUnregisteredTools(t *testing.T) {
 	f := newFixture(t, fixtureOptions{
 		upstreams: map[string]string{inst: up.url()},
 		writes:    true,
-		policy:    mustPolicy(t),
+		policy:    mustPolicy(t, inst),
 	})
 	admin := f.session(t, "admin-1", "admin")
 	res := f.call(t, admin, "magento.tool.that.does.not.exist", map[string]any{"instance": inst})

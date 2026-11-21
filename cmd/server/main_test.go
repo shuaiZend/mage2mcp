@@ -338,7 +338,7 @@ func testConfirmService(t *testing.T) *confirm.Service {
 
 func TestShippedPolicyEnforcesScopeLadder(t *testing.T) {
 	reg := policyFixtureRegistry(t)
-	policy, err := rbac.DefaultPolicy()
+	policy, err := rbac.DefaultPolicy(map[string][]string{"magento": {"store-us"}})
 	if err != nil {
 		t.Fatalf("DefaultPolicy: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestRealToolPermissionsMatchFixture(t *testing.T) {
 func TestAuthorizeFuncPassesRequiredScope(t *testing.T) {
 	cfg := config.Default()
 	cfg.Auth.Enabled = true
-	policy, err := rbac.DefaultPolicy()
+	policy, err := rbac.DefaultPolicy(map[string][]string{"magento": {"store-us"}})
 	if err != nil {
 		t.Fatalf("DefaultPolicy: %v", err)
 	}
@@ -462,7 +462,7 @@ func TestAuthorizeFuncPassesRequiredScope(t *testing.T) {
 func TestAuthorizeFuncWarnsWhenAuthDisabled(t *testing.T) {
 	cfg := config.Default()
 	cfg.Auth.Enabled = false
-	policy, err := rbac.DefaultPolicy()
+	policy, err := rbac.DefaultPolicy(map[string][]string{"magento": {"store-us"}})
 	if err != nil {
 		t.Fatalf("DefaultPolicy: %v", err)
 	}
@@ -596,4 +596,102 @@ func TestEveryRegisteredToolSchemaIsClosed(t *testing.T) {
 			t.Errorf("tool %s has an invalid input schema: %v", tool.Name, err)
 		}
 	}
+}
+
+// multiStoreConfig is the shape t62's regression broke: two stores in one
+// module, which the RBAC ladder cannot authorize per store.
+func multiStoreConfig(authEnabled bool) config.Config {
+	cfg := config.Default()
+	cfg.Auth.Enabled = authEnabled
+	cfg.Modules.Magento = config.Module{Enabled: true, Instances: []config.Instance{
+		{ID: "demo", Endpoint: "https://demo.example.com", StoreCode: "default", Credential: "bearer:t"},
+		{ID: "demo-alt", Endpoint: "https://alt.example.com", StoreCode: "default", Credential: "bearer:t"},
+	}}
+	return cfg
+}
+
+// TestDefaultPolicyFollowsAuthMode is the t74 regression: the RBAC policy is
+// built only when authentication is on, so turning authentication off cannot
+// block a multi-store deployment on a trust-domain rule that would never be
+// consulted.
+//
+// It covers both directions. Reverting the auth check (building the policy
+// unconditionally) makes the "auth disabled" case fail with
+// "rbac: magento has 2 instances …"; weakening the auth-enabled refusal makes
+// the other case fail.
+func TestDefaultPolicyFollowsAuthMode(t *testing.T) {
+	t.Run("multi-store with authentication disabled builds no policy", func(t *testing.T) {
+		policy, err := defaultPolicy(multiStoreConfig(false))
+		if err != nil {
+			t.Fatalf("a multi-store deployment with auth disabled must start: %v", err)
+		}
+		if policy != nil {
+			t.Fatal("no policy should be built when authentication is disabled")
+		}
+		// The same config still registers every store: the startup block was the
+		// only thing that failed before.
+		reg := registry.New()
+		if err := registerModules(multiStoreConfig(false), reg); err != nil {
+			t.Fatalf("registerModules: %v", err)
+		}
+		if _, ok := reg.Lookup("magento.product.get"); !ok {
+			t.Fatal("read tools must still register for a multi-store deployment")
+		}
+	})
+
+	t.Run("multi-store with authentication enabled still refuses to start", func(t *testing.T) {
+		policy, err := defaultPolicy(multiStoreConfig(true))
+		if err == nil {
+			t.Fatal("a multi-store deployment with auth enabled must not get a default policy")
+		}
+		if policy != nil {
+			t.Fatal("a refused policy must not be returned")
+		}
+		for _, want := range []string{"magento has 2 instances", "demo", "demo-alt", "DefaultPolicyAllInstances"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error %q does not mention %q", err.Error(), want)
+			}
+		}
+	})
+
+	t.Run("single instance with authentication enabled isolates stores", func(t *testing.T) {
+		cfg := config.Default()
+		cfg.Auth.Enabled = true
+		cfg.Modules.Magento = config.Module{Enabled: true, Instances: []config.Instance{
+			{ID: "demo", Endpoint: "https://demo.example.com", StoreCode: "default", Credential: "bearer:t"},
+		}}
+		policy, err := defaultPolicy(cfg)
+		if err != nil {
+			t.Fatalf("single-instance default policy: %v", err)
+		}
+		if policy == nil {
+			t.Fatal("authentication is enabled, so a policy is required")
+		}
+		viewer := &auth.Identity{Subject: "viewer-1", Class: auth.ClassHuman, Roles: []string{"viewer"}}
+		if err := policy.Authorize(viewer, "magento.product.get", "demo", rbac.ScopeRead); err != nil {
+			t.Fatalf("viewer must read the configured instance: %v", err)
+		}
+		if err := policy.Authorize(viewer, "magento.product.get", "demo-alt", rbac.ScopeRead); err == nil {
+			t.Fatal("viewer must not read a store the policy does not bind (SEM-02)")
+		}
+	})
+
+	t.Run("no data sources", func(t *testing.T) {
+		cfg := config.Default()
+		cfg.Auth.Enabled = true
+		policy, err := defaultPolicy(cfg)
+		if err != nil {
+			t.Fatalf("a deployment without data sources must start: %v", err)
+		}
+		if policy == nil {
+			t.Fatal("authentication is enabled, so a policy is required")
+		}
+		viewer := &auth.Identity{Subject: "viewer-1", Class: auth.ClassHuman, Roles: []string{"viewer"}}
+		if err := policy.Authorize(viewer, "platform.info", "", rbac.ScopeRead); err != nil {
+			t.Fatalf("platform.info must stay readable: %v", err)
+		}
+		if err := policy.Authorize(viewer, "magento.product.get", "", rbac.ScopeRead); err == nil {
+			t.Fatal("no instance is configured, so no data tool may be authorized")
+		}
+	})
 }

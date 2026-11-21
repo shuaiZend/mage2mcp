@@ -348,3 +348,138 @@ func TestCreateCustomerAddressUnsupportedRoute(t *testing.T) {
 		t.Fatalf("err = %v, want unsupported_capability", err)
 	}
 }
+
+// TestCreateCustomerAddressFallbackWritesRegionID proves the customer-update
+// fallback carries region_id. Without it Magento stores region_id 0 and the
+// address cannot be used for shipping in a region-directory country.
+func TestCreateCustomerAddressFallbackWritesRegionID(t *testing.T) {
+	var putBody map[string]any
+	var addresses []any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/customers/7/addresses":
+			http.NotFound(w, r) // dedicated route missing -> fallback
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/customers/7":
+			raw, _ := json.Marshal(addresses)
+			_, _ = io.WriteString(w, `{"id":7,"website_id":1,"email":"a@b.c","firstname":"Ada","lastname":"L","addresses":`+string(raw)+`}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/default/V1/customers/7":
+			raw, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(raw, &putBody); err != nil {
+				t.Errorf("decode put: %v", err)
+			}
+			customer, _ := putBody["customer"].(map[string]any)
+			list, _ := customer["addresses"].([]any)
+			addresses = list
+			for _, entry := range addresses {
+				if m, ok := entry.(map[string]any); ok {
+					if _, exists := m["id"]; !exists {
+						m["id"] = float64(9)
+					}
+				}
+			}
+			_, _ = io.WriteString(w, `true`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	address, err := svc.CreateCustomerAddress(context.Background(), 7, CustomerAddressInput{
+		Firstname: "Ada", Lastname: "Lovelace", Street: []string{"1 Way"},
+		City: "Warszawa", Postcode: "00-001", CountryID: "PL", Telephone: "500100200",
+		Region: "mazowieckie", RegionID: 1003,
+	})
+	if err != nil {
+		t.Fatalf("CreateCustomerAddress: %v", err)
+	}
+	customer, _ := putBody["customer"].(map[string]any)
+	list, _ := customer["addresses"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("put addresses = %+v", list)
+	}
+	entry, _ := list[0].(map[string]any)
+	if got, _ := entry["region_id"].(float64); int(got) != 1003 {
+		t.Fatalf("put region_id = %v, want 1003 (body=%+v)", entry["region_id"], entry)
+	}
+	if address.RegionID != 1003 {
+		t.Fatalf("returned region_id = %d, want 1003", address.RegionID)
+	}
+}
+
+// TestUpdateCustomerAddressRegionIDOnly proves a region_id-only update is a valid
+// request (the schema allows it) and that the value reaches Magento.
+func TestUpdateCustomerAddressRegionIDOnly(t *testing.T) {
+	var body customerAddressBody
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		_, _ = io.WriteString(w, `{"id":5,"country_id":"PL","region":"mazowieckie","region_id":1003}`)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	regionID := 1003
+	address, err := svc.UpdateCustomerAddress(context.Background(), 7, 5, CustomerAddressUpdateInput{RegionID: &regionID})
+	if err != nil {
+		t.Fatalf("UpdateCustomerAddress: %v", err)
+	}
+	if body.Address.RegionID != 1003 {
+		t.Fatalf("payload region_id = %d, want 1003", body.Address.RegionID)
+	}
+	if address.RegionID != 1003 {
+		t.Fatalf("returned region_id = %d, want 1003", address.RegionID)
+	}
+}
+
+// TestUpdateCustomerAddressFallbackWritesRegionID proves the customer-update
+// fallback writes region_id instead of silently dropping it.
+func TestUpdateCustomerAddressFallbackWritesRegionID(t *testing.T) {
+	var putBody map[string]any
+	addresses := []any{map[string]any{
+		"id": float64(5), "city": "Warszawa", "country_id": "PL",
+		"region": "dolnośląskie", "region_id": float64(997),
+	}}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/default/V1/customers/7/addresses/5":
+			http.NotFound(w, r) // dedicated route missing -> fallback
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/customers/7":
+			raw, _ := json.Marshal(addresses)
+			_, _ = io.WriteString(w, `{"id":7,"website_id":1,"email":"a@b.c","firstname":"Ada","lastname":"L","addresses":`+string(raw)+`}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/default/V1/customers/7":
+			raw, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(raw, &putBody); err != nil {
+				t.Errorf("decode put: %v", err)
+			}
+			customer, _ := putBody["customer"].(map[string]any)
+			list, _ := customer["addresses"].([]any)
+			addresses = list
+			_, _ = io.WriteString(w, `true`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	regionID := 1003
+	address, err := svc.UpdateCustomerAddress(context.Background(), 7, 5, CustomerAddressUpdateInput{RegionID: &regionID})
+	if err != nil {
+		t.Fatalf("UpdateCustomerAddress: %v", err)
+	}
+	customer, _ := putBody["customer"].(map[string]any)
+	list, _ := customer["addresses"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("put addresses = %+v", list)
+	}
+	entry, _ := list[0].(map[string]any)
+	if got, _ := entry["region_id"].(float64); int(got) != 1003 {
+		t.Fatalf("put region_id = %v, want 1003 (body=%+v)", entry["region_id"], entry)
+	}
+	if address.RegionID != 1003 {
+		t.Fatalf("returned region_id = %d, want 1003", address.RegionID)
+	}
+}

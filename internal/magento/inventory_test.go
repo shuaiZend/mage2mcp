@@ -90,7 +90,8 @@ func TestAssignSourceItemsErrorMapping(t *testing.T) {
 		{status: http.StatusForbidden, code: errs.CodePermissionDenied},
 		{status: http.StatusConflict, code: errs.CodeConflict},
 		{status: http.StatusTooManyRequests, code: errs.CodeRateLimited, retryable: true},
-		{status: http.StatusServiceUnavailable, code: errs.CodeUpstreamUnavailable, retryable: true},
+		// A 5xx may have applied the write: the envelope must not invite a retry.
+		{status: http.StatusServiceUnavailable, code: errs.CodeUpstreamUnavailable, retryable: false},
 	}
 	for _, tc := range tests {
 		t.Run(http.StatusText(tc.status), func(t *testing.T) {
@@ -745,5 +746,31 @@ func TestTransferSourceQtyFractionalReadBackIsUnknown(t *testing.T) {
 	}
 	if writes != 1 {
 		t.Fatalf("writes = %d, want 1 (no retry, no compensation)", writes)
+	}
+}
+
+// TestAssignSourceItemsUnknownOutcomeIsNotRetryable guards SEM-INV-03: a 5xx is
+// ambiguous, and an ambiguous write must not be advertised as retryable.
+func TestAssignSourceItemsUnknownOutcomeIsNotRetryable(t *testing.T) {
+	service, _ := newWriteService(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/products" {
+			_, _ = io.WriteString(w, `{"items":[{"sku":"SKU-1"}]}`)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"message":"boom"}`)
+	})
+	err := service.AssignSourceItems(context.Background(), []SourceItem{
+		{SKU: "SKU-1", SourceCode: "default", Quantity: 1, Status: 1},
+	})
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("err is not *errs.Error: %v", err)
+	}
+	if e.Details[OutcomeDetail] != OutcomeUnknown {
+		t.Fatalf("outcome = %q, want unknown", e.Details[OutcomeDetail])
+	}
+	if e.Retryable {
+		t.Fatal("an unknown outcome is marked retryable; the ledger refuses the retry the envelope invites")
 	}
 }

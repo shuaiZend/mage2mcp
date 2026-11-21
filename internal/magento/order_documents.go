@@ -185,10 +185,13 @@ type Creditmemo struct {
 	ShippingAmount float64 `json:"shipping_amount" jsonschema:"Shipping charged."`
 	TaxAmount      float64 `json:"tax_amount" jsonschema:"Tax charged."`
 	Adjustment     float64 `json:"adjustment" jsonschema:"Manual adjustment applied to the credit memo total."`
-	TotalQty       float64 `json:"total_qty" jsonschema:"Total quantity on the document."`
-	Currency       string  `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
-	CreatedAt      string  `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
-	UpdatedAt      string  `json:"updated_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	// TotalQty is a pointer because Magento's creditmemo resource does not always
+	// report it. A missing field must be omitted, never rendered as a false zero
+	// that reads as "nothing was refunded".
+	TotalQty  *float64 `json:"total_qty,omitempty" jsonschema:"Total quantity on the document; omitted when Magento does not report it."`
+	Currency  string   `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	CreatedAt string   `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	UpdatedAt string   `json:"updated_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
 }
 
 // OrderCreditmemos lists the credit memos of one order.
@@ -215,9 +218,34 @@ func (s *Service) GetCreditmemo(ctx context.Context, creditmemoID int) (*Creditm
 	if err != nil {
 		return nil, err
 	}
-	var creditmemo Creditmemo
-	if err := json.Unmarshal(raw, &creditmemo); err != nil {
+	return decodeCreditmemo(raw)
+}
+
+// decodeCreditmemo decodes one credit memo. Magento omits total_qty on this
+// resource, so when it is absent the quantity is derived from the item rows:
+// reporting 0 for a document that refunded units is worse than reporting the
+// truth, and omitting the field when there are no rows is honest.
+func decodeCreditmemo(raw []byte) (*Creditmemo, error) {
+	var wire struct {
+		Creditmemo
+		TotalQty *float64 `json:"total_qty"`
+		Items    []struct {
+			Qty float64 `json:"qty"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable creditmemo payload").WithCause(err)
+	}
+	creditmemo := wire.Creditmemo
+	switch {
+	case wire.TotalQty != nil:
+		creditmemo.TotalQty = wire.TotalQty
+	case len(wire.Items) > 0:
+		var total float64
+		for _, item := range wire.Items {
+			total += item.Qty
+		}
+		creditmemo.TotalQty = &total
 	}
 	return &creditmemo, nil
 }

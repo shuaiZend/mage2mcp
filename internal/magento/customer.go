@@ -394,13 +394,19 @@ func (s *Service) createAddressViaCustomerUpdate(ctx context.Context, customerID
 		}
 	}
 	current["id"] = customerID
-	current["addresses"] = append(existing, map[string]any{
+	appended := map[string]any{
 		"firstname": address.Firstname, "lastname": address.Lastname,
 		"street": address.Street, "city": address.City, "postcode": address.Postcode,
 		"country_id": address.CountryID, "telephone": address.Telephone,
 		"region": address.Region, "default_billing": address.DefaultBilling,
 		"default_shipping": address.DefaultShipping,
-	})
+	}
+	// Magento requires region_id for countries with a region directory; the
+	// customer-update fallback must carry it or the store silently stores 0.
+	if address.RegionID > 0 {
+		appended["region_id"] = address.RegionID
+	}
+	current["addresses"] = append(existing, appended)
 	if _, err := s.client.do(ctx, http.MethodPut, path, nil, map[string]any{"customer": current}); err != nil {
 		return nil, err
 	}
@@ -432,6 +438,7 @@ func (s *Service) createAddressViaCustomerUpdate(ctx context.Context, customerID
 	}
 	return &CustomerAddress{
 		ID: bestID, CountryID: address.CountryID, Region: address.Region,
+		RegionID:       address.RegionID,
 		DefaultBilling: address.DefaultBilling, DefaultShipping: address.DefaultShipping,
 	}, nil
 }
@@ -514,7 +521,7 @@ func (s *Service) UpdateCustomerAddress(ctx context.Context, customerID, address
 	}
 	if in.Firstname == nil && in.Lastname == nil && in.Street == nil && in.City == nil &&
 		in.Postcode == nil && in.CountryID == nil && in.Telephone == nil && in.Region == nil &&
-		in.DefaultBilling == nil && in.DefaultShipping == nil {
+		in.RegionID == nil && in.DefaultBilling == nil && in.DefaultShipping == nil {
 		return nil, invalidf("at least one field must be provided to update")
 	}
 	payload := customerAddressPayload{CustomerID: customerID}
@@ -570,6 +577,12 @@ func (s *Service) UpdateCustomerAddress(ctx context.Context, customerID, address
 			return nil, invalidf("region must be at most %d bytes", maxAddressBytes)
 		}
 		payload.Region = *in.Region
+	}
+	if in.RegionID != nil {
+		if *in.RegionID < 0 {
+			return nil, invalidf("region_id must not be negative")
+		}
+		payload.RegionID = *in.RegionID
 	}
 	if in.DefaultBilling != nil {
 		payload.DefaultBilling = *in.DefaultBilling
@@ -645,6 +658,7 @@ func (s *Service) updateAddressViaCustomerUpdate(ctx context.Context, customerID
 			return &CustomerAddress{
 				ID: addressID, CountryID: stringField(candidate, "country_id"),
 				Region:          stringField(candidate, "region"),
+				RegionID:        intField(candidate, "region_id"),
 				DefaultBilling:  boolField(candidate, "default_billing"),
 				DefaultShipping: boolField(candidate, "default_shipping"),
 			}, nil
@@ -669,6 +683,9 @@ func applyAddressUpdate(address map[string]any, in CustomerAddressUpdateInput) {
 	set("country_id", in.CountryID)
 	set("telephone", in.Telephone)
 	set("region", in.Region)
+	if in.RegionID != nil {
+		address["region_id"] = *in.RegionID
+	}
 	if in.Street != nil {
 		address["street"] = *in.Street
 	}
@@ -684,6 +701,12 @@ func applyAddressUpdate(address map[string]any, in CustomerAddressUpdateInput) {
 func stringField(m map[string]any, key string) string {
 	value, _ := m[key].(string)
 	return value
+}
+
+// intField reads a numeric field from a decoded map, tolerating absence.
+func intField(m map[string]any, key string) int {
+	value, _ := m[key].(float64)
+	return int(value)
 }
 
 // boolField reads a bool field from a decoded map, tolerating absence.

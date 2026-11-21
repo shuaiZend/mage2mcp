@@ -35,14 +35,14 @@ exists.
 | A2 | Algorithm allowlist (RS256/ES256); `none`/HMAC rejected | `internal/security/jwt/jwt.go` | `TestVerifyAlgorithmRejections` | TESTED (CONTRACT) |
 | A3 | `iss`/`aud`/`exp`/`nbf` with bounded skew | `internal/security/jwt/jwt.go` | `TestVerifyClaimRejections` | TESTED (CONTRACT) |
 | A4 | JWKS `kid` lookup, cache, refresh limiter, redirects refused | `internal/security/jwt/jwt.go` | `TestVerifyKidRejections`, `TestVerifyJWKSRedirectRejected`, `TestVerifyJWKSFailureIsRateLimited` | TESTED (CONTRACT) |
-| A5 | Session bound to verified identity | — | — | **PLANNED** (SEC-15, accepted) |
+| A5 | Session bound to verified identity | `internal/mcp/server/session.go` | `TestSessionIsBoundToItsCreator`, `TestSessionBindingIsInertWithoutIdentity` | TESTED (CONTRACT) |
 | A6 | Human vs service identity classes separated | `internal/security/auth/auth.go` | `TestVerifyServiceIdentity` | TESTED (CONTRACT) |
 | A7 | Assertion or bearer ingress; assertion precedence; duplicates rejected | `internal/security/auth/auth.go` | `TestMiddlewareAcceptsAssertionHeader`, `TestMiddlewareAssertionTakesPrecedence`, `TestMiddlewareRejectsBadAssertionHeaders`, `TestMiddlewareVerifiesAssertionThroughTheSameVerifier` | TESTED (CONTRACT) |
 | A8 | Origin lockdown (Tunnel / authenticated origin pull) | — | — | **DEPLOYMENT CONTROL** (not enforced) |
 | A9 | No token passthrough: caller credential never sent upstream | `internal/magento/client.go`, `internal/cloudflare/client.go`, `internal/ga4/client.go` | `TestGetProductRequestAndResponse` (asserts the vendor signer header) | IMPLEMENTED (no direct test) |
 | A10 | Audience binding to the configured application | `internal/security/jwt/jwt.go` | `TestVerifyClaimRejections` | TESTED (CONTRACT) |
 | A11 | Origin/DNS-rebinding protection | MCP SDK / deployment | — | **DEPLOYMENT CONTROL** |
-| A12 | Session ids random; identity binding | MCP SDK | — | **PLANNED** (SEC-15) |
+| A12 | Session ids random; identity binding | MCP SDK + `internal/mcp/server/session.go` | `TestSessionIsBoundToItsCreator` | TESTED (CONTRACT) |
 | Z1 | Default-deny RBAC over role × tool × instance | `internal/security/rbac/rbac.go` | `TestDefaultDeny`, `TestScopeHierarchy`, `TestInstanceScoping`, `TestDenyOverridesAllow` | TESTED (CONTRACT) |
 | Z2 | Tool-level permission enforced by the registry | `internal/mcp/registry/registry.go` | `TestRegisterRejectsInvalidTools`, `TestAuthorizationReceivesRequiredScope` | TESTED (CONTRACT) |
 | Z3 | Instance scoping on every tool call | `internal/magento/resolver.go`, `internal/mcp/server/server.go` | `TestCrossInstanceAuthorizationIsEnforced` | TESTED (CONTRACT) |
@@ -197,10 +197,14 @@ argument hash is stored in `confirmation_tokens` and `operations`, not in
 
 ## 12. Rate limiting and resource control
 
-Not implemented. There is no per-subject, per-instance, or deployment limiter, no
-GA4/Cloudflare quota accounting, and no admission control. Per-tool caps bound a
-single call only. The operator must limit concurrency at the agent or edge. This
-is a known release limitation (SEC-11, PERF-05).
+**Magento outbound limiting is implemented.** Each instance has a token bucket
+(default 50 requests/s, burst 100) and a concurrency cap (default 8), configured
+by `datasources.magento.instances[].limits`; an exhausted budget returns a
+retryable `rate_limited` without reaching Magento (`internal/magento/limits.go`,
+`client.go`). There is **no inbound** per-subject/deployment limiter, no
+Cloudflare/GA4 quota accounting, and no admission control; per-tool caps bound a
+single call only. The operator must limit inbound concurrency at the agent or
+edge (SEC-11).
 
 ## 13. Supply chain
 
@@ -224,8 +228,8 @@ is the day-to-day gate.
 | Redirects not followed | Yes | TESTED (CONTRACT) |
 | Audit on; fail-closed for gated writes | Yes; REL-16-R gap for five money tools | TESTED (PostgreSQL) / known gap |
 | Metrics/admin on a private listener | Not enforced by the gateway | DEPLOYMENT CONTROL |
-| Rate limiting | Not implemented | PLANNED |
-| Session identity binding | Not implemented | PLANNED |
+| Rate limiting | Magento per-instance outbound budget implemented; inbound and Cloudflare/GA4 not implemented | IMPLEMENTED (Magento) / PLANNED (inbound) |
+| Session identity binding | Bound to the verified subject; mismatched session id gets 404 | TESTED (CONTRACT) |
 | Audit hash chain / retention | Not implemented | PLANNED |
 
 ## 15. Security test matrix
@@ -249,8 +253,8 @@ is the day-to-day gate.
 | Response caps and error mapping | `internal/magento/client_test.go`, `internal/cloudflare/client_test.go` | TESTED (CONTRACT) |
 | Log redaction | `internal/observability/logger_test.go` | TESTED (CONTRACT) |
 | End-to-end fake Magento | `test/e2e/run.sh` | TESTED (E2E, fake Magento) |
-| Rate limiting | none | PLANNED |
-| Session binding | none | PLANNED |
+| Rate limiting | `internal/magento/limits_test.go` | TESTED (CONTRACT) |
+| Session binding | `internal/mcp/server/session_test.go` | TESTED (CONTRACT) |
 | Audit hash chain | none | PLANNED |
 | Egress IP guard | none | PLANNED |
 | Duplicate-key scan | none | PLANNED |
@@ -260,8 +264,8 @@ is the day-to-day gate.
 ## 16. Residual risks
 
 The full list and review triggers are in the [threat model §10](threat-model.md).
-The release-relevant ones are: no live Magento verification (MAG-23), no session
-binding (SEC-15), no rate limiting (SEC-11/PERF-05), no audit hash chain (SEC-06),
+The release-relevant ones are: no live Magento verification (MAG-23), no inbound
+rate limiting (SEC-11; Magento outbound limits are implemented), no audit hash chain (SEC-06),
 the REL-16-R audit gap, origin lockdown and metrics isolation as deployment
 controls, multi-instance bindings unsupported, image EXIF not stripped, and
 duplicate JSON keys accepted.

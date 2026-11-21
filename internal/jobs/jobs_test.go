@@ -511,3 +511,27 @@ func TestDefaultQueuesIncludeMaintenance(t *testing.T) {
 		t.Fatalf("default queues = %v, want maintenance included", opts.Queues)
 	}
 }
+
+// SEM-IMP-01: a partial import travels as a marker on the job result, because the
+// queue state records execution and has no "partial".
+func TestResultIsPartial(t *testing.T) {
+	cases := []struct {
+		result string
+		want   bool
+	}{
+		{`{"total":2,"failed":1,"partial":true}`, true},
+		// A report that recorded failures is partial even without the marker, so
+		// jobs written before the marker existed are still reported honestly.
+		{`{"total":2,"failed":1}`, true},
+		{`{"total":2,"failed":0}`, false},
+		{`{"total":2,"partial":false}`, false},
+		{`{"total":2,"partial":"yes"}`, false},
+		{``, false},
+		{`not json`, false},
+	}
+	for _, tc := range cases {
+		if got := ResultIsPartial(tc.result); got != tc.want {
+			t.Fatalf("ResultIsPartial(%q) = %v, want %v", tc.result, got, tc.want)
+		}
+	}
+}

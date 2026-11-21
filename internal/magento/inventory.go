@@ -70,6 +70,21 @@ func (s *Service) AssignSourceItems(ctx context.Context, items []SourceItem) err
 		body.SourceItems = append(body.SourceItems, sourceItemPayload(item))
 	}
 	_, err := s.client.do(ctx, http.MethodPost, "/inventory/source-items", nil, body)
+	return nonRetryableUnknown(err)
+}
+
+// nonRetryableUnknown clears the retryable flag on an ambiguous outcome. The
+// operation ledger refuses to retry a write whose outcome is unknown; an error
+// envelope that says outcome=unknown and retryable=true at the same time tells
+// the agent to do exactly what the gateway will reject.
+func nonRetryableUnknown(err error) error {
+	if err == nil {
+		return nil
+	}
+	var typed *errs.Error
+	if errors.As(err, &typed) && typed.Details[OutcomeDetail] == OutcomeUnknown {
+		typed.Retryable = false
+	}
 	return err
 }
 
@@ -139,7 +154,7 @@ func (s *Service) UnassignSourceItems(ctx context.Context, refs []SourceItemRef)
 	// is not a route at all and returned 404, so this tool never worked on a standard
 	// instance.
 	_, err := s.client.do(ctx, http.MethodPost, "/inventory/source-items-delete", nil, body)
-	return err
+	return nonRetryableUnknown(err)
 }
 
 // validateSourceItemRefs bounds and checks an unassign batch.
@@ -581,7 +596,7 @@ func (s *Service) CreateSource(ctx context.Context, in InventorySourceInput) (*I
 	body := inventorySourceBody{Source: inventorySourcePayload(in)}
 	raw, err := s.client.do(ctx, http.MethodPost, "/inventory/sources", nil, body)
 	if err != nil {
-		return nil, err
+		return nil, nonRetryableUnknown(err)
 	}
 	// A successful create answers with an empty array (`[]`) or no body at all,
 	// not with the created object. Treating that as an unreadable payload told the
@@ -631,7 +646,7 @@ func (s *Service) LinkStockSource(ctx context.Context, stockID int, sourceCode s
 	}
 	body := stockSourceLinkBody{Links: []stockSourceLink{{StockID: stockID, SourceCode: sourceCode, Priority: position}}}
 	_, err := s.client.do(ctx, http.MethodPost, "/inventory/stock-source-links", nil, body)
-	return err
+	return nonRetryableUnknown(err)
 }
 
 type inventorySourceBody struct {
@@ -679,5 +694,5 @@ func (s *Service) UnlinkStockSource(ctx context.Context, stockID int, sourceCode
 	body := stockSourceLinkBody{Links: []stockSourceLink{{StockID: stockID, SourceCode: sourceCode}}}
 	// Same shape as the source-item delete: POST with a -delete suffix, not DELETE.
 	_, err := s.client.do(ctx, http.MethodPost, "/inventory/stock-source-links-delete", nil, body)
-	return err
+	return nonRetryableUnknown(err)
 }

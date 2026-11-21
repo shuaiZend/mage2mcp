@@ -451,3 +451,52 @@ func TestSummarizeRendersSecurityKeysBeforePadding(t *testing.T) {
 		}
 	}
 }
+
+// Validate is the read-only replay guard: it checks the binding and expiry but
+// never consumes or mutates the request.
+func TestValidateIsReadOnlyAndChecksBinding(t *testing.T) {
+	store := NewMemoryStore()
+	svc, err := NewService(store, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := json.RawMessage(`{"instance":"store-us","order_id":42}`)
+	req, err := svc.Require(context.Background(), "magento.product.create", "store-us", "write", "order 42", "agent-1", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Approve(context.Background(), req.ID, "human-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Validate(context.Background(), req.ID, "agent-1", "magento.product.create", "store-us", args); err != nil {
+		t.Fatalf("valid approval: %v", err)
+	}
+	got, err := store.Get(context.Background(), req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateApproved {
+		t.Fatalf("Validate mutated the approval to %s, want approved", got.State)
+	}
+	if err := svc.Validate(context.Background(), "00000000-0000-4000-8000-000000000000", "agent-1", "magento.product.create", "store-us", args); errs.CodeOf(err) != errs.CodeNotFound {
+		t.Fatalf("never-issued id: %v, want not_found", err)
+	}
+	if err := svc.Validate(context.Background(), req.ID, "agent-2", "magento.product.create", "store-us", args); errs.CodeOf(err) != errs.CodePermissionDenied {
+		t.Fatalf("other requester: %v, want permission_denied", err)
+	}
+	if err := svc.Validate(context.Background(), req.ID, "agent-1", "magento.product.delete", "store-us", args); errs.CodeOf(err) != errs.CodeConfirmationMismatch {
+		t.Fatalf("other tool: %v, want confirmation_param_mismatch", err)
+	}
+
+	expired := &Request{
+		ID: "11111111-1111-4111-8111-111111111111", Tool: "magento.product.create",
+		Instance: "store-us", Scope: "write", ParamsHash: req.ParamsHash, Requester: "agent-1",
+		State: StateApproved, ExpiresAt: time.Now().Add(-time.Minute),
+	}
+	if err := store.Create(context.Background(), expired); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Validate(context.Background(), expired.ID, "agent-1", "magento.product.create", "store-us", args); errs.CodeOf(err) != errs.CodeConfirmationExpired {
+		t.Fatalf("expired approval: %v, want confirmation_expired", err)
+	}
+}

@@ -11,7 +11,7 @@ tools require `instance` and, after approval, `confirmation_id`.
 | `sku` | yes | 1-64 chars `[A-Za-z0-9._:-]`, starts alphanumeric | Stable identifier; never reuse a deleted SKU for a different product. |
 | `name` | yes | 1-255 bytes, no control characters | Customer-facing name; front-load the main keyword. |
 | `attribute_set_id` | yes | positive integer | Use `magento.attribute.sets` to find the right set. |
-| `type_id` | yes | `simple`, `virtual`, `downloadable`, `bundle` | Configurable parents use `magento.configurable.create`. |
+| `type_id` | yes | `simple` or `virtual` | Bundle/downloadable are rejected: their options, selections, links, and samples cannot be created through this gateway. Configurable parents use `magento.configurable.create`. |
 | `price` | yes | decimal string, up to 4 fraction digits | Base price; variants may override it. |
 | `status` | no | `1` enabled, `2` disabled | Defaults to enabled. |
 | `visibility` | no | `1`-`4` | Defaults to catalog+search. |
