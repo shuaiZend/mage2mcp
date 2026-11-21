@@ -399,6 +399,7 @@ cd /opt/mage2mcp && cp compose.yaml.bak.20261121192136 compose.yaml && sudo dock
 | 实测验证 | 对 52 条路由发真实请求，区分两种 404 |
 
 **关键区分**：Magento 有两种 404——
+
 - `Wniosek nie odpowiada żadnej ścieżce`（波兰语）= **路由不存在**
 - `The entity that was requested doesn't exist` = **路由存在，实体不存在**
 
