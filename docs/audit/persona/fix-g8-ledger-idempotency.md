@@ -57,15 +57,15 @@
 **(1) `internal/magento/tools.go` → `registerReadTools`（当前第 151 行，`newFlatCategoriesTool(lookup),` 之后）**
 
 ```go
-		newSalesAnalysisTool(lookup), newStoreConfigsTool(lookup), newFlatCategoriesTool(lookup),
-		newOperationGetTool(), newOperationListTool(),
+        newSalesAnalysisTool(lookup), newStoreConfigsTool(lookup), newFlatCategoriesTool(lookup),
+        newOperationGetTool(), newOperationListTool(),
 ```
 
 **(2) `internal/magento/write_tools.go` → `registerWriteTools` 的 `tools := []registry.Tool{…}`（当前第 329 行，`newProductOptionDeleteTool(lookup),` 之后）**
 
 ```go
-		newProductOptionCreateTool(lookup), newProductOptionUpdateTool(lookup), newProductOptionDeleteTool(lookup),
-		newOperationDisposeTool(),
+        newProductOptionCreateTool(lookup), newProductOptionUpdateTool(lookup), newProductOptionDeleteTool(lookup),
+        newOperationDisposeTool(),
 ```
 
 > 必须放在 write 注册路径里：`dispose` 是 `PermissionWrite`，而 `cmd/server/main.go` 只在
@@ -75,13 +75,13 @@
 **(3) `internal/magento/write_tools.go` → `writeToolSchemas()`（当前第 348 行的 map 内）**
 
 ```go
-		operationDisposeToolName:       operationDisposeSchema,
+        operationDisposeToolName:       operationDisposeSchema,
 ```
 
 **(4) `internal/magento/write_tools.go` → `writeDisclosures`（当前第 446 行的 map 内）**
 
 ```go
-	"magento.operation.dispose": {mutates: "the operation ledger's state for one unknown operation", idempotency: "not idempotent; only an unknown operation can be disposed, so a second call returns conflict"},
+    "magento.operation.dispose": {mutates: "the operation ledger's state for one unknown operation", idempotency: "not idempotent; only an unknown operation can be disposed, so a second call returns conflict"},
 ```
 
 > (4) 不是可选项：`TestWriteToolIdempotencyMatchesDisclosures` 会枚举所有已注册写工具，
