@@ -290,7 +290,7 @@ mage2mcp-worker-1     ghcr.io/shuaizend/mage2mcp:v0.11.4    Up
 
 API 层确认：
 
-```
+```text
 type: configurable | status: 1 | visibility: 4
 configurable_product_links: [2143, 2144]
 configurable_product_options: [('93', 'Color', 2)]
