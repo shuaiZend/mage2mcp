@@ -111,3 +111,57 @@ Magento 的**读取**接口与**写入**接口字段名不同：
 
 **两条叠加 = 阶梯价对商品运营完全不可用**：设不进去，也读不出来。而前台能力本身正常
 （运营用 REST 直连设好后，产品页显示「Kup 5 po 119」、购物车单价正确）——**问题全在网关**。
+
+## 独立核验：改重量会把售价改掉（P0 数据损坏）—— **CONFIRMED，实测复现**
+
+店铺运营报了一条 P0：`buildUpdatePayload` 把参数**整体错位一格**传给定价属性构造函数。
+
+### 代码证据
+
+```text
+internal/magento/product_write.go:634-636
+  pricingAttributeOrder = ["special_price", "special_from_date", "special_to_date", "cost", "tax_class_id"]
+
+internal/magento/product_write.go:286-288   buildUpdatePayload
+  传: [in.Weight, in.SpecialPrice, in.SpecialFromDate, in.SpecialToDate, in.Cost]   ← 5 个，含 Weight
+  → index 0 的 Weight 被当成 special_price
+
+internal/magento/product_write.go:666-672   pricingAttributes（创建路径）
+  传: [specialPrice, specialFrom, specialTo, cost]                                  ← 4 个，正确
+```
+
+**创建路径正确，更新路径错位**——所以 `product.create` 正常，`product.update` 全线出错。
+
+### 实测复现（生产 v0.11.6）
+
+1. 建一个简单商品：`price=100.00`，无促销价
+2. 只调用 `product.update` 设置 `weight: "9.99"`，**不碰任何价格字段**
+3. 回读：
+
+```text
+price: 100
+weight: 9.99
+special_price: 9.990000        ← 重量泄漏进了促销价
+```
+
+**一个只改重量的操作，把商品变成促销价 9.99 在卖。** 探针商品已删除。
+
+### 影响面
+
+按同一错位，其余字段全部串位：
+
+| 想设的 | 实际写进 |
+|---|---|
+| weight | special_price |
+| special_price | special_from_date |
+| special_from_date | special_to_date |
+| special_to_date | cost |
+| cost | tax_class_id |
+
+所以「设促销价」必然 400（价格字符串被塞进日期字段），而报错还指向 `special_from_date`——运营会去改日期，永远改不好。
+
+`configurable.update` 与导入的更新路径都复用 `Update()`，同样中招。
+
+### 判定
+
+**P0，发布阻断。** 这是本轮最严重的一条：一个日常的、看似无关的操作（改重量）会静默改变售价，且没有任何报错。同时 `internal/` 下**没有任何测试覆盖** `buildUpdatePayload` / `pricingAttributesFromPointers`——这正是它能活到现在的原因。

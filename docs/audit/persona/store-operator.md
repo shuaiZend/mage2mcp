@@ -80,7 +80,8 @@ mcp magento.product.get '{"instance":"demo","sku":"24-MB04"}'
 curl -sS 'https://demo-magento-2.auroracreation.com/pl/strive-shoulder-pack.html' | grep -o 'data-price-amount="[0-9.]*"'
 # data-price-amount="2.5"
 curl -sS 'https://demo-magento-2.auroracreation.com/pl/gear.html' | grep -o 'data-price-amount="[0-9.]*"'
-# 8.55 / 2.5 / 12 ...
+# 目录页一次返回整页商品的价格，其中就包含 data-price-amount="2.5"（Strive Shoulder Pack）；
+# 这里只摘这一项，其它行是该页其它商品的价格
 ```
 
 - **根因（代码定位，供修复阶段参考）**: `internal/magento/product_write.go` 的
@@ -234,9 +235,11 @@ curl -sS 'https://demo-magento-2.auroracreation.com/rest/pl/V1/orders/1' -H "Aut
 mcp magento.shipment.create '{"instance":"demo","order_id":8,"items":[{"order_item_id":10,"qty":4}],"tracks":[{"track_number":"PL987654321","carrier_code":"dhl","title":"DHL Parcel"}],"notify":false}'
 # is_error=false
 #   "shipment": {"entity_id":15,"increment_id":"000000015","order_id":8,"total_qty":3, ...}   <-- 要 4 发 3
-curl -sS '.../rest/pl/V1/shipments?searchCriteria[filter_groups][0][filters][0][field]=order_id&...value=8' -H "Authorization: Bearer $(cat /tmp/magento_token)"
+curl -sS -g 'https://demo-magento-2.auroracreation.com/rest/pl/V1/shipments?searchCriteria%5Bfilter_groups%5D%5B0%5D%5Bfilters%5D%5B0%5D%5Bfield%5D=order_id&searchCriteria%5Bfilter_groups%5D%5B0%5D%5Bfilters%5D%5B0%5D%5Bvalue%5D=8' \
+  -H "Authorization: Bearer $(cat /tmp/magento_token)"
 # total 1；ship 000000015 items=[(10, 3)]        <-- Magento 侧也确实只有 1 张 3 件的发货单（不是并发发了两次）
-curl -sS '.../rest/pl/V1/orders/8' ...
+curl -sS 'https://demo-magento-2.auroracreation.com/rest/pl/V1/orders/8' -H "Authorization: Bearer $(cat /tmp/magento_token)" \
+  | python3 -c 'import sys,json;o=json.load(sys.stdin);print([(i["item_id"],i["qty_ordered"],i["qty_shipped"]) for i in o["items"]], o["status"])'
 # item 10 ordered 4 shipped 3；order status = complete
 
 # 订单 11：订购 2 件、已发 0 件
@@ -245,8 +248,9 @@ mcp magento.shipment.create '{"instance":"demo","order_id":11,"items":[{"order_i
 # 上游：item 13 ordered 2 shipped 1；order status = complete
 
 # 确认「请求参数本身是 4 和 2」（不是我的 shell 传错）：网关的确认记录里存的就是原参数
-sudo docker exec mage2mcp-postgres-1 psql -U mage2mcp -d mage2mcp -c \
-  "select summary from confirmation_tokens where tool='magento.shipment.create' order by created_at desc limit 4;"
+ssh -o BatchMode=yes ubuntu@49.51.250.83 \
+  'sudo docker exec mage2mcp-postgres-1 psql -U mage2mcp -d mage2mcp -c \
+   "select summary from confirmation_tokens where tool='"'"'magento.shipment.create'"'"' order by created_at desc limit 4;"'
 # order_id=8  instance=demo items=[{"order_item_id":10,"qty":4}] ...
 # order_id=11 instance=demo items=[{"order_item_id":13,"qty":2}] notify=false
 
@@ -458,12 +462,14 @@ mcp magento.product.get '{"sku":"24-MB03"}'
 ```bash
 # 看 schema（-mode=schema 直接打印某个工具的 inputSchema）
 MCP_LIVE=1 MCP_ENDPOINT=http://127.0.0.1:18110/mcp MCP_INSTANCE=demo \
-go run -tags live ./test/live -mode=schema -tool=magento.inventory.assign | grep -A3 '"items"' | head -6
-#   "items": {
-#     "type": "array",
-#     "minItems": 1,
-#     "maxItems": 100,
-#     "description": "Lines to act on. Each entry names an order item and a quantity; the quantities must not exceed what is still outstanding.",
+go run -tags live ./test/live -mode=schema -tool=magento.inventory.assign | grep -A5 '"items"' | head -7
+#     "items": {
+#       "description": "Lines to act on. Each entry names an order item and a quantity; the quantities must not exceed what is still outstanding.",
+#       "items": {
+#         "additionalProperties": false,
+#         "properties": {
+#           "quantity": {
+#             "minimum": 0,
 
 MCP_LIVE=1 MCP_ENDPOINT=http://127.0.0.1:18110/mcp MCP_INSTANCE=demo \
 go run -tags live ./test/live -mode=schema -tool=magento.product.update | grep -A4 '"category_ids"'
@@ -578,7 +584,9 @@ mcp magento.shipment.create '{"instance":"demo","order_id":1,"items":[{"order_it
 
 1. **先修 SO-01/SO-02**（同一处 `buildUpdatePayload` 错位）：一个参数顺序问题，影响售价、促销、
    成本、税类四类数据，且是静默写错。改完必须补一条「update 的每个定价字段落到自己字段」的测试
-   （现有 `product_write_test.go` 显然没覆盖，因为 create 路径是对的、update 路径是错的）。
+   —— 现在 `internal/` 下没有任何测试覆盖 `buildUpdatePayload` / `pricingAttributesFromPointers`
+   （`grep -rn "buildUpdatePayload\|pricingAttributesFromPointers" --include=*_test.go internal/` 无结果），
+   create 路径对、update 路径错，正好说明这条链路是裸奔的。
 2. **SO-03**（发货备注 → `is_visible_on_front` 类型）——一行类型问题，但让「带备注发货」100% 不可用。
    顺带修 `upstreamTextIsSafe` 过度脱敏：带引号字段名的上游原因也应能透出。
 3. **SO-05**（少发 1 件）需要干净订单复现；**SO-04**（order.get 缺地址/已发数量）是运营能不能真正
