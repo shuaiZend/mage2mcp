@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with two colour options, and the copy looked finished. `docs/mcp-tools.md` §1.1 carries
   the reference form.
 
+- **The instructions also cover sources that are not Magento.** Shopify, WooCommerce, a
+  static site or a marketplace rarely maps one-to-one, and translating field names
+  produces a product that looks right and behaves wrong. The agent must analyse how the
+  source represents variants, options, attributes, categories, SKUs, currency, tax class,
+  visibility and stock, then map each concept onto Magento explicitly — a variant set
+  becomes a configurable product with one child per variant, a source field becomes a
+  Magento attribute and needs an attribute set that carries it, a flat tag list becomes a
+  category tree, and a source without SKUs needs an agreed scheme. Every uncertain mapping
+  must be confirmed with a human before writing, and again before an update that changes
+  an existing product's type, options or attributes, because a wrong mapping is invisible
+  on the product page until someone tries to buy, filter or report on it.
+
 ### Fixed
 
 - **An import that said "disabled, not visible" produced an enabled, visible product.**

@@ -2109,6 +2109,11 @@ func TestServerInstructionsRequireDiscoveryBeforeCopying(t *testing.T) {
 		"magento.category.tree",
 		"CREATE NOTHING NEW IN THE TAXONOMY WITHOUT A HUMAN",
 		"ask, naming the exact",
+		// A source that is not Magento needs an explicit mapping, not a translation.
+		"WHEN THE SOURCE IS NOT MAGENTO",
+		"CONFIRM EVERY UNCERTAIN MAPPING BEFORE WRITING",
+		"a source variant set becomes a configurable product",
+		"Never create an attribute, attribute set, category,",
 	} {
 		if !strings.Contains(instructions, want) {
 			t.Fatalf("instructions do not mention %q:\n%s", want, instructions)

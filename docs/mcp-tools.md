@@ -49,6 +49,31 @@ needed and why. A new category or attribute changes the store for every seller a
 undone by deleting the product that prompted it. The approval gate on a write covers the
 product; it does not cover the decision to invent a taxonomy.
 
+### When the source is not Magento
+
+Most stores an agent is asked to copy from are Shopify, WooCommerce, a static site or a
+marketplace. Their model rarely maps one-to-one, and translating field names produces a
+product that looks right and behaves wrong.
+
+Analyse the source model first, then map each concept explicitly:
+
+| Source concept | Magento target | What has to be decided |
+|---|---|---|
+| Variants — one product with options, or separate products | A configurable product with one child per variant, or independent simple products | Which shape the source actually uses, and whether the target can express it at all |
+| Option and attribute fields | A configurable attribute, a custom option, or a plain attribute on the attribute set | These are three different Magento mechanisms with three different routes |
+| Categories as a flat tag list | A category tree | Which tag becomes which level, and which become attributes instead |
+| No SKU | An invented SKU per variant | The scheme, agreed with the human, because it is permanent |
+| Currency, tax class, visibility, stock | Magento's own concepts | Whether the source values are meaningful here or need a decision |
+
+**Confirm every uncertain mapping before writing, and again before an update** that would
+change an existing product's type, options or attributes. State which concept you are
+mapping, what the target would need, and what you are unsure about. A wrong mapping is not
+visible on the product page — it surfaces when someone tries to buy, filter or report on
+the product.
+
+Never create an attribute, attribute set, category, website or store view to make a
+mapping fit without the human agreeing to that specific change first.
+
 **A copy is done when it matches.** Same type, same options with the same values, same
 attribute values, same category. If part of the source cannot be reproduced — because the
 target lacks the attribute set, or the route is not exposed — say so explicitly rather

@@ -496,7 +496,27 @@ const serverInstructions = "mage2mcp exposes a Magento, Cloudflare, GA4 and cros
 	"one you need and why. A new category or attribute changes the store for everyone and " +
 	"cannot be undone by deleting the product. A copy is not done until the product " +
 	"carries the same type, the same options, and the same attribute values as the source; " +
-	"say what you could not reproduce rather than shipping a simpler product."
+	"say what you could not reproduce rather than shipping a simpler product. " +
+	// Most stores an agent is asked to copy from are not Magento, and their model
+	// rarely maps one-to-one. Guessing the mapping is the same mistake as guessing the
+	// product type, one level up.
+	"WHEN THE SOURCE IS NOT MAGENTO (Shopify, WooCommerce, a static site, a " +
+	"marketplace): do not translate names, analyse the source model first and map it " +
+	"explicitly. Record how the source represents variants (one product with options, or " +
+	"separate products), what its option and attribute fields actually are, whether its " +
+	"categories are a tree or a flat tag list, whether it has SKUs at all, and what it " +
+	"does with currency, tax class, visibility and stock. Then map each concept onto " +
+	"Magento explicitly: a source variant set becomes a configurable product with one " +
+	"child per variant; a source text or number field becomes a Magento attribute and " +
+	"needs an attribute set that carries it; a flat tag list becomes a category tree; a " +
+	"source without SKUs needs one invented per variant, agreed with the human. " +
+	"CONFIRM EVERY UNCERTAIN MAPPING BEFORE WRITING, and confirm it again before an " +
+	"update that would change an existing product's type, options or attributes. Say " +
+	"which concept you are mapping, what the target would need, and what you are unsure " +
+	"about; a wrong mapping is not visible on the product page until someone tries to " +
+	"buy, filter or report on it. Never create an attribute, attribute set, category, " +
+	"website or store view to make a mapping fit without the human agreeing to that " +
+	"specific change first."
 
 // attachResultMeta puts the correlation fields a caller needs into the result's
 // protocol-level metadata.
