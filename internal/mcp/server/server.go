@@ -289,6 +289,9 @@ func installPolicy(srv *mcp.Server, opts Options) {
 							return withResultMeta(ctx, tool, instance, toolErrorResult(err)), nil
 						}
 					}
+					// A replay is a completed call: write its outcome row too,
+					// otherwise the audit trail shows an intent that never ended.
+					recordOutcome(opts, ctx, tool, instance, "succeeded", "")
 					res, replayErr := replayResult(began)
 					return withMetaResult(ctx, tool, instance, res), replayErr
 				case DecisionProceed:
@@ -1094,6 +1097,7 @@ func auditEventFor(ctx context.Context, tool, instance, scope string, out Operat
 	event := &audit.Event{
 		Subject: subject, IdentityClass: class, Tool: tool, Instance: instance,
 		Scope: scope, Phase: "outcome", ErrorCode: out.ErrorCode,
+		RequestID: RequestID(ctx),
 	}
 	switch out.State {
 	case "succeeded":
