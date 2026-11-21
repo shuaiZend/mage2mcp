@@ -24,11 +24,28 @@ const (
 	topRefundSKULimit     = 10
 	shipmentLookaheadDays = 7
 
+	// Every order-window report scans oldest first. Sharing these constants is
+	// what keeps sales.analysis and orders.geography from truncating at opposite
+	// ends of the window: when a cap drops orders, both keep the same end, so two
+	// capped reports of one window remain comparable.
+	reportSortField     = "created_at"
+	reportSortDirection = "asc"
+	reportSortTiebreak  = "entity_id"
+
 	// Paging is described to the caller, not hidden: the scan uses Magento's
 	// currentPage (SQL OFFSET) paging, which is not a database snapshot.
 	analysisPagingMethod = "offset"
-	analysisPagingOrder  = "created_at asc, entity_id asc"
+	analysisPagingOrder  = reportSortField + " " + reportSortDirection + ", " + reportSortTiebreak + " " + reportSortDirection
 	analysisPagingCaveat = "offset paging is not snapshot-consistent: an order inserted or deleted while the scan runs can shift a page boundary; duplicate entity ids are dropped and any shortfall is reported in excluded_orders"
+
+	// skuRevenueBasisLineSubtotal documents the money basis of top_skus.revenue.
+	// It is a line subtotal, not an order total, so the SKU list sums to subtotal
+	// and not to revenue.
+	skuRevenueBasisLineSubtotal = "line_subtotal"
+	// customerSplitBasisWindow documents what new_orders/repeat_orders mean: the
+	// split is by how many orders a customer placed inside this window. Orders
+	// from before the window are never read, so "new" is not "first-time ever".
+	customerSplitBasisWindow = "orders_per_registered_customer_within_window"
 )
 
 // PagingInfo states how an order window was scanned so a caller can judge
@@ -50,69 +67,91 @@ type PagingInfo struct {
 
 // DimensionStat is one grouped measure (status, country, payment, store).
 type DimensionStat struct {
-	Key     string  `json:"key"`
+	Key     string  `json:"key" jsonschema:"Group key: order status, ISO 3166-1 alpha-2 country code, payment method, or store view name depending on the breakdown."`
 	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
-	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
+	Revenue float64 `json:"revenue" jsonschema:"Order grand_total revenue in this group for the window."`
 }
 
 // ShippingStat is one shipping method's volume and cost.
 type ShippingStat struct {
-	Method       string  `json:"method" jsonschema:"How the scan was paged: offset or cursor."`
+	Method       string  `json:"method" jsonschema:"Shipping method description as Magento reports it, whitespace-normalized; unknown when the order carries none."`
 	Orders       int     `json:"orders" jsonschema:"Orders that matched."`
-	Revenue      float64 `json:"revenue" jsonschema:"Revenue for this window."`
-	ShippingCost float64 `json:"shipping_cost"`
+	Revenue      float64 `json:"revenue" jsonschema:"Order grand_total revenue in this group for the window."`
+	ShippingCost float64 `json:"shipping_cost" jsonschema:"Shipping amount charged on these orders."`
 }
 
 // CurrencyStat is one currency's orders, revenue, and AOV.
 type CurrencyStat struct {
-	Code    string  `json:"code" jsonschema:"Machine code of the entity."`
+	Code    string  `json:"code" jsonschema:"ISO 4217 currency code."`
 	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
-	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
-	AOV     float64 `json:"aov" jsonschema:"Average order value in the window."`
+	Revenue float64 `json:"revenue" jsonschema:"Order grand_total revenue in this currency for the window."`
+	AOV     float64 `json:"aov" jsonschema:"Average order value in this currency."`
 }
 
 // BandStat is one order-value band.
+//
+// The band is reported as numeric bounds plus a currency-free label: a label
+// with a hardcoded currency symbol would be wrong for any store that does not
+// sell in that currency (this one sells in PLN).
 type BandStat struct {
-	Label   string  `json:"label" jsonschema:"Label shown to the shopper."`
+	Label   string  `json:"label" jsonschema:"Order-value band label without a currency symbol, e.g. 100-300."`
+	Lower   float64 `json:"lower" jsonschema:"Inclusive lower bound of the band in the report currency."`
+	Upper   float64 `json:"upper" jsonschema:"Exclusive upper bound of the band; 0 means the band is open-ended (>= lower)."`
 	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
-	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
+	Revenue float64 `json:"revenue" jsonschema:"Order grand_total revenue in this band."`
 }
 
 // CouponStat is one normalized coupon code.
 type CouponStat struct {
-	Code   string `json:"code" jsonschema:"Machine code of the entity."`
-	Orders int    `json:"orders" jsonschema:"Orders that matched."`
+	Code    string  `json:"code" jsonschema:"Coupon code, uppercased and trimmed."`
+	Orders  int     `json:"orders" jsonschema:"Orders that used this coupon."`
+	Revenue float64 `json:"revenue" jsonschema:"Order grand_total revenue from orders that used this coupon."`
 }
 
 // SKURefundStat is one SKU's refunded quantity and amount.
 type SKURefundStat struct {
 	SKU    string  `json:"sku" jsonschema:"Product SKU."`
-	Qty    float64 `json:"qty" jsonschema:"Quantity at this source."`
-	Amount float64 `json:"amount"`
+	Qty    float64 `json:"qty" jsonschema:"Units refunded on this SKU's order lines."`
+	Amount float64 `json:"amount" jsonschema:"Refunded amount on this SKU's order lines; excludes refunded shipping and adjustments, so the list sums to less than refunded_amount."`
 }
 
 // ShipLatency is the order-to-shipment latency distribution in days.
+//
+// Every value is a fractional day count: 0.5 means twelve hours.
 type ShipLatency struct {
-	Avg    float64 `json:"avg" jsonschema:"Average value."`
-	Median float64 `json:"median" jsonschema:"Median value."`
-	P90    float64 `json:"p90" jsonschema:"90th percentile."`
-	Max    float64 `json:"max" jsonschema:"Upper bound of the band."`
+	Avg    float64 `json:"avg" jsonschema:"Mean order-to-shipment latency, in days (fractional)."`
+	Median float64 `json:"median" jsonschema:"Median order-to-shipment latency, in days (fractional)."`
+	P90    float64 `json:"p90" jsonschema:"90th percentile order-to-shipment latency, in days (fractional)."`
+	Max    float64 `json:"max" jsonschema:"Longest order-to-shipment latency, in days (fractional)."`
 }
 
 // DayStat is one day's order count and revenue.
 type DayStat struct {
-	Date    string  `json:"date" jsonschema:"Calendar day, YYYY-MM-DD."`
+	Date    string  `json:"date" jsonschema:"Calendar day YYYY-MM-DD in the report timezone (see timezone), never outside window_local.first_date..last_date."`
 	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
-	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
+	Revenue float64 `json:"revenue" jsonschema:"Order grand_total revenue on this day."`
+}
+
+// WindowLocal is the requested window rendered in the report timezone.
+//
+// The window itself is a pair of UTC instants; the day buckets are calendar days
+// in the report timezone. Without this block a caller cannot tell which calendar
+// days the window actually covers, and a bucket can look like it falls outside
+// the requested range.
+type WindowLocal struct {
+	From      string `json:"from" jsonschema:"Inclusive window start rendered in the report timezone (RFC 3339)."`
+	To        string `json:"to" jsonschema:"Exclusive window end rendered in the report timezone (RFC 3339)."`
+	FirstDate string `json:"first_date" jsonschema:"First calendar day YYYY-MM-DD the window covers in the report timezone."`
+	LastDate  string `json:"last_date" jsonschema:"Last calendar day YYYY-MM-DD the window covers in the report timezone; by_day dates are always within first_date..last_date."`
 }
 
 // SKUStat is one product's sales inside the window.
 type SKUStat struct {
 	SKU     string  `json:"sku" jsonschema:"Product SKU."`
 	Name    string  `json:"name" jsonschema:"Display name."`
-	Qty     float64 `json:"qty" jsonschema:"Quantity at this source."`
-	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
-	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
+	Qty     float64 `json:"qty" jsonschema:"Units ordered on this SKU's order lines."`
+	Revenue float64 `json:"revenue" jsonschema:"Line-subtotal revenue for this SKU: the sum of item row_total, excluding shipping, tax and order-level discounts. Summing the list gives subtotal, not revenue."`
+	Orders  int     `json:"orders" jsonschema:"Distinct orders that contained this SKU."`
 }
 
 // SalesAnalysis is a PII-free business summary of an order window.
@@ -121,51 +160,59 @@ type SKUStat struct {
 // reported for the window, and ExcludedOrders is the difference. Paging states
 // how the window was scanned and whether the result can be treated as complete.
 type SalesAnalysis struct {
-	From            string          `json:"from" jsonschema:"Start of the comparison window."`
-	To              string          `json:"to" jsonschema:"End of the comparison window."`
-	Timezone        string          `json:"timezone" jsonschema:"IANA time zone the report was computed in."`
+	From            string          `json:"from" jsonschema:"Start of the comparison window (RFC 3339, UTC)."`
+	To              string          `json:"to" jsonschema:"End of the comparison window (RFC 3339, UTC), exclusive."`
+	Timezone        string          `json:"timezone" jsonschema:"IANA time zone the day and hour buckets use: the store view timezone unless the caller overrides it."`
+	WindowLocal     WindowLocal     `json:"window_local" jsonschema:"The same window rendered in the report timezone; by_day dates are always within first_date..last_date."`
 	Orders          int             `json:"orders" jsonschema:"Orders that matched."`
 	TotalAvailable  int             `json:"total_available" jsonschema:"Orders the store reports for the window."`
 	ExcludedOrders  int             `json:"excluded_orders" jsonschema:"Orders that exist but were not read."`
 	Truncated       bool            `json:"truncated" jsonschema:"True when more records exist than were returned."`
-	Paging          PagingInfo      `json:"paging" jsonschema:"Paging state of the scan."`
-	Revenue         float64         `json:"revenue" jsonschema:"Revenue for this window."`
+	Paging          PagingInfo      `json:"paging" jsonschema:"Paging state of the scan, including which end of the window a cap keeps."`
+	Revenue         float64         `json:"revenue" jsonschema:"Order grand_total revenue for the window: includes tax and shipping, includes every order status (canceled too) and is not reduced by refunds. Not GA4 purchase revenue."`
 	Subtotal        float64         `json:"subtotal" jsonschema:"Line subtotal before shipping, tax and discount."`
-	Discount        float64         `json:"discount" jsonschema:"Total discount across the window."`
+	Discount        float64         `json:"discount" jsonschema:"Total discount across the window, reported as a positive amount."`
 	Shipping        float64         `json:"shipping" jsonschema:"Total shipping charged across the window."`
 	Tax             float64         `json:"tax" jsonschema:"Total tax charged across the window."`
 	ItemsQty        float64         `json:"items_qty" jsonschema:"Units sold in the window."`
 	AOV             float64         `json:"aov" jsonschema:"Average order value in the window."`
+	Currency        string          `json:"currency" jsonschema:"ISO 4217 code the amounts are expressed in; mixed_currency is true when the window holds more than one."`
 	MixedCurrency   bool            `json:"mixed_currency" jsonschema:"True when the window contains more than one currency."`
-	GuestOrders     int             `json:"guest_orders" jsonschema:"Orders placed without an account."`
-	Customers       int             `json:"customers" jsonschema:"Customers that matched."`
-	RepeatCustomers int             `json:"repeat_customers" jsonschema:"Customers with more than one order in the window."`
-	RepeatOrders    int             `json:"repeat_orders" jsonschema:"Orders from returning customers."`
-	RepeatRevenue   float64         `json:"repeat_revenue" jsonschema:"Revenue from returning customers."`
-	NewOrders       int             `json:"new_orders" jsonschema:"Orders from first-time customers."`
-	NewRevenue      float64         `json:"new_revenue" jsonschema:"Revenue from first-time customers."`
+	GuestOrders     int             `json:"guest_orders" jsonschema:"Orders placed without an account; guest orders are excluded from the new/repeat split."`
+	Customers       int             `json:"customers" jsonschema:"Registered customers that placed at least one order in the window (guests are not counted)."`
+	RepeatCustomers int             `json:"repeat_customers" jsonschema:"Registered customers with more than one order in this window."`
+	RepeatOrders    int             `json:"repeat_orders" jsonschema:"Orders in this window from customers who placed more than one order in the same window. This is not a cross-window returning-customer measure: orders before the window are not read."`
+	RepeatRevenue   float64         `json:"repeat_revenue" jsonschema:"Revenue from the orders counted in repeat_orders."`
+	NewOrders       int             `json:"new_orders" jsonschema:"Orders in this window from registered customers whose only order in this window is this one. Not first-time-ever customers: orders before the window are not read."`
+	NewRevenue      float64         `json:"new_revenue" jsonschema:"Revenue from the orders counted in new_orders."`
+	CustomerSplitBasis string       `json:"customer_split_basis" jsonschema:"What new_orders/repeat_orders split on. Fixed value: orders_per_registered_customer_within_window."`
 	CouponOrders    int             `json:"coupon_orders" jsonschema:"Orders that used a coupon."`
 	CouponRevenue   float64         `json:"coupon_revenue" jsonschema:"Revenue from coupon orders."`
-	CouponAOV       float64         `json:"coupon_aov" jsonschema:"Average order value for coupon orders."`
-	NonCouponAOV    float64         `json:"non_coupon_aov" jsonschema:"Average order value excluding coupon discounts."`
-	RefundedAmount  float64         `json:"refunded_amount" jsonschema:"Amount refunded across the window."`
-	RefundedQty     float64         `json:"refunded_qty" jsonschema:"Units refunded across the window."`
+	CouponAOV       float64         `json:"coupon_aov" jsonschema:"Average order value of orders that used a coupon."`
+	NonCouponAOV    float64         `json:"non_coupon_aov" jsonschema:"Average order value of orders that used no coupon (not a discount-adjusted AOV)."`
+	RefundedAmount  float64         `json:"refunded_amount" jsonschema:"Document-level refunded total for the window: sums each order's total_refunded, which includes refunded shipping and adjustments. Use refunded_items_amount for the product-line share."`
+	RefundedItemsAmount float64     `json:"refunded_items_amount" jsonschema:"Product-line refunded amount: sums item amount_refunded only, so it excludes refunded shipping and adjustments and is smaller than refunded_amount."`
+	RefundedQty     float64         `json:"refunded_qty" jsonschema:"Units refunded across the window, from order lines."`
 	Currencies      []CurrencyStat  `json:"currencies" jsonschema:"Currencies present in the window."`
-	ByDay           []DayStat       `json:"by_day" jsonschema:"Per-day breakdown, oldest first."`
+	ByDay           []DayStat       `json:"by_day" jsonschema:"Per-day breakdown, oldest first, bucketed by the report timezone (see timezone and window_local)."`
 	ByStatus        []DimensionStat `json:"by_status" jsonschema:"Breakdown by order status."`
-	ByCountry       []DimensionStat `json:"by_country" jsonschema:"Breakdown by country."`
+	ByCountry       []DimensionStat `json:"by_country" jsonschema:"Breakdown by shipping country; key is an ISO 3166-1 alpha-2 code, or UNKNOWN when the order carries no shipping address (virtual or API-created orders)."`
 	ByPayment       []DimensionStat `json:"by_payment" jsonschema:"Breakdown by payment method."`
 	ByStore         []DimensionStat `json:"by_store" jsonschema:"Breakdown by store view."`
 	ShippingMethods []ShippingStat  `json:"shipping_methods" jsonschema:"Breakdown by shipping method."`
-	AOVBands        []BandStat      `json:"aov_bands" jsonschema:"Distribution of order values by band."`
-	Weekday         []int           `json:"weekday" jsonschema:"Breakdown by day of week."`
-	Hour            []int           `json:"hour" jsonschema:"Breakdown by hour of day, 0-23."`
-	TopCoupons      []CouponStat    `json:"top_coupons" jsonschema:"Coupons by revenue, highest first."`
-	RefundedSKUs    []SKURefundStat `json:"refunded_skus" jsonschema:"SKUs by refunded amount, highest first."`
-	TopSKUs         []SKUStat       `json:"top_skus" jsonschema:"SKUs by revenue, highest first."`
+	AOVBands        []BandStat      `json:"aov_bands" jsonschema:"Distribution of order values by band, in the report currency."`
+	Weekday         []int           `json:"weekday" jsonschema:"Orders per day of week, Monday first, bucketed by the report timezone."`
+	Hour            []int           `json:"hour" jsonschema:"Orders per hour of day 0-23, bucketed by the report timezone."`
+	CouponsTotal    int             `json:"coupons_total" jsonschema:"Distinct coupon codes in the window; top_coupons is capped at 10 rows, so compare with len(top_coupons) to detect truncation."`
+	TopCoupons      []CouponStat    `json:"top_coupons" jsonschema:"Coupons by revenue, highest first, capped at 10 rows (see coupons_total)."`
+	RefundedSKUsTotal int           `json:"refunded_skus_total" jsonschema:"Distinct refunded SKUs in the window; refunded_skus is capped at 10 rows, so compare with len(refunded_skus) to detect truncation."`
+	RefundedSKUs    []SKURefundStat `json:"refunded_skus" jsonschema:"SKUs by refunded amount, highest first, capped at 10 rows (see refunded_skus_total). Amounts exclude shipping refunds and adjustments."`
+	SKUsTotal       int             `json:"skus_total" jsonschema:"Distinct SKUs sold in the window; top_skus is capped at 50 rows, so compare with len(top_skus) to detect truncation."`
+	SKURevenueBasis string          `json:"sku_revenue_basis" jsonschema:"Money basis of top_skus.revenue. Fixed value: line_subtotal, which excludes shipping, tax and order-level discounts."`
+	TopSKUs         []SKUStat       `json:"top_skus" jsonschema:"SKUs by line-subtotal revenue, highest first, capped at 50 rows (see skus_total). Summing the list gives subtotal, not revenue."`
 	Shipments       int             `json:"shipments" jsonschema:"Shipments of the order."`
 	UnshippedOrders int             `json:"unshipped_orders" jsonschema:"Orders that are not shipped yet."`
-	ShipLatency     ShipLatency     `json:"ship_latency" jsonschema:"Time from order to shipment."`
+	ShipLatency     ShipLatency     `json:"ship_latency" jsonschema:"Time from order to shipment, in days (fractional)."`
 }
 
 type analysisOrderItem struct {
@@ -185,9 +232,13 @@ type analysisOrder struct {
 	Status         string  `json:"status" jsonschema:"Current status."`
 	GrandTotal     float64 `json:"grand_total" jsonschema:"Document total including shipping and tax."`
 	Subtotal       float64 `json:"subtotal" jsonschema:"Line subtotal before shipping, tax and discount."`
-	DiscountAmount float64 `json:"discount_amount" jsonschema:"Discount applied, as a positive number."`
+	DiscountAmount float64 `json:"discount_amount" jsonschema:"Discount applied; Magento stores it as a negative number."`
 	ShippingAmount float64 `json:"shipping_amount" jsonschema:"Shipping charged."`
 	TaxAmount      float64 `json:"tax_amount" jsonschema:"Tax charged."`
+	// TotalRefunded is the document-level refunded total: it includes refunded
+	// shipping and adjustments, so it is the figure that matches a creditmemo
+	// grand_total, not the sum of item amount_refunded.
+	TotalRefunded  float64 `json:"total_refunded" jsonschema:"Document-level refunded total, including refunded shipping and adjustments."`
 	TotalQty       float64 `json:"total_qty_ordered" jsonschema:"Sum of line quantities; a number because Magento allows fractional quantities."`
 	Currency       string  `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
 	StoreName      string  `json:"store_name"`
@@ -196,7 +247,7 @@ type analysisOrder struct {
 	CouponCode     string  `json:"coupon_code"`
 	ShippingDesc   string  `json:"shipping_description"`
 	Payment        struct {
-		Method string `json:"method" jsonschema:"How the scan was paged: offset or cursor."`
+		Method string `json:"method" jsonschema:"Payment method code."`
 	} `json:"payment"`
 	ExtensionAttributes struct {
 		ShippingAssignments []struct {

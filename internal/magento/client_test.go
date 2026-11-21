@@ -680,3 +680,154 @@ func TestRedactedRouteKeepsActionWords(t *testing.T) {
 		}
 	}
 }
+
+// U-24: a rejection whose reason quotes an attribute code must still reach the
+// caller in redacted form instead of being dropped whole. Reverting the
+// redaction leaves `details` with only upstream_status.
+func TestStatusErrorKeepsRedactedQuotedReason(t *testing.T) {
+	body := []byte(`{"message":"The value of attribute \"color\" is incorrect."}`)
+	err := statusError(http.MethodPut, "/products/SKU-1", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	if _, ok := e.Details["upstream_message"]; ok {
+		t.Fatal("a quoted identifier must not reach upstream_message")
+	}
+	reason := e.Details["upstream_reason"]
+	if !strings.Contains(reason, "is incorrect") {
+		t.Fatalf("upstream_reason = %q, want the actionable sentence", reason)
+	}
+	if strings.Contains(reason, "color") {
+		t.Fatalf("upstream_reason leaked the attribute code: %q", reason)
+	}
+	if !strings.Contains(reason, "<value>") {
+		t.Fatalf("upstream_reason = %q, want the redaction marker", reason)
+	}
+}
+
+// U-24 + SEC-10: a reason that names an ACL resource or a SKU stays server-side
+// even after redaction; only the log carries it.
+func TestStatusErrorKeepsIdentifierReasonsServerSide(t *testing.T) {
+	body := []byte(`{"message":"The SKU SECRET-SKU-42 is not assigned to the ACL resource Magento_Catalog::products."}`)
+	err := statusError(http.MethodPut, "/products/SECRET-SKU-42", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	for key, value := range e.Details {
+		if strings.Contains(value, "SECRET-SKU-42") || strings.Contains(value, "ACL resource") {
+			t.Fatalf("detail %q leaked upstream text: %q", key, value)
+		}
+	}
+}
+
+// U-25: Magento's numbered placeholders arrive with `parameters` as an array.
+// They must be resolved (or explicitly omitted), never echoed as "%1".
+func TestStatusErrorResolvesNumericPlaceholders(t *testing.T) {
+	body := []byte(`{"message":"Invalid value of \"%1\" provided for the %2 field","parameters":["color","attribute"]}`)
+	err := statusError(http.MethodPut, "/products/SKU-1", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	reason := e.Details["upstream_message"] + e.Details["upstream_reason"]
+	if strings.Contains(reason, "%1") || strings.Contains(reason, "%2") {
+		t.Fatalf("placeholder survived: %q", reason)
+	}
+	// The value (%1) is redacted because it lands inside quotes, but the field
+	// name (%2) must survive: that is what the caller can act on.
+	if !strings.Contains(reason, "attribute") {
+		t.Fatalf("reason = %q, want the field name resolved", reason)
+	}
+}
+
+// U-25: a numbered placeholder whose parameter is free text must not become an
+// identifier leak; it is replaced with an explicit marker.
+func TestStatusErrorOmitsUnsafeNumericPlaceholder(t *testing.T) {
+	body := []byte(`{"message":"Could not process %1","parameters":["24-MB04 secret payload"]}`)
+	err := statusError(http.MethodPost, "/orders", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	for key, value := range e.Details {
+		if strings.Contains(value, "24-MB04") {
+			t.Fatalf("detail %q leaked the parameter: %q", key, value)
+		}
+	}
+	if !strings.Contains(e.Details["upstream_message"], "(omitted)") {
+		t.Fatalf("upstream_message = %q, want an explicit omission marker", e.Details["upstream_message"])
+	}
+}
+
+// U-26: contention is not the caller's fault and must stay retryable. Reporting
+// it as validation_failed told integrations never to retry a request that would
+// have succeeded.
+func TestStatusErrorMarksContentionRetryable(t *testing.T) {
+	body := []byte(`{"message":"The linked products data is invalid. Verify the data and try again."}`)
+	err := statusError(http.MethodPut, "/products/SKU-1", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	if e.Code != errs.CodeConflict {
+		t.Fatalf("code = %s, want conflict", e.Code)
+	}
+	if !e.Retryable {
+		t.Fatal("a contention failure must be retryable")
+	}
+	if got := e.Details["reason"]; got != "transient_upstream_error" {
+		t.Fatalf("reason = %q, want transient_upstream_error", got)
+	}
+}
+
+// U-27: a business-rule rejection that names a state conflict must be a
+// conflict with a stable reason code, not validation_failed plus Polish prose.
+func TestStatusErrorClassifiesStateConflict(t *testing.T) {
+	body := []byte(`{"message":"Nie można utworzyć faktury, gdy zamówienie ma status closed"}`)
+	err := statusError(http.MethodPost, "/order/23/invoice", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	if e.Code != errs.CodeConflict {
+		t.Fatalf("code = %s, want conflict", e.Code)
+	}
+	if got := e.Details["reason"]; got != "document_state_conflict" {
+		t.Fatalf("reason = %q, want document_state_conflict", got)
+	}
+	if e.Retryable {
+		t.Fatal("a state conflict must not be retryable")
+	}
+}
+
+// U-07 root cause: Magento reports some write failures as HTTP 200 with a JSON
+// array of messages. Treating the status code as the verdict reported success
+// with zero writes.
+func TestDecodeUpstreamBusinessError(t *testing.T) {
+	if err := decodeUpstreamBusinessError(http.MethodPost, "/products/tier-prices", []byte(`true`), "pl"); err != nil {
+		t.Fatalf("a boolean success body must not be an error: %v", err)
+	}
+	if err := decodeUpstreamBusinessError(http.MethodPost, "/products/tier-prices", []byte(`[]`), "pl"); err != nil {
+		t.Fatalf("an empty array must not be an error: %v", err)
+	}
+	err := decodeUpstreamBusinessError(http.MethodPost, "/products/tier-prices",
+		[]byte(`[{"message":"The product that was requested doesn't exist."}]`), "pl")
+	if err == nil {
+		t.Fatal("a 200 error array must become an error")
+	}
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("not a taxonomy error: %v", err)
+	}
+	if e.Code != errs.CodeValidationFailed {
+		t.Fatalf("code = %s, want validation_failed", e.Code)
+	}
+	if e.Details["upstream_business_error"] != "true" {
+		t.Fatalf("details = %v, want upstream_business_error", e.Details)
+	}
+	if !strings.Contains(e.Details["upstream_message"], "doesn't exist") {
+		t.Fatalf("upstream_message = %q, want Magento's reason", e.Details["upstream_message"])
+	}
+}

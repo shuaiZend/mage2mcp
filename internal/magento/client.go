@@ -346,19 +346,23 @@ func statusError(method, path string, status int, body []byte, storeCode string)
 	// Source or Default Stock"). The agent-facing Message above stays generic; the
 	// scrubbed reason and the field names go into details, and the unscrubbed text
 	// stays in Upstream for the server log.
-	if diag := parseUpstreamDiagnostic(body); diag.Message != "" || len(diag.Fields) > 0 {
-		if diag.Message != "" && upstreamTextIsSafe(diag.Message) {
-			// Only a reason that names no identifier may reach the caller; the raw
-			// text always reaches the log through Upstream below.
-			e = e.WithDetail("upstream_message", diag.Message)
+	diag := parseUpstreamDiagnostic(body)
+	// A business rule that names a transient cause is retryable, and a rule that
+	// names a state conflict is a conflict; the prose alone is not something an
+	// integration can branch on (U-26, U-27).
+	if reason, conflict, transient := classifyUpstreamReason(diag.Raw); reason != "" {
+		if conflict && (code == errs.CodeValidationFailed || code == errs.CodeConflict) {
+			e.Code = errs.CodeConflict
+			e.Message = "Magento rejected the request because of the entity's state"
 		}
-		if len(diag.Fields) > 0 {
-			e = e.WithDetail("upstream_field", strings.Join(diag.Fields, ","))
+		if transient {
+			e.Code = errs.CodeConflict
+			e.Message = "Magento could not apply the request because of upstream contention; retry it"
+			e.Retryable = true
 		}
-		if diag.Raw != "" {
-			e = e.WithUpstream(diag.Raw)
-		}
+		e = e.WithDetail("reason", reason)
 	}
+	e = withUpstreamDiagnostic(e, diag)
 	if ambiguous {
 		e = markAmbiguous(e)
 	}
@@ -435,6 +439,9 @@ var (
 	// Magento writes placeholders as "%field"; the quotes are part of the template,
 	// so they are consumed with it and the field name stands on its own.
 	upstreamPlaceholderRE = regexp.MustCompile(`"?%([A-Za-z][A-Za-z0-9_]*)"?`)
+	// upstreamNumericPlaceholderRE matches Magento's numbered "%1" templates,
+	// which arrive with `parameters` as an array.
+	upstreamNumericPlaceholderRE = regexp.MustCompile(`%[0-9]+`)
 	// The next three detect the identifiers SEC-10 keeps out of the agent-visible
 	// surface: ACL resource names, quoted attribute codes, and SKU-shaped tokens.
 	upstreamACLRE    = regexp.MustCompile(`[A-Za-z_]+::[A-Za-z_]+`)
@@ -455,6 +462,131 @@ func upstreamTextIsSafe(text string) bool {
 	return !upstreamACLRE.MatchString(text) &&
 		!upstreamQuotedRE.MatchString(text) &&
 		!upstreamSKURE.MatchString(text)
+}
+
+// redactUpstreamText keeps Magento's reason readable while removing the
+// identifiers SEC-10 protects. A message that only failed upstreamTextIsSafe
+// because it quoted a field name or echoed a SKU still tells the caller what
+// went wrong; dropping it entirely (U-24) left `details` with nothing but
+// upstream_status, so an operator could not tell a bad payload from a bad state.
+func redactUpstreamText(text string) string {
+	if text == "" {
+		return ""
+	}
+	redacted := upstreamQuotedRE.ReplaceAllString(text, `"<value>"`)
+	redacted = upstreamSKURE.ReplaceAllString(redacted, "<sku>")
+	redacted = upstreamACLRE.ReplaceAllString(redacted, "<acl>")
+	return redacted
+}
+
+// withUpstreamDiagnostic attaches a parsed diagnostic to an error using one
+// policy for every upstream path: the generic message stays agent-facing, the
+// scrubbed reason goes to upstream_message, and a reason that only carries
+// identifiers goes to upstream_reason in redacted form.
+func withUpstreamDiagnostic(e *errs.Error, diag upstreamDiagnostic) *errs.Error {
+	if diag.Message != "" {
+		switch {
+		case upstreamTextIsSafe(diag.Message):
+			e = e.WithDetail("upstream_message", diag.Message)
+		case upstreamACLRE.MatchString(diag.Message) || upstreamSKURE.MatchString(diag.Message):
+			// An identifier-bearing reason stays server-side: redacting it still
+			// leaves Magento's internals (ACL names, SKU assignments) in the
+			// agent-visible surface, which SEC-10 forbids.
+		default:
+			// The message failed only because it quoted a field name or an
+			// attribute code. Redacting those keeps the sentence a caller can act
+			// on without leaking the identifier (U-24).
+			if redacted := redactUpstreamText(diag.Message); strings.TrimSpace(redacted) != "" {
+				e = e.WithDetail("upstream_reason", redacted)
+			}
+		}
+	}
+	if len(diag.Fields) > 0 {
+		e = e.WithDetail("upstream_field", strings.Join(diag.Fields, ","))
+	}
+	if diag.Raw != "" {
+		e = e.WithUpstream(diag.Raw)
+	}
+	return e
+}
+
+// upstreamTransientRE matches the upstream answers that are safe to retry: the
+// write did not commit, but the cause is contention or a transient lock, not the
+// caller's payload. Reporting them as validation_failed (U-26) told an
+// integration never to retry a request that would have succeeded.
+var upstreamTransientRE = regexp.MustCompile(`(?i)(deadlock|lock wait timeout|sqlstate\[40001\]|the linked products data is invalid|unable to be saved|try again later|please try again)`)
+
+// upstreamStateConflictRE matches business-rule rejections that are really state
+// conflicts, so a caller gets `conflict` instead of `validation_failed` (U-27).
+var upstreamStateConflictRE = regexp.MustCompile(`(?i)(has status closed|status closed|already been canceled|already canceled|already invoiced|already paid|can not be canceled|can't be canceled)`)
+
+// classifyUpstreamReason returns a stable reason code for the reasons a caller
+// has to branch on. Prose in a Polish message is not something an integration
+// can program against.
+func classifyUpstreamReason(text string) (reason string, conflict bool, retryable bool) {
+	if text == "" {
+		return "", false, false
+	}
+	if upstreamTransientRE.MatchString(text) {
+		return "transient_upstream_error", true, true
+	}
+	if upstreamStateConflictRE.MatchString(text) {
+		return "document_state_conflict", true, false
+	}
+	if strings.Contains(strings.ToLower(text), "najmniej, ile możesz zakupić") {
+		return "min_qty_violation", false, false
+	}
+	if strings.Contains(strings.ToLower(text), "without products") {
+		return "no_refundable_items", false, false
+	}
+	return "", false, false
+}
+
+// decodeUpstreamBusinessError reports a business failure that Magento encoded in
+// an HTTP 200 body. Several write routes answer 200 with a JSON array of
+// {"message": ...} objects when the operation did not happen; treating the status
+// code as the verdict made tier-price writes report set:true with zero writes
+// (U-07). A body that is not an error array is not an error.
+func decodeUpstreamBusinessError(method, path string, raw []byte, storeCode string) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil
+	}
+	var items []struct {
+		Message    string          `json:"message"`
+		Parameters json.RawMessage `json:"parameters"`
+	}
+	if err := json.Unmarshal(trimmed, &items); err != nil {
+		return nil
+	}
+	messages := make([]string, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.Message) != "" {
+			messages = append(messages, item.Message)
+		}
+	}
+	if len(messages) == 0 {
+		return nil
+	}
+	body, _ := json.Marshal(map[string]any{"message": strings.Join(messages, " | ")})
+	diag := parseUpstreamDiagnostic(body)
+	reason, conflict, retryable := classifyUpstreamReason(diag.Raw)
+	code, message := errs.CodeValidationFailed, "Magento reported a business failure; the request did not apply"
+	if conflict {
+		code, message = errs.CodeConflict, "Magento rejected the request because of the entity's state"
+	}
+	e := errs.New(code, message)
+	e.Retryable = retryable
+	e = e.WithOp("magento " + method + " " + redactedRoute(path))
+	e = e.WithDetail("upstream_status", "200")
+	e = e.WithDetail("upstream_business_error", "true")
+	if storeCode != "" {
+		e = e.WithDetail("store_code", storeCode)
+	}
+	if reason != "" {
+		e = e.WithDetail("reason", reason)
+	}
+	return withUpstreamDiagnostic(e, diag)
 }
 
 // parseUpstreamDiagnostic extracts Magento's reason from an error body. Magento
@@ -526,16 +658,29 @@ func parseUpstreamDiagnostic(body []byte) upstreamDiagnostic {
 	return diag
 }
 
-// upstreamParamMap tolerates Magento's shapes: an object, an empty array, or
-// absent. Anything that is not a JSON object yields no parameters rather than
-// discarding the message that came with it.
+// upstreamParamMap tolerates Magento's shapes: an object, an array, or absent.
+// Magento sends `parameters` as an array for `%1`-style templates, and an array
+// used to yield no parameters at all, which is why those placeholders reached
+// callers unreplaced (U-25). Array entries are keyed "1", "2", ... to match the
+// template numbering.
 func upstreamParamMap(raw json.RawMessage) map[string]any {
 	if len(raw) == 0 {
 		return nil
 	}
 	var params map[string]any
-	if err := json.Unmarshal(raw, &params); err != nil {
+	if err := json.Unmarshal(raw, &params); err == nil {
+		return params
+	}
+	var list []any
+	if err := json.Unmarshal(raw, &list); err != nil {
 		return nil
+	}
+	if len(list) == 0 {
+		return nil
+	}
+	params = make(map[string]any, len(list))
+	for i, value := range list {
+		params[strconv.Itoa(i+1)] = value
 	}
 	return params
 }
@@ -552,12 +697,17 @@ func isGenericUpstreamMessage(message string) bool {
 	return false
 }
 
-// resolveUpstreamPlaceholders turns Magento's "%field" templates into the text a
-// caller can act on. A placeholder with no matching parameter is left intact: it
-// still tells the reader which field was meant.
+// resolveUpstreamPlaceholders turns Magento's "%field" and "%1" templates into
+// the text a caller can act on. A placeholder with no matching parameter becomes
+// an explicit marker rather than a raw "%1" the caller has to guess at (U-25).
+// Only field-name-shaped values are substituted: a numeric placeholder whose
+// parameter is free text (a SKU, a message) must not become an identifier leak.
 func resolveUpstreamPlaceholders(message string, parameters map[string]any) string {
-	if len(parameters) == 0 || !strings.Contains(message, "%") {
+	if !strings.Contains(message, "%") {
 		return message
+	}
+	if len(parameters) == 0 {
+		return upstreamNumericPlaceholderRE.ReplaceAllString(message, "(omitted)")
 	}
 	lower := make(map[string]string, len(parameters))
 	for key, value := range parameters {
@@ -567,12 +717,20 @@ func resolveUpstreamPlaceholders(message string, parameters map[string]any) stri
 		}
 		lower[strings.ToLower(key)] = text
 	}
-	return upstreamPlaceholderRE.ReplaceAllStringFunc(message, func(token string) string {
+	resolved := upstreamPlaceholderRE.ReplaceAllStringFunc(message, func(token string) string {
 		name := strings.ToLower(strings.Trim(token, `"`)[1:])
 		if value, ok := lower[name]; ok {
 			return value
 		}
 		return token
+	})
+	return upstreamNumericPlaceholderRE.ReplaceAllStringFunc(resolved, func(token string) string {
+		name := strings.TrimPrefix(token, "%")
+		value, ok := lower[name]
+		if !ok || !upstreamFieldRE.MatchString(value) {
+			return "(omitted)"
+		}
+		return value
 	})
 }
 

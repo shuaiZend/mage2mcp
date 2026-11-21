@@ -230,6 +230,15 @@ func installPolicy(srv *mcp.Server, opts Options) {
 			ctx, callState := audit.WithCallState(ctx)
 			tool := call.Params.Name
 			instance := instanceArgument(call.Params.Arguments)
+			// An unregistered tool is a caller mistake, not a server fault. Folding
+			// it into `internal` made a misspelled tool name indistinguishable from
+			// a real crash (U-28), so it is refused before anything else runs.
+			if _, registered := opts.Registry.Lookup(tool); !registered {
+				recordOutcome(opts, ctx, tool, instance, "failed", errs.CodeNotFound)
+				return withResultMeta(ctx, tool, instance, toolErrorResult(
+					errs.New(errs.CodeNotFound, "no such tool is registered on this server").
+						WithDetail("tool", tool))), nil
+			}
 			if opts.Audit != nil {
 				opts.Audit(ctx, tool, instance, "intent", "pending", "")
 			}

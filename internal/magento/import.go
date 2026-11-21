@@ -176,6 +176,11 @@ func importSEOWarnings(row ImportRow) []ImportWarning {
 	add := func(field, message string) {
 		warnings = append(warnings, ImportWarning{RowNumber: row.RowNumber, Field: field, Message: message})
 	}
+	// The row is valid without a name because it may be an update; a create
+	// without one fails at execution, so say so before the write is attempted.
+	if strings.TrimSpace(row.Name) == "" {
+		add("name", "missing name; required when this row creates a product, ignored for an update")
+	}
 	description := row.Attributes["description"]
 	switch {
 	case description == "":
@@ -316,8 +321,13 @@ func validateImportRow(row ImportRow, seen map[string]int) []ImportRowError {
 	} else {
 		seen[row.SKU] = row.RowNumber
 	}
-	if row.Name == "" || len(row.Name) > 255 {
-		add("name", "name is required and must be at most 255 characters")
+	// A name is required to create a product, but an update row that only
+	// reprices an existing SKU must not be rejected for omitting it: whether the
+	// row creates or updates needs Magento, and validation is deliberately
+	// offline (U-65). A missing name is a warning here and a per-row failure at
+	// execution time when the row turns out to be a create.
+	if len(row.Name) > 255 {
+		add("name", "name must be at most 255 characters")
 	}
 	switch row.TypeID {
 	case "", "simple", "virtual", "downloadable", "bundle":
@@ -468,7 +478,14 @@ func (s *Service) executeImportRows(ctx context.Context, format string, data []b
 				result.Rows = append(result.Rows, outcome)
 				continue
 			}
-			update := UpdateProductInput{Name: &row.Name}
+			// A price-only row carries no name. Sending an empty name would
+			// overwrite the product's name with "", so the field is omitted and
+			// Magento's merge semantics keep the stored value (U-65).
+			update := UpdateProductInput{}
+			if row.Name != "" {
+				name := row.Name
+				update.Name = &name
+			}
 			if err := applyImportUpdateAttributes(row.Attributes, &update); err != nil {
 				outcome.Action, outcome.Status, outcome.Error = "update", "failed", importErrorMessage(err)
 				result.Failed++
@@ -486,6 +503,17 @@ func (s *Service) executeImportRows(ctx context.Context, format string, data []b
 				result.Updated++
 			}
 		case errs.CodeOf(getErr) == errs.CodeNotFound:
+			// Validation cannot know whether a row creates or updates, so the
+			// name requirement is enforced here, where the answer is known, and
+			// only the row that needs a name fails.
+			if strings.TrimSpace(row.Name) == "" {
+				outcome.Action, outcome.Status = "create", "failed"
+				outcome.Error = importErrorMessage(errs.New(errs.CodeValidationFailed,
+					"name is required to create a product").WithDetail("field", "name"))
+				result.Failed++
+				result.Rows = append(result.Rows, outcome)
+				continue
+			}
 			attrSetID, convErr := importAttributeSetID(row)
 			if convErr != nil {
 				outcome.Action, outcome.Status, outcome.Error = "create", "failed", importErrorMessage(convErr)
@@ -548,16 +576,41 @@ func importAttributeSetID(row ImportRow) (int, error) {
 	return id, nil
 }
 
+// importErrorMessage renders one failed row for the caller.
+//
+// The code and the gateway's own message are not enough to fix a row: "Magento
+// rejected the request as invalid" says nothing about which column broke, so the
+// upstream reason travels with it. When the client withheld the reason (it does
+// so for text naming identifiers), the field and status it did carry are kept
+// instead, which is still enough to find the column (U-65 / INT-10).
 func importErrorMessage(err error) string {
 	var typed *errs.Error
-	if errors.As(err, &typed) {
-		message := string(typed.Code) + ": " + typed.Message
-		if upstream := typed.Details["upstream_message"]; upstream != "" {
-			message += " (" + upstream + ")"
+	if !errors.As(err, &typed) {
+		if err != nil && err.Error() != "" {
+			return err.Error()
 		}
-		return message
+		return "internal error"
 	}
-	return "internal error"
+	message := string(typed.Code) + ": " + typed.Message
+	var parts []string
+	upstream := typed.Details["upstream_message"]
+	if upstream != "" {
+		parts = append(parts, upstream)
+	}
+	field := typed.Details["upstream_field"]
+	if field == "" {
+		field = typed.Details["field"]
+	}
+	if field != "" {
+		parts = append(parts, "field="+field)
+	}
+	if status := typed.Details["upstream_status"]; status != "" && upstream == "" {
+		parts = append(parts, "upstream_status="+status)
+	}
+	if len(parts) > 0 {
+		message += " (" + strings.Join(parts, ", ") + ")"
+	}
+	return message
 }
 
 func parseImportRows(format string, data []byte) ([]ImportRow, error) {

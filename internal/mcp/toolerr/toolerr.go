@@ -266,13 +266,13 @@ func compile(input any) func([]byte) error {
 func Envelope(err error) map[string]any {
 	code := errs.CodeOf(err)
 	message := "an unexpected error occurred"
-	envelope := map[string]any{"code": string(code), "message": message}
+	// ADR-0010 says every error carries Retryable, so the field is always present:
+	// a caller must not have to infer "false" from an absent key (U-30).
+	envelope := map[string]any{"code": string(code), "message": message, "retryable": false}
 	var taxonomy *errs.Error
 	if errors.As(err, &taxonomy) {
 		envelope["message"] = taxonomy.Message
-		if taxonomy.Retryable {
-			envelope["retryable"] = true
-		}
+		envelope["retryable"] = taxonomy.Retryable
 		if taxonomy.Op != "" {
 			envelope["op"] = taxonomy.Op
 		}
