@@ -235,3 +235,38 @@ mage2mcp-worker-1     ghcr.io/shuaizend/mage2mcp:v0.11.4    Up
 - **审批脚本**：`/opt/mage2mcp/approve.sh <confirmation_id>`
 
 测试过程中创建的数据（`MCPTEST-*` 商品与客户、`mcptest_src`/`mcptest_src2` MSI 源、若干订单与票据）按你的要求**保留未清理**。
+
+## 商品复制记录：Nillkin Xiaomi 18 Fold 手机壳
+
+| 项目 | 内容 |
+|---|---|
+| 来源 | `https://www.giztop.com/nillkin-protective-magnetic-hard-pc-case-for-xiaomi-18-fold.html` |
+| 目标店铺 | `https://demo-magento-2.auroracreation.com` |
+| 商品 id | 2142 |
+| SKU | `NILLKIN-XM18FOLD-CASE` |
+| 名称 | Nillkin Protective Magnetic Hard PC Case for Xiaomi 18 Fold |
+| 价格 | 29.99（店铺货币 PLN） |
+| 状态 / 可见性 | `status=1`（启用）、`visibility=4`（目录与搜索） |
+| 分类 | 新建「Phone Accessories」（id 61，挂在 Gear 下，已加入导航菜单） |
+| 库存 | 100 |
+| 图片 | 上传 giztop 主图（1200×1200 JPEG），设为 `image`/`small_image`/`thumbnail` |
+| 描述 | 来自源站完整规格文本 |
+
+### 前台验证
+
+| 检查项 | 结果 |
+|---|---|
+| 商品页 HTTP | 200 |
+| 商品页标题 | Nillkin Protective Magnetic Hard PC Case for Xiaomi 18 Fold |
+| 商品页价格 | 29.99 |
+| 商品页库存 | 有货（`class="stock available"`） |
+| 商品页描述块 | 完整渲染 |
+| 商品页加购按钮 | 存在 |
+| **目录页商品卡片** | **1 个，名称/价格/图片齐全** |
+| 目录页图片 HTTP | 200，`image/jpeg` |
+| 前台搜索 "nillkin" | 命中 1 个商品 |
+| 导航菜单 | 包含 Phone Accessories |
+
+### 说明
+
+父分类 `Gear` 未启用锚定（Magento 默认），因此商品只在子分类页展示，不在 `gear.html` 出现。这是 Magento 的标准行为，不是缺陷。
