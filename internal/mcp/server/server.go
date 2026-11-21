@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -230,14 +231,13 @@ func installPolicy(srv *mcp.Server, opts Options) {
 			ctx, callState := audit.WithCallState(ctx)
 			tool := call.Params.Name
 			instance := instanceArgument(call.Params.Arguments)
-			// An unregistered tool is a caller mistake, not a server fault. Folding
-			// it into `internal` made a misspelled tool name indistinguishable from
-			// a real crash (U-28), so it is refused before anything else runs.
-			if _, registered := opts.Registry.Lookup(tool); !registered {
-				recordOutcome(opts, ctx, tool, instance, "failed", errs.CodeNotFound)
-				return withResultMeta(ctx, tool, instance, toolErrorResult(
-					errs.New(errs.CodeNotFound, "no such tool is registered on this server").
-						WithDetail("tool", tool))), nil
+			// SEC-05: the instance is the audit attribution key, so it is checked
+			// before it can be written. A value that is not an instance id is refused
+			// here and never reaches the audit sink: the raw argument used to land in
+			// audit_events (5000-character values, embedded newlines, forged
+			// attribution lines) and only the tool schema rejected it afterwards.
+			if instErr := validateInstanceArgument(instance); instErr != nil {
+				return withResultMeta(ctx, tool, "", toolErrorResult(instErr)), nil
 			}
 			if opts.Audit != nil {
 				opts.Audit(ctx, tool, instance, "intent", "pending", "")
@@ -248,6 +248,17 @@ func installPolicy(srv *mcp.Server, opts Options) {
 					recordOutcome(opts, ctx, tool, instance, "denied", errs.CodeOf(authErr))
 					return withResultMeta(ctx, tool, instance, deniedResult(authErr)), nil
 				}
+			}
+
+			// An unregistered tool is a caller mistake, not a server fault. With an
+			// authorizer the fail-closed denial above already wins; without one the
+			// call used to fall through to the SDK and surface as `internal`, which
+			// made a misspelled tool name indistinguishable from a crash (U-28).
+			if _, registered := opts.Registry.Lookup(tool); !registered {
+				recordOutcome(opts, ctx, tool, instance, "failed", errs.CodeNotFound)
+				return withResultMeta(ctx, tool, instance, toolErrorResult(
+					errs.New(errs.CodeNotFound, "no such tool is registered on this server").
+						WithDetail("tool", tool))), nil
 			}
 
 			// The confirmation is validated here but consumed by BeginOperation,
@@ -414,9 +425,15 @@ func installPolicy(srv *mcp.Server, opts Options) {
 }
 
 func recordOutcome(opts Options, ctx context.Context, tool, instance, state string, code errs.Code) {
-	if opts.Audit != nil {
-		opts.Audit(ctx, tool, instance, "outcome", state, string(code))
+	if opts.Audit == nil {
+		return
 	}
+	// The outcome row is written after the tool returns, which is exactly when a
+	// timed-out or canceled request has an already-dead context. Passing that
+	// context to the audit sink made the write fail silently and left the intent
+	// row dangling (U-78). WithoutCancel keeps the request's values (subject,
+	// request id) while detaching its cancellation.
+	opts.Audit(context.WithoutCancel(ctx), tool, instance, "outcome", state, string(code))
 }
 
 // authorizeCall resolves the tool's required scope and asks the caller's
@@ -482,6 +499,41 @@ func instanceArgument(args json.RawMessage) string {
 	}
 	value, _ := fields["instance"].(string)
 	return value
+}
+
+// instanceIDPattern is the protocol-level grammar for the instance argument.
+//
+// It is the union of the per-module patterns: Magento accepts letters, digits,
+// '.', '_' and '-'; Cloudflare and the import tools accept a lower-case subset.
+// Every id a tool could accept passes here and nothing else does, so the
+// per-tool JSON Schema stays authoritative for the module-specific rules while
+// the middleware has one bounded shape it can write to the audit trail.
+const instanceIDPattern = `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`
+
+var instanceIDRE = regexp.MustCompile(instanceIDPattern)
+
+// validateInstanceArgument refuses an instance value that cannot name any
+// configured instance, before it reaches the audit trail.
+//
+// SEC-05: the instance is the audit attribution key. The middleware used to
+// record the raw argument first and let the tool schema reject it afterwards, so
+// a caller could write arbitrary strings into audit_events — 5000-character
+// values, embedded newlines, and forged attribution lines such as
+// "demo\nFORGED audit line: subject=admin". A value that is not an instance id
+// never becomes one: it is rejected here and no audit row is written for it,
+// because there is no instance to attribute the call to.
+func validateInstanceArgument(instance string) error {
+	if instance == "" {
+		// Absent for tools that address no data source; the per-tool schema
+		// decides whether the empty value is acceptable.
+		return nil
+	}
+	if instanceIDRE.MatchString(instance) {
+		return nil
+	}
+	return errs.New(errs.CodeInvalidArgument, "instance is not a valid instance id").
+		WithDetail("validation", "instance: must match "+instanceIDPattern).
+		WithDetail("instance_length", strconv.Itoa(len(instance)))
 }
 
 func toolErrorResult(err error) *mcp.CallToolResult {
@@ -704,8 +756,9 @@ func Handler(srv *mcp.Server, opts Options) http.Handler {
 		},
 	)
 	// The session binding sits inside the auth middleware: the identity has to be
-	// on the context before a session can be tied to it.
-	mcpHandler := http.Handler(sessionBinding(newSessionOwners())(streamable))
+	// on the context before a session can be tied to it. utf8SSE wraps the
+	// transport itself so every event-stream response carries the charset.
+	mcpHandler := http.Handler(sessionBinding(newSessionOwners())(utf8SSE(streamable)))
 	if opts.AuthMiddleware != nil {
 		mcpHandler = opts.AuthMiddleware(mcpHandler)
 	}
@@ -739,6 +792,55 @@ func Handler(srv *mcp.Server, opts Options) http.Handler {
 	}
 	return mux
 }
+
+// utf8SSE stamps charset=utf-8 on the event-stream responses the MCP transport
+// writes.
+//
+// The SDK sets "Content-Type: text/event-stream" with no charset. HTTP says a
+// text/* type without a charset defaults to ISO-8859-1, so a client that follows
+// the default (Python requests does) decodes Polish product names and error text
+// as mojibake even though the bytes are valid UTF-8 (U-85). The header is the
+// only thing missing; the body is already UTF-8.
+func utf8SSE(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&charsetWriter{ResponseWriter: w}, r)
+	})
+}
+
+// charsetWriter adds "; charset=utf-8" to a text/event-stream response before the
+// header is committed, and forwards the streaming interfaces the transport uses.
+type charsetWriter struct {
+	http.ResponseWriter
+	wroteHeader bool
+}
+
+func (w *charsetWriter) WriteHeader(code int) {
+	if !w.wroteHeader {
+		w.wroteHeader = true
+		if contentType := w.Header().Get("Content-Type"); strings.HasPrefix(contentType, "text/event-stream") &&
+			!strings.Contains(strings.ToLower(contentType), "charset=") {
+			w.Header().Set("Content-Type", contentType+"; charset=utf-8")
+		}
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *charsetWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// Flush keeps the event stream streaming: the transport flushes each event.
+func (w *charsetWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (w *charsetWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

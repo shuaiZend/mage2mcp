@@ -45,6 +45,28 @@ type OrderItem struct {
 	QtyOrdered  float64 `json:"qty_ordered"`
 	Price       float64 `json:"price"`
 	RowTotal    float64 `json:"row_total"`
+	// The per-line fulfilment counters. Without them a support agent cannot
+	// answer "which unit shipped?" or "how many were refunded?" from the order
+	// read, which is the first question of every delivery complaint (U-31).
+	// Pointers because the list projection omits them entirely.
+	QtyShipped  *float64 `json:"qty_shipped,omitempty" jsonschema:"Units of this line that have shipped; omitted on the list projection."`
+	QtyInvoiced *float64 `json:"qty_invoiced,omitempty" jsonschema:"Units of this line that have been invoiced; omitted on the list projection."`
+	QtyRefunded *float64 `json:"qty_refunded,omitempty" jsonschema:"Units of this line that have been refunded; omitted on the list projection."`
+}
+
+// OrderAddress is the delivery or billing address of an order, as far as support
+// needs it: enough to confirm or correct a shipment, without payment data.
+type OrderAddress struct {
+	Firstname string   `json:"firstname" jsonschema:"Recipient given name."`
+	Lastname  string   `json:"lastname" jsonschema:"Recipient family name."`
+	Street    []string `json:"street" jsonschema:"Street lines, most specific first."`
+	City      string   `json:"city" jsonschema:"City or locality."`
+	Postcode  string   `json:"postcode" jsonschema:"Postal code as the destination country writes it."`
+	CountryID string   `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code."`
+	Region    string   `json:"region,omitempty" jsonschema:"Region name, when the address carries one."`
+	RegionID  int      `json:"region_id,omitempty" jsonschema:"Numeric region id, when the address carries one."`
+	Telephone string   `json:"telephone,omitempty" jsonschema:"Contact phone number, when the address carries one."`
+	Email     string   `json:"email,omitempty" jsonschema:"Contact email on the order address, when present."`
 }
 
 // Order is the explicit order projection this slice exposes.
@@ -69,6 +91,12 @@ type Order struct {
 	TotalQtyOrdered float64     `json:"total_qty_ordered" jsonschema:"Sum of line quantities. A number, not an integer: Magento allows fractional quantities."`
 	Currency        string      `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts above are expressed in."`
 	Items           []OrderItem `json:"items,omitempty" jsonschema:"Order lines. Absent on the list projection, present on a single-order read."`
+	// Shipping method and the two addresses answer "where was it sent and how?",
+	// which a support agent cannot get from any other tool: no tool can update an
+	// order address after placement (U-31, U-32).
+	ShippingDescription string        `json:"shipping_description,omitempty" jsonschema:"Shipping method the customer chose, as Magento renders it."`
+	ShippingAddress     *OrderAddress `json:"shipping_address,omitempty" jsonschema:"Delivery address of the order; omitted on the list projection."`
+	BillingAddress      *OrderAddress `json:"billing_address,omitempty" jsonschema:"Billing address of the order; omitted on the list projection."`
 }
 
 // OrderQuery selects orders; zero values mean no filter except Limit (50).

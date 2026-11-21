@@ -23,13 +23,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/toolerr"
+	"github.com/shuaiZend/mage2mcp/internal/security/audit"
+	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
 
@@ -43,6 +48,10 @@ type OperationLedger interface {
 	Fail(ctx context.Context, id, fence, errorCode string) (bool, error)
 	Unknown(ctx context.Context, id, fence, errorCode string, retryAfter time.Duration) (bool, error)
 	Get(ctx context.Context, id string) (*storage.OperationRecord, error)
+	// List and Dispose are the polling and disposition surface INT-07 was missing:
+	// an operation_unknown that no tool could read and no tool could close.
+	List(ctx context.Context, f storage.OperationFilter) (*storage.OperationPage, error)
+	Dispose(ctx context.Context, id string, judgment storage.DisposeJudgment, note, upstreamRef string, event *audit.Event) (bool, error)
 }
 
 // operationLease is the ownership window of one attempt. It is longer than the
@@ -239,6 +248,11 @@ func (r *OperationRun) Unknown(ctx context.Context, errorCode string) error {
 //	failed before -> the recorded failure (never an automatic retry)
 //	in progress   -> conflict, poll operation_id
 //	unknown       -> operation_unknown, poll and never retry
+//
+// A request without an idempotency key is deduplicated by its arguments only
+// inside storage.DerivedKeyWindow: a repeat inside the window replays, and a
+// later repeat is a new operation. "The same arguments" is a double-submit guard,
+// not a permanent promise that this subject may never do it again (INT-12).
 func (o *Operations) Begin(ctx context.Context, req OperationRequest) (*OperationRun, *storage.BeginResult, error) {
 	// The tool now owns this call's outcome audit row: it writes it inside its own
 	// ledger transaction, so the middleware must not write a second one afterwards.
@@ -400,4 +414,299 @@ func (s *Service) operationInstanceID(instance string) string {
 	}
 	sum := sha256.Sum256([]byte(s.client.BaseURL + "\x00" + s.client.StoreCode))
 	return "magento-" + hex.EncodeToString(sum[:8])
+}
+
+// ---------------------------------------------------------------------------
+// Polling and disposition of operations
+//
+// operation_unknown tells the caller to poll, and until these tools existed there
+// was nothing to poll with: 102 registered tools, none of them able to read an
+// operation. An ERP that lost a response had no way to learn whether the order
+// was placed, and a row the reconciler escalated had no exit (INT-07).
+//
+// The three tools are the complete surface: read one, find the ones that need a
+// human, and record what the human found.
+// ---------------------------------------------------------------------------
+
+// Operations.Get returns one operation for polling.
+func (o *Operations) Get(ctx context.Context, id string) (*storage.OperationRecord, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, invalidf("operation_id is required")
+	}
+	return o.ledger.Get(ctx, id)
+}
+
+// Operations.List returns a page of operations.
+func (o *Operations) List(ctx context.Context, f storage.OperationFilter) (*storage.OperationPage, error) {
+	if f.State != "" && !knownOperationState(f.State) {
+		return nil, invalidf("state must be one of pending, executing, succeeded, failed, unknown, reconciling")
+	}
+	return o.ledger.List(ctx, f)
+}
+
+// Operations.Dispose records an operator's finding about an unknown operation.
+//
+// The judgement is required, and so is the note: the whole point of an unknown
+// outcome is that nobody knows yet, so "close it" is only meaningful together with
+// what was checked. Nothing here can turn an unknown into "assume it never
+// happened": not_applied is a claim the operator verified upstream.
+func (o *Operations) Dispose(ctx context.Context, id string, judgment storage.DisposeJudgment, note, upstreamRef string) (*storage.OperationRecord, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, invalidf("operation_id is required")
+	}
+	if !judgment.Valid() {
+		return nil, invalidf("judgment must be applied, not_applied or requeue")
+	}
+	if strings.TrimSpace(note) == "" {
+		return nil, invalidf("note is required: record what was checked before closing an unknown outcome")
+	}
+	record, err := o.ledger.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if record.State != storage.OpUnknown {
+		return nil, errs.New(errs.CodeConflict,
+			"only an operation whose outcome is unknown can be disposed; this one is "+record.State).
+			WithDetail("operation_id", id).
+			WithDetail("state", record.State)
+	}
+	event := &audit.Event{
+		Subject: callerSubject(ctx), IdentityClass: callerIdentityClass(ctx),
+		Tool: operationDisposeToolName, Instance: record.InstanceID,
+		Scope: "dispose", Phase: "outcome",
+		Decision: disposeAuditDecision(judgment), State: disposeAuditState(judgment),
+	}
+	if _, err := o.ledger.Dispose(ctx, id, judgment, note, upstreamRef, event); err != nil {
+		return nil, err
+	}
+	return o.ledger.Get(ctx, id)
+}
+
+// knownOperationState reports whether state names one of the ledger's states.
+func knownOperationState(state string) bool {
+	switch state {
+	case storage.OpPending, storage.OpExecuting, storage.OpSucceeded,
+		storage.OpFailed, storage.OpUnknown, storage.OpReconciling:
+		return true
+	}
+	return false
+}
+
+// callerIdentityClass is the verified identity class, or "anonymous" without auth.
+func callerIdentityClass(ctx context.Context) string {
+	if id, ok := auth.IdentityFromContext(ctx); ok && id.Class != "" {
+		return id.Class
+	}
+	return "anonymous"
+}
+
+// disposeAuditDecision and disposeAuditState describe the disposition in the audit
+// trail: a requeue changed nothing upstream (error), while a confirmed finding is
+// the recorded truth about it.
+func disposeAuditDecision(judgment storage.DisposeJudgment) string {
+	if judgment == storage.DisposedRequeue {
+		return "error"
+	}
+	return "allow"
+}
+
+func disposeAuditState(judgment storage.DisposeJudgment) string {
+	switch judgment {
+	case storage.DisposedApplied:
+		return "succeeded"
+	case storage.DisposedNotApplied:
+		return "failed"
+	default:
+		return "outcome_unknown"
+	}
+}
+
+const (
+	operationGetToolName      = "magento.operation.get"
+	operationGetToolTitle     = "Get a Magento operation"
+	operationListToolName     = "magento.operation.list"
+	operationListToolTitle    = "List Magento operations"
+	operationDisposeToolName  = "magento.operation.dispose"
+	operationDisposeToolTitle = "Dispose of a Magento operation"
+)
+
+const operationGetToolDescription = "Reads one ledger operation by its operation_id: the tool it " +
+	"represents, the entity, the state (pending, executing, succeeded, failed, unknown, reconciling), " +
+	"the recorded result, the reconciliation count and whether it needs a human. " +
+	"Read-only. This is the polling endpoint operation_unknown and conflict responses point at: " +
+	"an unknown outcome is never resolved by retrying, only by reading the operation."
+
+const operationListToolDescription = "Lists ledger operations newest first, optionally filtered by " +
+	"instance, tool name, state, or needs_attention. needs_attention selects the rows no automatic " +
+	"reconciliation will touch again (an escalated unknown, or one whose backoff is unreachable) — " +
+	"those are the rows an operator has to dispose of. Reports the matching total and whether the " +
+	"page was truncated, and returns a next_cursor. Read-only."
+
+const operationDisposeToolDescription = "Records what an operator found out about an operation whose " +
+	"outcome is unknown, and moves it to the matching state. judgment=applied (the mutation is in the " +
+	"upstream, verified by reading it) marks the operation succeeded so a replay returns it instead of " +
+	"writing again; judgment=not_applied (verified absent) marks it failed and frees its derived " +
+	"idempotency key; judgment=requeue leaves it unknown but restarts the reconciliation budget so the " +
+	"reconciler reads the upstream again instead of leaving the row escalated forever. The note is " +
+	"required and is kept in the transition history. Only an unknown operation can be disposed. " +
+	"Requires approval."
+
+const operationGetSchema = `{"type": "object", "properties": {
+	"operation_id": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", "description": "Operation id from an operation_unknown or conflict response, or from magento.operation.list."}
+}, "required": ["operation_id"], "additionalProperties": false}`
+
+const operationListSchema = `{"type": "object", "properties": {
+	` + instanceOptionalProp + `,
+	"operation": {"type": "string", "maxLength": 128, "description": "Tool name to filter by, for example magento.order.create."},
+	"state": {"type": "string", "enum": ["pending", "executing", "succeeded", "failed", "unknown", "reconciling"], "description": "Ledger state to filter by."},
+	"needs_attention": {"type": "boolean", "description": "True returns only the rows no automatic reconciliation will touch again: escalated unknown outcomes and rows whose backoff is unreachable. These need an operator decision."},
+	"limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Page size; defaults to 50."},
+	"cursor": {"type": "string", "maxLength": 256, "description": "next_cursor from the previous page."}
+}, "additionalProperties": false}`
+
+const operationDisposeSchema = `{"type": "object", "properties": {
+	"operation_id": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", "description": "The unknown operation to dispose of."},
+	"judgment": {"type": "string", "enum": ["applied", "not_applied", "requeue"], "description": "What you found: applied (verified present upstream), not_applied (verified absent upstream), requeue (not determined yet; let the reconciler read upstream again)."},
+	"note": {"type": "string", "minLength": 3, "maxLength": 1024, "description": "What you checked and where. Kept in the operation's transition history."},
+	"upstream_ref": {"type": "string", "maxLength": 256, "description": "Upstream handle you found, for example the Magento increment id. Recorded with judgment=applied."},
+	` + confirmationProp + `
+}, "required": ["operation_id", "judgment", "note"], "additionalProperties": false}`
+
+// instanceOptionalProp is the instance input for tools that may span instances.
+const instanceOptionalProp = `"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id to filter by; omit to list every instance."}`
+
+type operationGetInput struct {
+	OperationID string `json:"operation_id" jsonschema:"Operation id from an operation_unknown or conflict response."`
+}
+
+type operationGetOutput struct {
+	Operation storage.OperationRecord `json:"operation" jsonschema:"The operation as the ledger records it."`
+	// Next is the action the state implies, so a caller does not have to know the
+	// state machine to act on the answer.
+	Next string `json:"next" jsonschema:"What to do next with this operation."`
+}
+
+type operationListInput struct {
+	Instance       string `json:"instance,omitempty" jsonschema:"Configured instance id to filter by."`
+	Operation      string `json:"operation,omitempty" jsonschema:"Tool name to filter by."`
+	State          string `json:"state,omitempty" jsonschema:"Ledger state to filter by."`
+	NeedsAttention bool   `json:"needs_attention,omitempty" jsonschema:"Only the rows that need an operator decision."`
+	Limit          int    `json:"limit,omitempty" jsonschema:"Page size; defaults to 50."`
+	Cursor         string `json:"cursor,omitempty" jsonschema:"next_cursor from the previous page."`
+}
+
+type operationListOutput struct {
+	Operations []storage.OperationRecord `json:"operations" jsonschema:"Entries returned by this call."`
+	Total      int                       `json:"total" jsonschema:"Rows matching the filter, independent of the page."`
+	Truncated  bool                      `json:"truncated" jsonschema:"True when more rows match than this page carries."`
+	NextCursor string                    `json:"next_cursor,omitempty" jsonschema:"Cursor for the next page; empty on the last page."`
+}
+
+type operationDisposeInput struct {
+	OperationID    string `json:"operation_id" jsonschema:"The unknown operation to dispose of."`
+	Judgment       string `json:"judgment" jsonschema:"applied, not_applied or requeue."`
+	Note           string `json:"note" jsonschema:"What was checked and where."`
+	UpstreamRef    string `json:"upstream_ref,omitempty" jsonschema:"Upstream handle that was found."`
+	ConfirmationID string `json:"confirmation_id,omitempty" jsonschema:"Approval id from a confirmation_required response."`
+}
+
+type operationDisposeOutput struct {
+	Operation storage.OperationRecord `json:"operation" jsonschema:"The operation after the disposition."`
+	Judgment  string                  `json:"judgment" jsonschema:"The judgement that was recorded."`
+}
+
+// newOperationGetTool returns the polling tool for one operation.
+func newOperationGetTool() registry.Tool {
+	t := toolMetadata(operationGetToolName, operationGetToolTitle, operationGetToolDescription)
+	t.Capability = capabilityFor(operationGetToolName, "read")
+	t.Register = func(srv *mcp.Server) error {
+		toolerr.Add(srv, mcpTool(operationGetToolName, operationGetToolTitle, operationGetToolDescription, operationGetSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in operationGetInput) (*mcp.CallToolResult, operationGetOutput, error) {
+				ops, err := configuredOperations()
+				if err != nil {
+					return nil, operationGetOutput{}, err
+				}
+				record, err := ops.Get(ctx, in.OperationID)
+				if err != nil {
+					return nil, operationGetOutput{}, err
+				}
+				return nil, operationGetOutput{Operation: *record, Next: operationNextStep(*record)}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+// newOperationListTool returns the tool that finds operations, including the rows
+// that need a human.
+func newOperationListTool() registry.Tool {
+	t := toolMetadata(operationListToolName, operationListToolTitle, operationListToolDescription)
+	t.Capability = capabilityFor(operationListToolName, "read")
+	t.Register = func(srv *mcp.Server) error {
+		toolerr.Add(srv, mcpTool(operationListToolName, operationListToolTitle, operationListToolDescription, operationListSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in operationListInput) (*mcp.CallToolResult, operationListOutput, error) {
+				ops, err := configuredOperations()
+				if err != nil {
+					return nil, operationListOutput{}, err
+				}
+				page, err := ops.List(ctx, storage.OperationFilter{
+					InstanceID: in.Instance, Operation: in.Operation, State: in.State,
+					NeedsAttention: in.NeedsAttention, Limit: in.Limit, Cursor: in.Cursor,
+				})
+				if err != nil {
+					return nil, operationListOutput{}, err
+				}
+				out := operationListOutput{Total: page.Total, Truncated: page.Truncated, NextCursor: page.NextCursor}
+				out.Operations = page.Operations
+				if out.Operations == nil {
+					out.Operations = []storage.OperationRecord{}
+				}
+				return nil, out, nil
+			})
+		return nil
+	}
+	return t
+}
+
+// newOperationDisposeTool returns the tool that records an operator's finding.
+func newOperationDisposeTool() registry.Tool {
+	t := writeToolMetadata(operationDisposeToolName, operationDisposeToolTitle,
+		operationDisposeToolDescription, capabilityFor(operationDisposeToolName, "write"))
+	t.Register = func(srv *mcp.Server) error {
+		toolerr.Add(srv, mcpWriteTool(operationDisposeToolName, operationDisposeToolTitle,
+			operationDisposeToolDescription, operationDisposeSchema),
+			func(ctx context.Context, _ *mcp.CallToolRequest, in operationDisposeInput) (*mcp.CallToolResult, operationDisposeOutput, error) {
+				ops, err := configuredOperations()
+				if err != nil {
+					return nil, operationDisposeOutput{}, err
+				}
+				record, err := ops.Dispose(ctx, in.OperationID, storage.DisposeJudgment(in.Judgment), in.Note, in.UpstreamRef)
+				if err != nil {
+					return nil, operationDisposeOutput{}, err
+				}
+				return nil, operationDisposeOutput{Operation: *record, Judgment: in.Judgment}, nil
+			})
+		return nil
+	}
+	return t
+}
+
+// operationNextStep states what a caller should do with an operation in its
+// current state, so the answer is actionable without knowing the state machine.
+func operationNextStep(rec storage.OperationRecord) string {
+	switch rec.State {
+	case storage.OpSucceeded:
+		return "succeeded: the mutation is applied and recorded; a repeat with the same idempotency key replays it instead of writing again"
+	case storage.OpFailed:
+		return "failed: the mutation is proven not to have happened; start a new operation (a new idempotency key) to try again"
+	case storage.OpUnknown:
+		if rec.NeedsAttention {
+			return "unknown and escalated: read the upstream and dispose of it with magento.operation.dispose (applied, not_applied or requeue); do not retry the write"
+		}
+		return "unknown: the reconciler will read the upstream; poll this operation, do not retry the write"
+	case storage.OpReconciling:
+		return "reconciling: a worker is reading the upstream right now; poll again shortly"
+	default:
+		return "in flight: another attempt owns this operation; poll it instead of retrying"
+	}
 }

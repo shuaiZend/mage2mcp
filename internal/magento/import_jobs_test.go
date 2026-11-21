@@ -891,3 +891,127 @@ func TestImportSchemasDescribeIDsAndCounts(t *testing.T) {
 		}
 	}
 }
+
+// The job result and the batch are written separately, and the result write can
+// be lost (a retry that lost its lease discards it). import.status derived
+// "partial" from the job result alone, so the same import read "succeeded" from
+// import.status and "partial" from import.batch. The batch is the persisted
+// business outcome and wins.
+func TestImportStatusReportsPartialFromBatchWhenJobResultIsLost(t *testing.T) {
+	jobID := "11111111-1111-1111-1111-111111111111"
+	queue := &fakeImportQueue{record: &jobs.JobRecord{
+		ID: jobID, Kind: jobs.TypeMagentoImport, State: jobs.StateSucceeded,
+		Attempts: 2, MaxAttempts: 2,
+		// What a lost final write leaves behind: the last progress marker.
+		Result: `{"progress":{"done":2,"total":3}}`,
+	}}
+	batches := &fakeBatchReader{batch: &jobs.ImportBatch{
+		ID: "22222222-2222-2222-2222-222222222222", InstanceID: "store-us", JobID: jobID,
+		Format: "csv", State: jobs.StatePartial, Total: 3, Processed: 3, Created: 2, Failed: 1,
+		Failures: []jobs.ImportBatchFailure{{RowNumber: 4, SKU: "X-1", Action: "create", Error: "boom"}},
+	}}
+	resolver, err := NewResolver(map[string]*Service{"store-us": testService(t, "https://shop.example.com")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newImportTestSessionAs(t, resolver, queue, batches, "alice")
+	result, err := callToolApproved(t, context.Background(), session, &mcp.CallToolParams{Name: importStatusToolName,
+		Arguments: map[string]any{"instance": "store-us", "job_id": jobID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("status error: %+v", result.Content)
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	if !strings.Contains(string(raw), `"state":"partial"`) {
+		t.Fatalf("status payload = %s, want state=partial from the batch", raw)
+	}
+	if strings.Contains(string(raw), `"state":"succeeded"`) {
+		t.Fatalf("status payload still claims succeeded: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"failed":1`) {
+		t.Fatalf("status payload = %s, want the batch counts", raw)
+	}
+	if strings.Contains(string(raw), `"report"`) {
+		t.Fatalf("status payload = %s, want no report parsed from a progress marker", raw)
+	}
+}
+
+// U-68: job.result is a JSON string, so the caller had to decode it again to see
+// the per-row failures. The parsed report travels next to it.
+func TestImportStatusExposesParsedReport(t *testing.T) {
+	jobID := "11111111-1111-1111-1111-111111111111"
+	queue := &fakeImportQueue{record: &jobs.JobRecord{
+		ID: jobID, Kind: jobs.TypeMagentoImport, State: jobs.StateSucceeded, Attempts: 1, MaxAttempts: 1,
+		Result: `{"total":3,"created":2,"updated":0,"skipped":0,"failed":1,"partial":true,` +
+			`"failures":[{"row_number":4,"sku":"X-1","action":"create","error":"boom"}],"failures_truncated":false}`,
+	}}
+	session := newImportTestSession(t, queue)
+	result, err := callToolApproved(t, context.Background(), session, &mcp.CallToolParams{Name: importStatusToolName,
+		Arguments: map[string]any{"instance": "store-us", "job_id": jobID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	// Keys are marshalled alphabetically, so match the object and its counts
+	// rather than a prefix.
+	if !strings.Contains(string(raw), `"report":{"created":2`) || !strings.Contains(string(raw), `"total":3`) {
+		t.Fatalf("status payload = %s, want a parsed report", raw)
+	}
+	if !strings.Contains(string(raw), `"row_number":4`) {
+		t.Fatalf("status payload = %s, want the failed row inside the report", raw)
+	}
+}
+
+// U-67: a repeated idempotency key returns the original job id, and import.start
+// reported queued:true even when that job had already finished, so the caller
+// polled for work that would never start. A terminal job cannot be the one this
+// call queued.
+func TestImportStartReportsReplayForFinishedJob(t *testing.T) {
+	queue := &fakeImportQueue{record: &jobs.JobRecord{
+		ID: "11111111-1111-1111-1111-111111111111", Kind: jobs.TypeMagentoImport,
+		State: jobs.StatePartial, Attempts: 1, MaxAttempts: 1,
+	}}
+	session := newImportTestSession(t, queue)
+	payload := base64.StdEncoding.EncodeToString([]byte("sku,name\nA-1,Alpha\n"))
+	result, err := callToolApproved(t, context.Background(), session, &mcp.CallToolParams{Name: importStartToolName,
+		Arguments: map[string]any{"instance": "store-us", "format": "csv", "data_base64": payload, "idempotency_key": "reprice-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("start error: %+v", result.Content)
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	for _, want := range []string{`"replayed":true`, `"queued":false`, `"state":"partial"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("start payload = %s, want %s", raw, want)
+		}
+	}
+}
+
+// A genuinely fresh job still reports queued, so the replay flag cannot be a
+// blanket false.
+func TestImportStartReportsQueuedForFreshJob(t *testing.T) {
+	queue := &fakeImportQueue{record: &jobs.JobRecord{
+		ID: "11111111-1111-1111-1111-111111111111", Kind: jobs.TypeMagentoImport,
+		State: jobs.StateQueued, Attempts: 0, MaxAttempts: 2,
+	}}
+	session := newImportTestSession(t, queue)
+	payload := base64.StdEncoding.EncodeToString([]byte("sku,name\nA-1,Alpha\n"))
+	result, err := callToolApproved(t, context.Background(), session, &mcp.CallToolParams{Name: importStartToolName,
+		Arguments: map[string]any{"instance": "store-us", "format": "csv", "data_base64": payload, "idempotency_key": "fresh-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("start error: %+v", result.Content)
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	for _, want := range []string{`"replayed":false`, `"queued":true`, `"state":"queued"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("start payload = %s, want %s", raw, want)
+		}
+	}
+}

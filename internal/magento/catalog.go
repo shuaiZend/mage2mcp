@@ -229,10 +229,12 @@ func (s *Service) CategoryProducts(ctx context.Context, categoryID, limit, offse
 		return nil, 0, err
 	}
 	var products []Product
-	var total int
 	if err := json.Unmarshal(raw, &products); err == nil {
-		total = len(products)
-		return products, total, nil
+		hydrated, err := s.hydrateCategoryProducts(ctx, products, limit)
+		if err != nil {
+			return nil, 0, err
+		}
+		return hydrated, len(hydrated), nil
 	}
 	var payload struct {
 		Items      []Product `json:"items" jsonschema:"Entries returned by this call."`
@@ -244,7 +246,65 @@ func (s *Service) CategoryProducts(ctx context.Context, categoryID, limit, offse
 	if payload.Items == nil {
 		payload.Items = []Product{}
 	}
-	return payload.Items, payload.TotalCount, nil
+	hydrated, err := s.hydrateCategoryProducts(ctx, payload.Items, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	return hydrated, payload.TotalCount, nil
+}
+
+// hydrateCategoryProducts fills in the product fields Magento's category listing
+// leaves empty.
+//
+// GET /categories/{id}/products answers with ProductInterface rows that carry
+// only sku and id; every other field decodes as its zero value, so the tool used
+// to return name "", price 0 and status 0 for real products (U-36). One extra
+// search keyed on the page's SKUs costs a single request and returns the full
+// projection.
+func (s *Service) hydrateCategoryProducts(ctx context.Context, products []Product, limit int) ([]Product, error) {
+	if len(products) == 0 {
+		return products, nil
+	}
+	missing := false
+	skus := make([]string, 0, len(products))
+	for _, product := range products {
+		if product.Name == "" {
+			missing = true
+		}
+		if product.SKU != "" {
+			skus = append(skus, product.SKU)
+		}
+	}
+	if !missing || len(skus) == 0 {
+		return products, nil
+	}
+	query := make(url.Values)
+	query.Set("searchCriteria[pageSize]", strconv.Itoa(limit))
+	query.Set("searchCriteria[filter_groups][0][filters][0][field]", "sku")
+	query.Set("searchCriteria[filter_groups][0][filters][0][value]", strings.Join(skus, ","))
+	query.Set("searchCriteria[filter_groups][0][filters][0][condition_type]", "in")
+	raw, err := s.client.do(ctx, http.MethodGet, "/products", query, nil)
+	if err != nil {
+		// The listing is still a usable answer (skus are correct); do not fail the
+		// read because the enrichment could not run.
+		return products, nil
+	}
+	var payload struct {
+		Items []Product `json:"items" jsonschema:"Entries returned by this call."`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return products, nil
+	}
+	bySKU := make(map[string]Product, len(payload.Items))
+	for _, product := range payload.Items {
+		bySKU[product.SKU] = product
+	}
+	for i, product := range products {
+		if full, ok := bySKU[product.SKU]; ok {
+			products[i] = full
+		}
+	}
+	return products, nil
 }
 
 // CreateAttributeOption adds a value to a select/multiselect attribute with

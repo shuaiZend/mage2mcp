@@ -133,12 +133,17 @@ func run() error {
 			if id != nil {
 				subject, class = id.Subject, id.Class
 			}
-			// SEC-06: a denied call is a denial, not an allow.
-			_ = auditor.Record(ctx, audit.Event{
+			// SEC-06: a denied call is a denial, not an allow. U-78: a failed audit
+			// write is logged, not discarded — a missing outcome row is exactly what
+			// made a timed-out call unauditable.
+			if err := auditor.Record(ctx, audit.Event{
 				Subject: subject, IdentityClass: class, Tool: tool, Instance: instance,
 				Decision: auditDecision(phase, state), Phase: phase, State: state, ErrorCode: code,
 				RequestID: server.RequestID(ctx),
-			})
+			}); err != nil {
+				logger.Error("audit write failed", "tool", tool, "instance", instance,
+					"phase", phase, "state", state, "err", err)
+			}
 		},
 	})
 	if err != nil {

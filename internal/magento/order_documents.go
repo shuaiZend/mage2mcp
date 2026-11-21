@@ -74,6 +74,19 @@ type Shipment struct {
 	CreatedAt   string          `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
 	UpdatedAt   string          `json:"updated_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
 	Tracks      []ShipmentTrack `json:"tracks,omitempty" jsonschema:"Tracking numbers attached to the shipment."`
+	// Items is the per-line shipped quantity. Without it a shipment read could
+	// not say which units it contained, so "which one shipped?" was unanswerable
+	// even with the shipment id in hand (U-31).
+	Items []ShipmentItem `json:"items,omitempty" jsonschema:"Lines and quantities contained in this shipment; omitted on the list projection."`
+}
+
+// ShipmentItem is one line of a shipment.
+type ShipmentItem struct {
+	EntityID    int     `json:"entity_id,omitempty" jsonschema:"Magento entity id of the shipment line, when reported."`
+	OrderItemID int     `json:"order_item_id,omitempty" jsonschema:"Order line this shipment line fulfils."`
+	SKU         string  `json:"sku,omitempty" jsonschema:"Product SKU."`
+	Name        string  `json:"name,omitempty" jsonschema:"Display name of the shipped product."`
+	Qty         float64 `json:"qty" jsonschema:"Units shipped on this line."`
 }
 
 // OrderStatusHistory returns the status history of one order.
@@ -175,7 +188,11 @@ func (s *Service) requireOrderService() error {
 
 // Creditmemo is the creditmemo projection this slice exposes.
 type Creditmemo struct {
-	EntityID       int     `json:"entity_id" jsonschema:"Magento entity id."`
+	EntityID int `json:"entity_id" jsonschema:"Magento entity id."`
+	// InvoiceID is the invoice Magento linked the credit memo to. It is absent on
+	// builds that store no link, which is why the create result reports the link
+	// separately instead of presenting a locally derived id as fact (U-15).
+	InvoiceID      int     `json:"invoice_id,omitempty" jsonschema:"Invoice Magento linked this credit memo to, when it stores one."`
 	IncrementID    string  `json:"increment_id" jsonschema:"Human-facing document number, for example 000000123."`
 	OrderID        int     `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	State          int     `json:"state" jsonschema:"Current state."`

@@ -125,8 +125,13 @@ func (s *Service) CreateInvoice(ctx context.Context, in InvoiceCreateInput) (*In
 	}
 	invoice := *created
 	result := &InvoiceCreateResult{
-		Invoice:     invoice,
-		Captured:    invoice.State == invoiceStatePaid,
+		Invoice: invoice,
+		// Captured means "this call asked Magento to capture and the invoice came
+		// back paid". It cannot be derived from the invoice state alone: with an
+		// offline payment method (checkmo) Magento marks the invoice paid whether
+		// or not capture was requested, so capture=false used to report
+		// captured=true and an ERP recorded money that never moved (U-14).
+		Captured:    in.Capture && invoice.State == invoiceStatePaid,
 		OperationID: run.ID(),
 	}
 	ref := "invoice:" + invoice.IncrementID

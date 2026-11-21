@@ -5,6 +5,7 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -160,59 +161,59 @@ type SKUStat struct {
 // reported for the window, and ExcludedOrders is the difference. Paging states
 // how the window was scanned and whether the result can be treated as complete.
 type SalesAnalysis struct {
-	From            string          `json:"from" jsonschema:"Start of the comparison window (RFC 3339, UTC)."`
-	To              string          `json:"to" jsonschema:"End of the comparison window (RFC 3339, UTC), exclusive."`
-	Timezone        string          `json:"timezone" jsonschema:"IANA time zone the day and hour buckets use: the store view timezone unless the caller overrides it."`
-	WindowLocal     WindowLocal     `json:"window_local" jsonschema:"The same window rendered in the report timezone; by_day dates are always within first_date..last_date."`
-	Orders          int             `json:"orders" jsonschema:"Orders that matched."`
-	TotalAvailable  int             `json:"total_available" jsonschema:"Orders the store reports for the window."`
-	ExcludedOrders  int             `json:"excluded_orders" jsonschema:"Orders that exist but were not read."`
-	Truncated       bool            `json:"truncated" jsonschema:"True when more records exist than were returned."`
-	Paging          PagingInfo      `json:"paging" jsonschema:"Paging state of the scan, including which end of the window a cap keeps."`
-	Revenue         float64         `json:"revenue" jsonschema:"Order grand_total revenue for the window: includes tax and shipping, includes every order status (canceled too) and is not reduced by refunds. Not GA4 purchase revenue."`
-	Subtotal        float64         `json:"subtotal" jsonschema:"Line subtotal before shipping, tax and discount."`
-	Discount        float64         `json:"discount" jsonschema:"Total discount across the window, reported as a positive amount."`
-	Shipping        float64         `json:"shipping" jsonschema:"Total shipping charged across the window."`
-	Tax             float64         `json:"tax" jsonschema:"Total tax charged across the window."`
-	ItemsQty        float64         `json:"items_qty" jsonschema:"Units sold in the window."`
-	AOV             float64         `json:"aov" jsonschema:"Average order value in the window."`
-	Currency        string          `json:"currency" jsonschema:"ISO 4217 code the amounts are expressed in; mixed_currency is true when the window holds more than one."`
-	MixedCurrency   bool            `json:"mixed_currency" jsonschema:"True when the window contains more than one currency."`
-	GuestOrders     int             `json:"guest_orders" jsonschema:"Orders placed without an account; guest orders are excluded from the new/repeat split."`
-	Customers       int             `json:"customers" jsonschema:"Registered customers that placed at least one order in the window (guests are not counted)."`
-	RepeatCustomers int             `json:"repeat_customers" jsonschema:"Registered customers with more than one order in this window."`
-	RepeatOrders    int             `json:"repeat_orders" jsonschema:"Orders in this window from customers who placed more than one order in the same window. This is not a cross-window returning-customer measure: orders before the window are not read."`
-	RepeatRevenue   float64         `json:"repeat_revenue" jsonschema:"Revenue from the orders counted in repeat_orders."`
-	NewOrders       int             `json:"new_orders" jsonschema:"Orders in this window from registered customers whose only order in this window is this one. Not first-time-ever customers: orders before the window are not read."`
-	NewRevenue      float64         `json:"new_revenue" jsonschema:"Revenue from the orders counted in new_orders."`
-	CustomerSplitBasis string       `json:"customer_split_basis" jsonschema:"What new_orders/repeat_orders split on. Fixed value: orders_per_registered_customer_within_window."`
-	CouponOrders    int             `json:"coupon_orders" jsonschema:"Orders that used a coupon."`
-	CouponRevenue   float64         `json:"coupon_revenue" jsonschema:"Revenue from coupon orders."`
-	CouponAOV       float64         `json:"coupon_aov" jsonschema:"Average order value of orders that used a coupon."`
-	NonCouponAOV    float64         `json:"non_coupon_aov" jsonschema:"Average order value of orders that used no coupon (not a discount-adjusted AOV)."`
-	RefundedAmount  float64         `json:"refunded_amount" jsonschema:"Document-level refunded total for the window: sums each order's total_refunded, which includes refunded shipping and adjustments. Use refunded_items_amount for the product-line share."`
-	RefundedItemsAmount float64     `json:"refunded_items_amount" jsonschema:"Product-line refunded amount: sums item amount_refunded only, so it excludes refunded shipping and adjustments and is smaller than refunded_amount."`
-	RefundedQty     float64         `json:"refunded_qty" jsonschema:"Units refunded across the window, from order lines."`
-	Currencies      []CurrencyStat  `json:"currencies" jsonschema:"Currencies present in the window."`
-	ByDay           []DayStat       `json:"by_day" jsonschema:"Per-day breakdown, oldest first, bucketed by the report timezone (see timezone and window_local)."`
-	ByStatus        []DimensionStat `json:"by_status" jsonschema:"Breakdown by order status."`
-	ByCountry       []DimensionStat `json:"by_country" jsonschema:"Breakdown by shipping country; key is an ISO 3166-1 alpha-2 code, or UNKNOWN when the order carries no shipping address (virtual or API-created orders)."`
-	ByPayment       []DimensionStat `json:"by_payment" jsonschema:"Breakdown by payment method."`
-	ByStore         []DimensionStat `json:"by_store" jsonschema:"Breakdown by store view."`
-	ShippingMethods []ShippingStat  `json:"shipping_methods" jsonschema:"Breakdown by shipping method."`
-	AOVBands        []BandStat      `json:"aov_bands" jsonschema:"Distribution of order values by band, in the report currency."`
-	Weekday         []int           `json:"weekday" jsonschema:"Orders per day of week, Monday first, bucketed by the report timezone."`
-	Hour            []int           `json:"hour" jsonschema:"Orders per hour of day 0-23, bucketed by the report timezone."`
-	CouponsTotal    int             `json:"coupons_total" jsonschema:"Distinct coupon codes in the window; top_coupons is capped at 10 rows, so compare with len(top_coupons) to detect truncation."`
-	TopCoupons      []CouponStat    `json:"top_coupons" jsonschema:"Coupons by revenue, highest first, capped at 10 rows (see coupons_total)."`
-	RefundedSKUsTotal int           `json:"refunded_skus_total" jsonschema:"Distinct refunded SKUs in the window; refunded_skus is capped at 10 rows, so compare with len(refunded_skus) to detect truncation."`
-	RefundedSKUs    []SKURefundStat `json:"refunded_skus" jsonschema:"SKUs by refunded amount, highest first, capped at 10 rows (see refunded_skus_total). Amounts exclude shipping refunds and adjustments."`
-	SKUsTotal       int             `json:"skus_total" jsonschema:"Distinct SKUs sold in the window; top_skus is capped at 50 rows, so compare with len(top_skus) to detect truncation."`
-	SKURevenueBasis string          `json:"sku_revenue_basis" jsonschema:"Money basis of top_skus.revenue. Fixed value: line_subtotal, which excludes shipping, tax and order-level discounts."`
-	TopSKUs         []SKUStat       `json:"top_skus" jsonschema:"SKUs by line-subtotal revenue, highest first, capped at 50 rows (see skus_total). Summing the list gives subtotal, not revenue."`
-	Shipments       int             `json:"shipments" jsonschema:"Shipments of the order."`
-	UnshippedOrders int             `json:"unshipped_orders" jsonschema:"Orders that are not shipped yet."`
-	ShipLatency     ShipLatency     `json:"ship_latency" jsonschema:"Time from order to shipment, in days (fractional)."`
+	From                string          `json:"from" jsonschema:"Start of the comparison window (RFC 3339, UTC)."`
+	To                  string          `json:"to" jsonschema:"End of the comparison window (RFC 3339, UTC), exclusive."`
+	Timezone            string          `json:"timezone" jsonschema:"IANA time zone the day and hour buckets use: the store view timezone unless the caller overrides it."`
+	WindowLocal         WindowLocal     `json:"window_local" jsonschema:"The same window rendered in the report timezone; by_day dates are always within first_date..last_date."`
+	Orders              int             `json:"orders" jsonschema:"Orders that matched."`
+	TotalAvailable      int             `json:"total_available" jsonschema:"Orders the store reports for the window."`
+	ExcludedOrders      int             `json:"excluded_orders" jsonschema:"Orders that exist but were not read."`
+	Truncated           bool            `json:"truncated" jsonschema:"True when more records exist than were returned."`
+	Paging              PagingInfo      `json:"paging" jsonschema:"Paging state of the scan, including which end of the window a cap keeps."`
+	Revenue             float64         `json:"revenue" jsonschema:"Order grand_total revenue for the window: includes tax and shipping, includes every order status (canceled too) and is not reduced by refunds. Not GA4 purchase revenue."`
+	Subtotal            float64         `json:"subtotal" jsonschema:"Line subtotal before shipping, tax and discount."`
+	Discount            float64         `json:"discount" jsonschema:"Total discount across the window, reported as a positive amount."`
+	Shipping            float64         `json:"shipping" jsonschema:"Total shipping charged across the window."`
+	Tax                 float64         `json:"tax" jsonschema:"Total tax charged across the window."`
+	ItemsQty            float64         `json:"items_qty" jsonschema:"Units sold in the window."`
+	AOV                 float64         `json:"aov" jsonschema:"Average order value in the window."`
+	Currency            string          `json:"currency" jsonschema:"ISO 4217 code the amounts are expressed in; mixed_currency is true when the window holds more than one."`
+	MixedCurrency       bool            `json:"mixed_currency" jsonschema:"True when the window contains more than one currency."`
+	GuestOrders         int             `json:"guest_orders" jsonschema:"Orders placed without an account; guest orders are excluded from the new/repeat split."`
+	Customers           int             `json:"customers" jsonschema:"Registered customers that placed at least one order in the window (guests are not counted)."`
+	RepeatCustomers     int             `json:"repeat_customers" jsonschema:"Registered customers with more than one order in this window."`
+	RepeatOrders        int             `json:"repeat_orders" jsonschema:"Orders in this window from customers who placed more than one order in the same window. This is not a cross-window returning-customer measure: orders before the window are not read."`
+	RepeatRevenue       float64         `json:"repeat_revenue" jsonschema:"Revenue from the orders counted in repeat_orders."`
+	NewOrders           int             `json:"new_orders" jsonschema:"Orders in this window from registered customers whose only order in this window is this one. Not first-time-ever customers: orders before the window are not read."`
+	NewRevenue          float64         `json:"new_revenue" jsonschema:"Revenue from the orders counted in new_orders."`
+	CustomerSplitBasis  string          `json:"customer_split_basis" jsonschema:"What new_orders/repeat_orders split on. Fixed value: orders_per_registered_customer_within_window."`
+	CouponOrders        int             `json:"coupon_orders" jsonschema:"Orders that used a coupon."`
+	CouponRevenue       float64         `json:"coupon_revenue" jsonschema:"Revenue from coupon orders."`
+	CouponAOV           float64         `json:"coupon_aov" jsonschema:"Average order value of orders that used a coupon."`
+	NonCouponAOV        float64         `json:"non_coupon_aov" jsonschema:"Average order value of orders that used no coupon (not a discount-adjusted AOV)."`
+	RefundedAmount      float64         `json:"refunded_amount" jsonschema:"Document-level refunded total for the window: sums each order's total_refunded, which includes refunded shipping and adjustments. Use refunded_items_amount for the product-line share."`
+	RefundedItemsAmount float64         `json:"refunded_items_amount" jsonschema:"Product-line refunded amount: sums item amount_refunded only, so it excludes refunded shipping and adjustments and is smaller than refunded_amount."`
+	RefundedQty         float64         `json:"refunded_qty" jsonschema:"Units refunded across the window, from order lines."`
+	Currencies          []CurrencyStat  `json:"currencies" jsonschema:"Currencies present in the window."`
+	ByDay               []DayStat       `json:"by_day" jsonschema:"Per-day breakdown, oldest first, bucketed by the report timezone (see timezone and window_local)."`
+	ByStatus            []DimensionStat `json:"by_status" jsonschema:"Breakdown by order status."`
+	ByCountry           []DimensionStat `json:"by_country" jsonschema:"Breakdown by shipping country; key is an ISO 3166-1 alpha-2 code, or UNKNOWN when the order carries no shipping address (virtual or API-created orders)."`
+	ByPayment           []DimensionStat `json:"by_payment" jsonschema:"Breakdown by payment method."`
+	ByStore             []DimensionStat `json:"by_store" jsonschema:"Breakdown by store view."`
+	ShippingMethods     []ShippingStat  `json:"shipping_methods" jsonschema:"Breakdown by shipping method."`
+	AOVBands            []BandStat      `json:"aov_bands" jsonschema:"Distribution of order values by band, in the report currency."`
+	Weekday             []int           `json:"weekday" jsonschema:"Orders per day of week, Monday first, bucketed by the report timezone."`
+	Hour                []int           `json:"hour" jsonschema:"Orders per hour of day 0-23, bucketed by the report timezone."`
+	CouponsTotal        int             `json:"coupons_total" jsonschema:"Distinct coupon codes in the window; top_coupons is capped at 10 rows, so compare with len(top_coupons) to detect truncation."`
+	TopCoupons          []CouponStat    `json:"top_coupons" jsonschema:"Coupons by revenue, highest first, capped at 10 rows (see coupons_total)."`
+	RefundedSKUsTotal   int             `json:"refunded_skus_total" jsonschema:"Distinct refunded SKUs in the window; refunded_skus is capped at 10 rows, so compare with len(refunded_skus) to detect truncation."`
+	RefundedSKUs        []SKURefundStat `json:"refunded_skus" jsonschema:"SKUs by refunded amount, highest first, capped at 10 rows (see refunded_skus_total). Amounts exclude shipping refunds and adjustments."`
+	SKUsTotal           int             `json:"skus_total" jsonschema:"Distinct SKUs sold in the window; top_skus is capped at 50 rows, so compare with len(top_skus) to detect truncation."`
+	SKURevenueBasis     string          `json:"sku_revenue_basis" jsonschema:"Money basis of top_skus.revenue. Fixed value: line_subtotal, which excludes shipping, tax and order-level discounts."`
+	TopSKUs             []SKUStat       `json:"top_skus" jsonschema:"SKUs by line-subtotal revenue, highest first, capped at 50 rows (see skus_total). Summing the list gives subtotal, not revenue."`
+	Shipments           int             `json:"shipments" jsonschema:"Shipments of the order."`
+	UnshippedOrders     int             `json:"unshipped_orders" jsonschema:"Orders that are not shipped yet."`
+	ShipLatency         ShipLatency     `json:"ship_latency" jsonschema:"Time from order to shipment, in days (fractional)."`
 }
 
 type analysisOrderItem struct {
@@ -237,16 +238,19 @@ type analysisOrder struct {
 	TaxAmount      float64 `json:"tax_amount" jsonschema:"Tax charged."`
 	// TotalRefunded is the document-level refunded total: it includes refunded
 	// shipping and adjustments, so it is the figure that matches a creditmemo
-	// grand_total, not the sum of item amount_refunded.
-	TotalRefunded  float64 `json:"total_refunded" jsonschema:"Document-level refunded total, including refunded shipping and adjustments."`
-	TotalQty       float64 `json:"total_qty_ordered" jsonschema:"Sum of line quantities; a number because Magento allows fractional quantities."`
-	Currency       string  `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
-	StoreName      string  `json:"store_name"`
-	CustomerID     *int    `json:"customer_id"`
-	IsGuest        int     `json:"customer_is_guest"`
-	CouponCode     string  `json:"coupon_code"`
-	ShippingDesc   string  `json:"shipping_description"`
-	Payment        struct {
+	// grand_total, not the sum of item amount_refunded. It is a pointer because
+	// Magento omits the field entirely when an order has no refunds, and "absent"
+	// must not be confused with "zero refunds but the field was dropped".
+	TotalRefunded    *float64 `json:"total_refunded" jsonschema:"Document-level refunded total, including refunded shipping and adjustments; absent when the order has no refunds."`
+	ShippingRefunded *float64 `json:"shipping_refunded" jsonschema:"Refunded shipping amount of the order; absent when nothing was refunded."`
+	TotalQty         float64  `json:"total_qty_ordered" jsonschema:"Sum of line quantities; a number because Magento allows fractional quantities."`
+	Currency         string   `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
+	StoreName        string   `json:"store_name"`
+	CustomerID       *int     `json:"customer_id"`
+	IsGuest          int      `json:"customer_is_guest"`
+	CouponCode       string   `json:"coupon_code"`
+	ShippingDesc     string   `json:"shipping_description"`
+	Payment          struct {
 		Method string `json:"method" jsonschema:"Payment method code."`
 	} `json:"payment"`
 	ExtensionAttributes struct {
@@ -261,6 +265,23 @@ type analysisOrder struct {
 	Items []analysisOrderItem `json:"items" jsonschema:"Entries returned by this call."`
 }
 
+// documentRefund returns the document-level refunded total of one order.
+//
+// total_refunded is the figure that matches a creditmemo grand_total: it carries
+// refunded shipping and adjustments that item amount_refunded never does. Magento
+// omits the field when the order has no refunds, so an absent field falls back to
+// the order's own parts instead of being reported as zero.
+func (o analysisOrder) documentRefund(itemRefund float64) float64 {
+	if o.TotalRefunded != nil {
+		return *o.TotalRefunded
+	}
+	shipping := 0.0
+	if o.ShippingRefunded != nil {
+		shipping = *o.ShippingRefunded
+	}
+	return itemRefund + shipping
+}
+
 type customerAgg struct {
 	orders  int
 	revenue float64
@@ -269,10 +290,44 @@ type customerAgg struct {
 // AnalyzeSales aggregates a window of orders into business metrics. Only
 // aggregate counts and amounts are returned; customer PII never enters the
 // result.
+//
+// from and to are absolute instants. Day and hour buckets use the report
+// timezone (the timezone argument, else the store view timezone); callers that
+// pass date-only input must use AnalyzeSalesWindow so the window edges and the
+// buckets share one calendar.
 func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrders int, timezone string) (*SalesAnalysis, error) {
 	if s == nil || s.client == nil {
 		return nil, errs.New(errs.CodeInternal, "Magento order service is not configured")
 	}
+	loc, zoneName, err := s.resolveTimezone(ctx, timezone)
+	if err != nil {
+		return nil, err
+	}
+	return s.analyzeSales(ctx, from, to, maxOrders, loc, zoneName)
+}
+
+// AnalyzeSalesWindow is AnalyzeSales for the raw from/to inputs of the tool.
+//
+// A bare YYYY-MM-DD value is a calendar day in the report timezone, so the
+// window edges line up with the day buckets: a date-only window never reports a
+// bucket dated outside its own days. An RFC 3339 value is an absolute instant
+// and is used as given.
+func (s *Service) AnalyzeSalesWindow(ctx context.Context, fromRaw, toRaw string, maxOrders int, timezone string) (*SalesAnalysis, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento order service is not configured")
+	}
+	loc, zoneName, err := s.resolveTimezone(ctx, timezone)
+	if err != nil {
+		return nil, err
+	}
+	from, to, err := parseReportWindow(fromRaw, toRaw, loc)
+	if err != nil {
+		return nil, err
+	}
+	return s.analyzeSales(ctx, from, to, maxOrders, loc, zoneName)
+}
+
+func (s *Service) analyzeSales(ctx context.Context, from, to time.Time, maxOrders int, loc *time.Location, zoneName string) (*SalesAnalysis, error) {
 	if !to.After(from) {
 		return nil, invalidf("to must be after from")
 	}
@@ -282,12 +337,10 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 	if maxOrders > maxAnalysisOrders {
 		return nil, invalidf("max_orders must be at most %d", maxAnalysisOrders)
 	}
-	loc, zoneName, err := s.resolveTimezone(ctx, timezone)
-	if err != nil {
-		return nil, err
-	}
 	result := &SalesAnalysis{
-		From: from.Format(time.RFC3339), To: to.Format(time.RFC3339), Timezone: zoneName,
+		From: from.UTC().Format(time.RFC3339), To: to.UTC().Format(time.RFC3339),
+		Timezone: zoneName, WindowLocal: windowLocalRange(from, to, loc),
+		CustomerSplitBasis: customerSplitBasisWindow, SKURevenueBasis: skuRevenueBasisLineSubtotal,
 		Weekday: make([]int, 7), Hour: make([]int, 24),
 	}
 	days := map[string]*DayStat{}
@@ -345,10 +398,15 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 			result.Orders++
 			result.Revenue += order.GrandTotal
 			result.Subtotal += order.Subtotal
-			result.Discount += order.DiscountAmount
+			// Magento stores discount_amount as a negative number; the report
+			// field is documented as a positive amount.
+			result.Discount += math.Abs(order.DiscountAmount)
 			result.Shipping += order.ShippingAmount
 			result.Tax += order.TaxAmount
 			result.ItemsQty += order.TotalQty
+			if result.Currency == "" {
+				result.Currency = order.Currency
+			}
 			orderValues = append(orderValues, order.GrandTotal)
 			if order.IsGuest == 1 {
 				result.GuestOrders++
@@ -363,7 +421,7 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 			}
 			local := orderLocalTime(order.CreatedAt, loc)
 			orderTimes[order.EntityID] = orderUTCTime(order.CreatedAt)
-			addDay(days, local.Format("2006-01-02"), order.GrandTotal)
+			addDay(days, reportDay(order.CreatedAt, loc), order.GrandTotal)
 			result.Weekday[(int(local.Weekday())+6)%7]++
 			result.Hour[local.Hour()]++
 			coupon := strings.ToUpper(strings.TrimSpace(order.CouponCode))
@@ -378,6 +436,7 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 					coupons[coupon] = stat
 				}
 				stat.Orders++
+				stat.Revenue += order.GrandTotal
 			} else {
 				nonCouponRevenue += order.GrandTotal
 				nonCouponCount++
@@ -412,11 +471,13 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 			sstat.Orders++
 			sstat.Revenue += order.GrandTotal
 			sstat.ShippingCost += order.ShippingAmount
+			orderItemRefund := 0.0
 			for _, item := range order.Items {
 				if item.ParentItemID != nil {
 					continue // configurable child rows duplicate the parent's amount
 				}
-				result.RefundedAmount += item.AmountRefunded
+				orderItemRefund += item.AmountRefunded
+				result.RefundedItemsAmount += item.AmountRefunded
 				result.RefundedQty += item.QtyRefunded
 				if item.AmountRefunded > 0 || item.QtyRefunded > 0 {
 					rstat := refunds[item.SKU]
@@ -440,6 +501,9 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 					stat.Orders++
 				}
 			}
+			// Document-level refunds (creditmemo grand totals) include refunded
+			// shipping and adjustments, which item amount_refunded never does.
+			result.RefundedAmount += order.documentRefund(orderItemRefund)
 		}
 		if len(payload.Items) < analysisPageSize {
 			break
@@ -468,6 +532,10 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 	if nonCouponCount > 0 {
 		result.NonCouponAOV = nonCouponRevenue / float64(nonCouponCount)
 	}
+	// The new/repeat split is per window: a customer is "repeat" only when this
+	// window holds more than one of their orders. Orders before the window are
+	// never read, so the fields are documented as window-scoped, not as
+	// first-time-ever customers.
 	for _, agg := range customers {
 		result.Customers++
 		if agg.orders > 1 {
@@ -488,11 +556,35 @@ func (s *Service) AnalyzeSales(ctx context.Context, from, to time.Time, maxOrder
 	result.ByStore = sortedDimensions(stores)
 	result.ShippingMethods = sortedShipping(shippingMethods)
 	result.AOVBands = aovBands(orderValues)
+	result.CouponsTotal = len(coupons)
 	result.TopCoupons = topCoupons(coupons)
+	result.RefundedSKUsTotal = len(refunds)
 	result.RefundedSKUs = topRefundSKUs(refunds)
+	result.SKUsTotal = len(skus)
 	result.TopSKUs = topSKUs(skus)
 	result.Shipments, result.UnshippedOrders, result.ShipLatency = s.shipmentStats(ctx, from, to, orderTimes)
+	result.roundMoney()
 	return result, nil
+}
+
+// roundMoney trims every money field to two decimals.
+//
+// Aggregating decimal prices in binary floating point leaves tails such as
+// 566.6800000000001 or 287.08000000000004, which leak into ledgers and make
+// "sum of groups equals total" checks fail for a reason that has nothing to do
+// with the data.
+func (r *SalesAnalysis) roundMoney() {
+	r.Revenue = roundMoney(r.Revenue)
+	r.Subtotal = roundMoney(r.Subtotal)
+	r.Discount = roundMoney(r.Discount)
+	r.Shipping = roundMoney(r.Shipping)
+	r.Tax = roundMoney(r.Tax)
+	r.AOV = roundMoney(r.AOV)
+	r.CouponRevenue = roundMoney(r.CouponRevenue)
+	r.CouponAOV = roundMoney(r.CouponAOV)
+	r.NonCouponAOV = roundMoney(r.NonCouponAOV)
+	r.RefundedAmount = roundMoney(r.RefundedAmount)
+	r.RefundedItemsAmount = roundMoney(r.RefundedItemsAmount)
 }
 
 func (s *Service) resolveTimezone(ctx context.Context, timezone string) (*time.Location, string, error) {
@@ -515,6 +607,71 @@ func (s *Service) resolveTimezone(ctx context.Context, timezone string) (*time.L
 		return nil, "", invalidf("timezone %q is not a valid IANA zone", name)
 	}
 	return loc, name, nil
+}
+
+// reportDay returns the calendar date of an order timestamp in the report
+// timezone.
+//
+// Magento stores created_at in UTC, so slicing the raw string ("2026-11-21
+// 23:30:00" -> "2026-11-21") buckets by UTC day. A store in Europe/Warsaw is an
+// hour ahead, so that order happened on the store's 22nd. Every report that
+// buckets orders by day must go through this function, otherwise two reports of
+// one window disagree about which day an order belongs to.
+func reportDay(createdAt string, loc *time.Location) string {
+	return orderLocalTime(createdAt, loc).Format("2006-01-02")
+}
+
+// windowLocalRange renders a window in the report timezone.
+//
+// The day buckets are local calendar days while the window is a pair of UTC
+// instants, so a caller cannot otherwise tell which days the window covers; a
+// bucket can look like it falls outside the requested range when it is simply
+// the local day of an order near the UTC boundary.
+func windowLocalRange(from, to time.Time, loc *time.Location) WindowLocal {
+	last := to.Add(-time.Nanosecond).In(loc)
+	return WindowLocal{
+		From:      from.In(loc).Format(time.RFC3339),
+		To:        to.In(loc).Format(time.RFC3339),
+		FirstDate: from.In(loc).Format("2006-01-02"),
+		LastDate:  last.Format("2006-01-02"),
+	}
+}
+
+// parseReportWindow parses the raw from/to inputs of a report.
+//
+// An RFC 3339 value is an absolute instant and is used as given. A bare
+// YYYY-MM-DD date is a calendar day in the report timezone, so the window edges
+// and the day buckets share one calendar and no bucket can be dated outside the
+// requested days.
+func parseReportWindow(fromRaw, toRaw string, loc *time.Location) (time.Time, time.Time, error) {
+	from, err := parseReportTime(fromRaw, "from", loc)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	to, err := parseReportTime(toRaw, "to", loc)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	return from, to, nil
+}
+
+func parseReportTime(raw, field string, loc *time.Location) (time.Time, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return time.Time{}, invalidf("%s is required", field)
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed.UTC(), nil
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02", value, loc); err == nil {
+		return parsed.UTC(), nil
+	}
+	return time.Time{}, invalidf("%s must be an RFC 3339 timestamp or YYYY-MM-DD date", field)
+}
+
+// roundMoney trims a money amount to two decimals.
+func roundMoney(value float64) float64 {
+	return math.Round(value*100) / 100
 }
 
 func orderUTCTime(raw string) time.Time {
@@ -598,6 +755,7 @@ func addDimension(dims map[string]*DimensionStat, key string, revenue float64) {
 func sortedDays(days map[string]*DayStat) []DayStat {
 	out := make([]DayStat, 0, len(days))
 	for _, stat := range days {
+		stat.Revenue = roundMoney(stat.Revenue)
 		out = append(out, *stat)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Date < out[j].Date })
@@ -607,6 +765,7 @@ func sortedDays(days map[string]*DayStat) []DayStat {
 func sortedDimensions(dims map[string]*DimensionStat) []DimensionStat {
 	out := make([]DimensionStat, 0, len(dims))
 	for _, stat := range dims {
+		stat.Revenue = roundMoney(stat.Revenue)
 		out = append(out, *stat)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -622,8 +781,9 @@ func sortedCurrencies(cur map[string]*CurrencyStat) []CurrencyStat {
 	out := make([]CurrencyStat, 0, len(cur))
 	for _, stat := range cur {
 		if stat.Orders > 0 {
-			stat.AOV = stat.Revenue / float64(stat.Orders)
+			stat.AOV = roundMoney(stat.Revenue / float64(stat.Orders))
 		}
+		stat.Revenue = roundMoney(stat.Revenue)
 		out = append(out, *stat)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -638,6 +798,8 @@ func sortedCurrencies(cur map[string]*CurrencyStat) []CurrencyStat {
 func sortedShipping(methods map[string]*ShippingStat) []ShippingStat {
 	out := make([]ShippingStat, 0, len(methods))
 	for _, stat := range methods {
+		stat.Revenue = roundMoney(stat.Revenue)
+		stat.ShippingCost = roundMoney(stat.ShippingCost)
 		out = append(out, *stat)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -649,17 +811,23 @@ func sortedShipping(methods map[string]*ShippingStat) []ShippingStat {
 	return out
 }
 
+// aovBands buckets order values into fixed bands.
+//
+// Labels carry no currency symbol: a hardcoded "$" would be wrong for a PLN
+// store. The numeric bounds are returned so a client can format the label in the
+// report currency.
 func aovBands(values []float64) []BandStat {
 	bands := []struct {
 		label string
+		lower float64
 		hi    float64
 	}{
-		{"<$100", 100}, {"$100-300", 300}, {"$300-600", 600},
-		{"$600-1k", 1000}, {"$1k-2k", 2000}, {">$2k", 0},
+		{"<100", 0, 100}, {"100-300", 100, 300}, {"300-600", 300, 600},
+		{"600-1k", 600, 1000}, {"1k-2k", 1000, 2000}, {">2k", 2000, 0},
 	}
 	out := make([]BandStat, len(bands))
 	for i, band := range bands {
-		out[i] = BandStat{Label: band.label}
+		out[i] = BandStat{Label: band.label, Lower: band.lower, Upper: band.hi}
 	}
 	for _, value := range values {
 		for i, band := range bands {
@@ -670,15 +838,24 @@ func aovBands(values []float64) []BandStat {
 			}
 		}
 	}
+	for i := range out {
+		out[i].Revenue = roundMoney(out[i].Revenue)
+	}
 	return out
 }
 
+// topCoupons ranks coupons by revenue, which is what the field is documented to
+// do. Ranking by order count instead put a two-order 20.00 coupon above a
+// one-order 100.00 coupon.
 func topCoupons(coupons map[string]*CouponStat) []CouponStat {
 	out := make([]CouponStat, 0, len(coupons))
 	for _, stat := range coupons {
 		out = append(out, *stat)
 	}
 	sort.Slice(out, func(i, j int) bool {
+		if out[i].Revenue != out[j].Revenue {
+			return out[i].Revenue > out[j].Revenue
+		}
 		if out[i].Orders != out[j].Orders {
 			return out[i].Orders > out[j].Orders
 		}
@@ -687,12 +864,16 @@ func topCoupons(coupons map[string]*CouponStat) []CouponStat {
 	if len(out) > topCouponLimit {
 		out = out[:topCouponLimit]
 	}
+	for i := range out {
+		out[i].Revenue = roundMoney(out[i].Revenue)
+	}
 	return out
 }
 
 func topRefundSKUs(refunds map[string]*SKURefundStat) []SKURefundStat {
 	out := make([]SKURefundStat, 0, len(refunds))
 	for _, stat := range refunds {
+		stat.Amount = roundMoney(stat.Amount)
 		out = append(out, *stat)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -710,6 +891,7 @@ func topRefundSKUs(refunds map[string]*SKURefundStat) []SKURefundStat {
 func topSKUs(skus map[string]*SKUStat) []SKUStat {
 	out := make([]SKUStat, 0, len(skus))
 	for _, stat := range skus {
+		stat.Revenue = roundMoney(stat.Revenue)
 		out = append(out, *stat)
 	}
 	sort.Slice(out, func(i, j int) bool {

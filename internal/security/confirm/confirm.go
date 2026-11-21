@@ -118,10 +118,30 @@ func (s *Service) Require(ctx context.Context, tool, instance, scope, summary, r
 	return req, nil
 }
 
+// IdentityClassHuman is the only identity class ADR-0014 allows to approve: "an
+// agent cannot be an approver of record".
+const IdentityClassHuman = "human"
+
 // Approve records a human approval. Self-approval is rejected by the store.
 func (s *Service) Approve(ctx context.Context, id, approver string) error {
+	return s.ApproveAs(ctx, id, approver, "")
+}
+
+// ApproveAs records an approval by an identity of the given class. A verified
+// non-human identity (a service/agent token) is refused here, before the store
+// records anything: the class used to be collected only for audit attribution,
+// so a `type=service` token could approve an operator's destructive write
+// (U-76). An empty class means the caller resolved no verified identity, which
+// is the unauthenticated CLI path; that path already warns that the approver is
+// self-asserted.
+func (s *Service) ApproveAs(ctx context.Context, id, approver, class string) error {
 	if strings.TrimSpace(approver) == "" {
 		return errs.New(errs.CodeInvalidArgument, "approver identity is required")
+	}
+	if class != "" && !strings.EqualFold(class, IdentityClassHuman) {
+		return errs.New(errs.CodePermissionDenied,
+			"only a human identity may approve an operation").
+			WithDetail("identity_class", class)
 	}
 	if err := s.store.Approve(ctx, id, approver, s.now()); err != nil {
 		return err

@@ -594,6 +594,11 @@ func importErrorMessage(err error) string {
 	message := string(typed.Code) + ": " + typed.Message
 	var parts []string
 	upstream := typed.Details["upstream_message"]
+	if upstream == "" {
+		// A reason that named an identifier is carried redacted instead of being
+		// dropped; either form tells the operator what the row got wrong.
+		upstream = typed.Details["upstream_reason"]
+	}
 	if upstream != "" {
 		parts = append(parts, upstream)
 	}
@@ -603,6 +608,9 @@ func importErrorMessage(err error) string {
 	}
 	if field != "" {
 		parts = append(parts, "field="+field)
+	}
+	if reason := typed.Details["reason"]; reason != "" {
+		parts = append(parts, "reason="+reason)
 	}
 	if status := typed.Details["upstream_status"]; status != "" && upstream == "" {
 		parts = append(parts, "upstream_status="+status)
@@ -640,12 +648,35 @@ func ValidateImportShape(format string, data []byte) (int, error) {
 			WithDetail("rows", fmt.Sprint(len(rows)))
 	}
 	seen := make(map[string]int, len(rows))
+	// Reporting only the first bad row made an operator fix one row per call
+	// against a 5,000-row file. Every invalid row is named, bounded by the same
+	// cap the async report uses (U-65 / INT-10).
+	invalid := 0
+	firstRow, firstReason := 0, ""
+	summaries := make([]string, 0, maxReportFailures)
 	for _, row := range rows {
-		if rowErrors := validateImportRow(row, seen); len(rowErrors) > 0 {
-			return 0, errs.New(errs.CodeValidationFailed, "import has invalid rows").
-				WithDetail("row", fmt.Sprint(row.RowNumber)).
-				WithDetail("reason", rowErrors[0].Message)
+		rowErrors := validateImportRow(row, seen)
+		if len(rowErrors) == 0 {
+			continue
 		}
+		invalid++
+		if firstRow == 0 {
+			firstRow, firstReason = row.RowNumber, rowErrors[0].Message
+		}
+		if len(summaries) < maxReportFailures {
+			summaries = append(summaries, fmt.Sprintf("row %d: %s", row.RowNumber, rowErrors[0].Message))
+		}
+	}
+	if invalid > 0 {
+		e := errs.New(errs.CodeValidationFailed, "import has invalid rows").
+			WithDetail("row", fmt.Sprint(firstRow)).
+			WithDetail("reason", firstReason).
+			WithDetail("invalid_rows", fmt.Sprint(invalid)).
+			WithDetail("rows", strings.Join(summaries, "; "))
+		if invalid > len(summaries) {
+			e = e.WithDetail("rows_truncated", "true")
+		}
+		return 0, e
 	}
 	return len(rows), nil
 }
@@ -668,7 +699,7 @@ type ImportReport struct {
 	Skipped           int             `json:"skipped" jsonschema:"Rows skipped because the product existed."`
 	Failed            int             `json:"failed" jsonschema:"Rows that failed."`
 	Failures          []ImportFailure `json:"failures,omitempty" jsonschema:"Per-row failures, bounded by the report cap."`
-	FailuresTruncated bool            `json:"failures_truncated"`
+	FailuresTruncated bool            `json:"failures_truncated" jsonschema:"True when more rows failed than the report carries; the counts still cover every row."`
 }
 
 // CompactImportReport reduces a full execution result to a bounded report so a

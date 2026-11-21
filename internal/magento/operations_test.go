@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
 	mcpserver "github.com/shuaiZend/mage2mcp/internal/mcp/server"
+	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
 
@@ -31,24 +33,35 @@ type fakeLedger struct {
 	byKey map[string]string
 	next  int
 
-	begins, executes, succeeds, fails, unknowns int
+	begins, executes, succeeds, fails, unknowns, disposes int
 }
 
 type fakeLedgerOp struct {
-	id          string
-	key         string
-	operation   string
-	instance    string
-	entityType  string
-	entityID    string
-	argsHash    string
-	amountMinor *int64
-	currency    string
-	state       string
-	fence       string
-	upstreamRef string
-	result      json.RawMessage
-	errorCode   string
+	id             string
+	key            string
+	operation      string
+	instance       string
+	entityType     string
+	entityID       string
+	argsHash       string
+	amountMinor    *int64
+	currency       string
+	state          string
+	fence          string
+	upstreamRef    string
+	result         json.RawMessage
+	errorCode      string
+	reconcileCount int
+	needsAttention bool
+	createdAt      time.Time
+	note           string
+	auditEvent     *audit.Event
+}
+
+// fakeOperationID returns a UUID-shaped id, because the tool schemas (and the
+// real ledger) address operations by UUID.
+func fakeOperationID(n int) string {
+	return fmt.Sprintf("00000000-0000-4000-8000-%012d", n)
 }
 
 func newFakeLedger() *fakeLedger {
@@ -84,10 +97,10 @@ func (f *fakeLedger) Begin(_ context.Context, op storage.Operation) (storage.Beg
 	}
 	f.next++
 	row := &fakeLedgerOp{
-		id: fmt.Sprintf("op-%d", f.next), key: op.IdempotencyKey, operation: op.Operation,
+		id: fakeOperationID(f.next), key: op.IdempotencyKey, operation: op.Operation,
 		instance: op.InstanceID, entityType: op.EntityType, entityID: op.EntityID,
 		argsHash: op.ArgsHash, amountMinor: op.AmountMinor, currency: op.Currency,
-		state: storage.OpPending,
+		state: storage.OpPending, createdAt: time.Now().UTC(),
 	}
 	f.rows[row.id] = row
 	f.byKey[key] = row.id
@@ -154,9 +167,100 @@ func (f *fakeLedger) Get(_ context.Context, id string) (*storage.OperationRecord
 	if !ok {
 		return nil, errs.New(errs.CodeNotFound, "operation not found")
 	}
-	return &storage.OperationRecord{ID: row.id, IdempotencyKey: row.key, Operation: row.operation,
-		State: row.state, AmountMinor: row.amountMinor, Currency: row.currency,
-		UpstreamRef: row.upstreamRef, ErrorCode: row.errorCode, Result: row.result}, nil
+	rec := row.record()
+	return &rec, nil
+}
+
+// record projects a stored row the way the durable ledger's SELECT does.
+func (o *fakeLedgerOp) record() storage.OperationRecord {
+	return storage.OperationRecord{ID: o.id, IdempotencyKey: o.key, Operation: o.operation,
+		InstanceID: o.instance, EntityType: o.entityType, EntityID: o.entityID,
+		State: o.state, AmountMinor: o.amountMinor, Currency: o.currency,
+		UpstreamRef: o.upstreamRef, ErrorCode: o.errorCode, Result: o.result,
+		ReconcileCount: o.reconcileCount, NeedsAttention: o.needsAttention, CreatedAt: o.createdAt}
+}
+
+// List mirrors the durable ledger's filter semantics. Pagination is exercised
+// against PostgreSQL in internal/storage; this double only has to answer the
+// questions the tools ask.
+func (f *fakeLedger) List(_ context.Context, filter storage.OperationFilter) (*storage.OperationPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	matched := make([]storage.OperationRecord, 0, len(f.rows))
+	for _, row := range f.rows {
+		if filter.InstanceID != "" && row.instance != filter.InstanceID {
+			continue
+		}
+		if filter.Operation != "" && row.operation != filter.Operation {
+			continue
+		}
+		if filter.State != "" && row.state != filter.State {
+			continue
+		}
+		if filter.NeedsAttention && !row.needsAttention {
+			continue
+		}
+		matched = append(matched, row.record())
+	}
+	sort.Slice(matched, func(i, j int) bool {
+		if matched[i].CreatedAt.Equal(matched[j].CreatedAt) {
+			return matched[i].ID > matched[j].ID
+		}
+		return matched[i].CreatedAt.After(matched[j].CreatedAt)
+	})
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	page := &storage.OperationPage{Total: len(matched)}
+	if len(matched) > limit {
+		page.Operations = matched[:limit]
+		page.Truncated = true
+		page.NextCursor = page.Operations[len(page.Operations)-1].ID
+	} else {
+		page.Operations = matched
+	}
+	return page, nil
+}
+
+// Dispose mirrors the durable ledger's rules: only an unknown outcome can be
+// disposed of, and the judgement must be one of the three documented ones.
+func (f *fakeLedger) Dispose(_ context.Context, id string, judgment storage.DisposeJudgment, note, upstreamRef string, event *audit.Event) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !judgment.Valid() {
+		return false, errs.New(errs.CodeInvalidArgument, "judgment must be applied, not_applied or requeue")
+	}
+	if strings.TrimSpace(note) == "" {
+		return false, errs.New(errs.CodeInvalidArgument, "note is required")
+	}
+	row, ok := f.rows[id]
+	if !ok {
+		return false, errs.New(errs.CodeNotFound, "operation not found")
+	}
+	if row.state != storage.OpUnknown {
+		return false, errs.New(errs.CodeConflict, "only an unknown outcome can be disposed").
+			WithDetail("operation_id", id).WithDetail("state", row.state)
+	}
+	f.disposes++
+	switch judgment {
+	case storage.DisposedApplied:
+		row.state = storage.OpSucceeded
+		row.errorCode = "manual_applied"
+		if upstreamRef != "" {
+			row.upstreamRef = upstreamRef
+		}
+	case storage.DisposedNotApplied:
+		row.state = storage.OpFailed
+		row.errorCode = "manual_not_applied"
+	default:
+		row.reconcileCount = 0
+		row.errorCode = ""
+	}
+	row.needsAttention = false
+	row.note = note
+	row.auditEvent = event
+	return true, nil
 }
 
 // row returns a stored operation for assertions.
@@ -168,7 +272,7 @@ func (f *fakeLedger) row(id string) *fakeLedgerOp {
 
 // ledgerCounts is how many of each ledger call happened.
 type ledgerCounts struct {
-	begins, executes, succeeds, fails, unknowns int
+	begins, executes, succeeds, fails, unknowns, disposes int
 }
 
 // counts returns the ledger call counts.
@@ -176,7 +280,7 @@ func (f *fakeLedger) counts() ledgerCounts {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return ledgerCounts{begins: f.begins, executes: f.executes, succeeds: f.succeeds,
-		fails: f.fails, unknowns: f.unknowns}
+		fails: f.fails, unknowns: f.unknowns, disposes: f.disposes}
 }
 
 // useLedger installs a fake ledger for one test and restores the previous one.
@@ -565,5 +669,250 @@ func TestInvoiceCaptureToolReplays(t *testing.T) {
 	defer mu.Unlock()
 	if posts != 1 {
 		t.Fatalf("capture POSTs = %d, want 1", posts)
+	}
+}
+
+// operationToolsServer registers the three operation tools the way tools.go will
+// and returns a connected client session.
+func operationToolsServer(t *testing.T) *mcp.ClientSession {
+	t.Helper()
+	reg := registry.New()
+	for _, tool := range []registry.Tool{
+		newOperationGetTool(), newOperationListTool(), newOperationDisposeTool(),
+	} {
+		if err := reg.Register(tool); err != nil {
+			t.Fatalf("register %s: %v", tool.Name, err)
+		}
+	}
+	// The dispose tool is a write and therefore requires approval, so the server
+	// needs a confirmation service.
+	srv, err := mcpserver.NewMCP(mcpserver.Options{
+		Version: "test", Registry: reg, Confirm: magentoConfirmService(t),
+	})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
+// seedAttentionOperation drives the fake ledger to the state the reconciler leaves
+// an operation in after it gives up, and returns its id.
+func seedAttentionOperation(t *testing.T, ledger *fakeLedger) string {
+	t.Helper()
+	ops, err := configuredOperations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	run, _, err := ops.Begin(ctx, OperationRequest{
+		Tool: "magento.order.create", Instance: "store-us", Subject: "erp",
+		EntityType: storage.EntityOrder, EntityID: "1042",
+		Args: map[string]any{"customer_id": 3},
+	})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if err := run.Unknown(ctx, "upstream_timeout"); err != nil {
+		t.Fatalf("Unknown: %v", err)
+	}
+	ledger.mu.Lock()
+	ledger.rows[run.ID()].needsAttention = true
+	ledger.rows[run.ID()].reconcileCount = 9
+	ledger.mu.Unlock()
+	return run.ID()
+}
+
+// INT-07: operation_unknown tells the caller to poll, so polling has to exist.
+func TestOperationToolsExposePollingAndDisposition(t *testing.T) {
+	ledger := newFakeLedger()
+	useLedger(t, ledger)
+	id := seedAttentionOperation(t, ledger)
+	session := operationToolsServer(t)
+	ctx := context.Background()
+
+	got, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: operationGetToolName, Arguments: map[string]any{"operation_id": id},
+	})
+	if err != nil {
+		t.Fatalf("operation.get: %v", err)
+	}
+	if got.IsError {
+		t.Fatalf("operation.get returned an error: %v", got.StructuredContent)
+	}
+	record, ok := got.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("structured content = %T, want an object", got.StructuredContent)
+	}
+	operation, _ := record["operation"].(map[string]any)
+	if operation["state"] != storage.OpUnknown {
+		t.Fatalf("state = %v, want unknown", operation["state"])
+	}
+	if operation["needs_attention"] != true {
+		t.Fatalf("needs_attention = %v, want true: an escalated row must say so", operation["needs_attention"])
+	}
+	next, _ := record["next"].(string)
+	if !strings.Contains(next, operationDisposeToolName) {
+		t.Fatalf("next = %q, want it to name the disposition tool", next)
+	}
+
+	listed, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: operationListToolName, Arguments: map[string]any{"needs_attention": true},
+	})
+	if err != nil {
+		t.Fatalf("operation.list: %v", err)
+	}
+	if listed.IsError {
+		t.Fatalf("operation.list returned an error: %v", listed.StructuredContent)
+	}
+	page, _ := listed.StructuredContent.(map[string]any)
+	if page["total"] != float64(1) {
+		t.Fatalf("total = %v, want 1", page["total"])
+	}
+	rows, _ := page["operations"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("operations = %v, want the one escalated row", page["operations"])
+	}
+
+	// The disposition is a write: it must be approved before it lands.
+	params := &mcp.CallToolParams{
+		Name: operationDisposeToolName,
+		Arguments: map[string]any{
+			"operation_id": id, "judgment": "applied",
+			"note": "read /V1/orders/1042: the order exists", "upstream_ref": "order:1042",
+		},
+	}
+	unapproved, err := session.CallTool(ctx, params)
+	if err != nil {
+		t.Fatalf("operation.dispose: %v", err)
+	}
+	if !unapproved.IsError || confirmationIDFromResult(t, unapproved) == "" {
+		t.Fatalf("dispose ran without approval: %v", unapproved.StructuredContent)
+	}
+	approved, err := callToolApproved(t, ctx, session, params)
+	if err != nil {
+		t.Fatalf("operation.dispose (approved): %v", err)
+	}
+	if approved.IsError {
+		t.Fatalf("dispose failed: %v", approved.StructuredContent)
+	}
+	disposed, _ := approved.StructuredContent.(map[string]any)
+	after, _ := disposed["operation"].(map[string]any)
+	if after["state"] != storage.OpSucceeded {
+		t.Fatalf("state after dispose = %v, want succeeded", after["state"])
+	}
+	if disposed["judgment"] != "applied" {
+		t.Fatalf("judgment = %v, want applied", disposed["judgment"])
+	}
+
+	// The operator's finding is recorded, not just applied: the note and the
+	// identity of the person who made the call are in the audit row.
+	ledger.mu.Lock()
+	row := ledger.rows[id]
+	ledger.mu.Unlock()
+	if !strings.Contains(row.note, "/V1/orders/1042") {
+		t.Fatalf("note = %q, want the operator's evidence recorded", row.note)
+	}
+	if row.auditEvent == nil || row.auditEvent.State != "succeeded" {
+		t.Fatalf("audit event = %+v, want a succeeded disposition", row.auditEvent)
+	}
+	if c := ledger.counts(); c.disposes != 1 {
+		t.Fatalf("disposes = %d, want 1 (the unapproved call must not dispose)", c.disposes)
+	}
+}
+
+// The tools are useless without a ledger, and must say so instead of panicking.
+func TestOperationToolsFailClosedWithoutLedger(t *testing.T) {
+	ConfigureOperations(nil)
+	session := operationToolsServer(t)
+	ctx := context.Background()
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: operationGetToolName, Arguments: map[string]any{"operation_id": "8f9d3d0e-0000-4000-8000-000000000000"},
+	})
+	if err != nil {
+		t.Fatalf("operation.get: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("operation.get succeeded without a ledger")
+	}
+	envelope, _ := res.StructuredContent.(map[string]any)
+	if envelope["code"] != string(errs.CodeUnsupportedCapability) {
+		t.Fatalf("code = %v, want unsupported_capability", envelope["code"])
+	}
+}
+
+// The constructors must be registrable as they stand, so wiring them into
+// tools.go is a registration call and nothing else.
+func TestOperationToolMetadataIsRegistrable(t *testing.T) {
+	reg := registry.New()
+	for _, tool := range []registry.Tool{
+		newOperationGetTool(), newOperationListTool(), newOperationDisposeTool(),
+	} {
+		if err := reg.Register(tool); err != nil {
+			t.Fatalf("%s is not registrable: %v", tool.Name, err)
+		}
+	}
+	dispose, ok := reg.Lookup(operationDisposeToolName)
+	if !ok {
+		t.Fatal("dispose tool is not registered")
+	}
+	if dispose.Permission != registry.PermissionWrite || !dispose.RequiresConfirmation {
+		t.Fatalf("dispose = %+v, want a write that requires approval", dispose)
+	}
+	get, _ := reg.Lookup(operationGetToolName)
+	if get.Permission != registry.PermissionRead || get.RequiresConfirmation {
+		t.Fatalf("get = %+v, want a read that needs no approval", get)
+	}
+}
+
+// The tool refuses to dispose anything that is not unknown, and refuses a
+// disposition without a note, before it touches the ledger.
+func TestOperationsDisposeGuards(t *testing.T) {
+	ledger := newFakeLedger()
+	useLedger(t, ledger)
+	ops, err := configuredOperations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	run, _, err := ops.Begin(ctx, OperationRequest{
+		Tool: "magento.order.create", Instance: "store-us", Subject: "erp",
+		EntityType: storage.EntityOrder, EntityID: "7", Args: map[string]any{"customer_id": 3},
+	})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if _, err := ops.Dispose(ctx, run.ID(), storage.DisposedApplied, "checked", ""); errs.CodeOf(err) != errs.CodeConflict {
+		t.Fatalf("dispose an executing operation: err = %v, want conflict", err)
+	}
+	if err := run.Unknown(ctx, "upstream_timeout"); err != nil {
+		t.Fatalf("Unknown: %v", err)
+	}
+	if _, err := ops.Dispose(ctx, run.ID(), storage.DisposedApplied, "   ", ""); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("dispose without a note: err = %v, want invalid_argument", err)
+	}
+	if _, err := ops.Dispose(ctx, run.ID(), "maybe", "checked", ""); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("dispose with a bad judgement: err = %v, want invalid_argument", err)
+	}
+	record, err := ops.Dispose(ctx, run.ID(), storage.DisposedNotApplied, "read upstream: absent", "")
+	if err != nil {
+		t.Fatalf("Dispose: %v", err)
+	}
+	if record.State != storage.OpFailed {
+		t.Fatalf("state = %s, want failed", record.State)
 	}
 }

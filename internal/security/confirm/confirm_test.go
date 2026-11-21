@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -498,5 +499,35 @@ func TestValidateIsReadOnlyAndChecksBinding(t *testing.T) {
 	}
 	if err := svc.Validate(context.Background(), expired.ID, "agent-1", "magento.product.create", "store-us", args); errs.CodeOf(err) != errs.CodeConfirmationExpired {
 		t.Fatalf("expired approval: %v, want confirmation_expired", err)
+	}
+}
+
+// U-76: ADR-0014 says an agent cannot be an approver of record, but the identity
+// class was only collected for audit attribution, so a verified service token
+// could approve an operator's destructive write. Reverting ApproveAs to the
+// class-blind Approve makes this test fail.
+func TestApproveRejectsServiceIdentity(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	req, err := svc.Require(ctx, "magento.category.delete", "store-us", "write", "Delete category 5", "operator-1", holdArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.ApproveAs(ctx, req.ID, "agent-bot", "service")
+	if errs.CodeOf(err) != errs.CodePermissionDenied {
+		t.Fatalf("err = %v, want permission_denied for a service approver", err)
+	}
+	var typed *errs.Error
+	if !errors.As(err, &typed) || typed.Details["identity_class"] != "service" {
+		t.Fatalf("details = %v, want identity_class=service", err)
+	}
+	// The request is still pending: a refused approval must not resolve it.
+	pending, err := svc.Pending(ctx)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending = %v, %v; a refused approval must leave the request pending", pending, err)
+	}
+	// A human approver may still approve it.
+	if err := svc.ApproveAs(ctx, req.ID, "reviewer", "human"); err != nil {
+		t.Fatalf("a human approval must succeed: %v", err)
 	}
 }

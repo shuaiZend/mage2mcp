@@ -34,6 +34,7 @@ package storage
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -140,21 +141,30 @@ type Operation struct {
 // OperationRecord is a read-only view used for polling and diagnostics.
 type OperationRecord struct {
 	ID             string          `json:"id" jsonschema:"Magento entity id."`
-	IdempotencyKey string          `json:"idempotency_key"`
-	Operation      string          `json:"operation"`
+	IdempotencyKey string          `json:"idempotency_key" jsonschema:"Replay key the operation was recorded under; a derived key carries the window it was scoped to and, after a proven failure, a :released: suffix."`
+	Operation      string          `json:"operation" jsonschema:"Tool name the operation represents, for example magento.order.create."`
 	InstanceID     string          `json:"instance_id" jsonschema:"Configured instance the result came from."`
-	EntityType     string          `json:"entity_type"`
+	EntityType     string          `json:"entity_type" jsonschema:"Entity kind the operation targets: order, invoice, creditmemo, shipment, product, stock, category or customer."`
 	EntityID       string          `json:"entity_id" jsonschema:"Magento entity id."`
 	State          string          `json:"state" jsonschema:"Current state."`
-	AmountMinor    *int64          `json:"amount_minor,omitempty"`
+	AmountMinor    *int64          `json:"amount_minor,omitempty" jsonschema:"Money in integer minor units, when the operation moves money."`
 	Currency       string          `json:"currency,omitempty" jsonschema:"ISO 4217 code the amounts are expressed in."`
-	Fence          string          `json:"fence"`
-	Attempt        int             `json:"attempt"`
-	UpstreamRef    string          `json:"upstream_ref,omitempty"`
+	Fence          string          `json:"fence" jsonschema:"Fencing token of the current attempt; a write that presents a stale one is rejected."`
+	Attempt        int             `json:"attempt" jsonschema:"How many times the operation has been claimed."`
+	UpstreamRef    string          `json:"upstream_ref,omitempty" jsonschema:"Upstream handle recorded with the outcome, for example order:1042."`
 	Result         json.RawMessage `json:"result,omitempty" jsonschema:"The operation result."`
 	ErrorCode      string          `json:"error_code,omitempty" jsonschema:"Taxonomy code of the failure, when there is one."`
-	ReconcileCount int             `json:"reconcile_count"`
-	FinishedAt     *time.Time      `json:"finished_at,omitempty"`
+	ReconcileCount int             `json:"reconcile_count" jsonschema:"How many times the reconciler has read the upstream for this operation."`
+	// ReconcileAfter is when the reconciler will next look at an unknown
+	// operation. A nil value means the reconciler will never look again: the row
+	// was escalated for a human (INT-07) and needs an explicit disposition.
+	ReconcileAfter *time.Time `json:"reconcile_after,omitempty" jsonschema:"When the reconciler will next look at this operation; absent when it never will."`
+	// NeedsAttention marks a row no automatic pass will touch again: an unknown
+	// outcome that was escalated, or one whose backoff was pushed to infinity.
+	// It is derived, never stored, so it cannot drift from the row it describes.
+	NeedsAttention bool       `json:"needs_attention" jsonschema:"True when no automatic reconciliation will touch this row again, so an operator has to dispose of it."`
+	CreatedAt      time.Time  `json:"created_at" jsonschema:"Store time the operation was recorded, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
+	FinishedAt     *time.Time `json:"finished_at,omitempty" jsonschema:"When the operation reached a terminal state; absent while it is unresolved."`
 }
 
 // Reconcilable is one operation the reconciler has claimed.
@@ -209,8 +219,59 @@ func ArgsHash(args json.RawMessage) (string, error) {
 
 // DeriveKey returns a deterministic idempotency key for a caller that did not
 // supply one: exactly-once-by-arguments for one subject and one operation.
+//
+// The key alone is not the whole story: beginInTx scopes a derived key to
+// DerivedKeyWindow, because "the same arguments" is not a promise of "the same
+// intent". Two identical orders an hour apart are two orders (INT-12).
 func DeriveKey(subject, argsHash string) string {
 	return fmt.Sprintf("auto:%s:%s", hex.EncodeToString(subjectHash(subject)), argsHash)
+}
+
+// derivedKeyPrefix marks a key the gateway derived rather than one the caller
+// supplied. Only derived keys get the window treatment and the release-on-failure
+// treatment: an explicit key is a caller's promise of exactly-once and is honoured
+// for as long as the row exists.
+const derivedKeyPrefix = "auto:"
+
+// DerivedKeyWindow bounds how long a derived key keeps deduplicating. Inside one
+// window a repeated identical call replays instead of writing twice, which is the
+// double-submit protection the derived key exists for. Across windows it is a new
+// operation, because a caller that did not ask for exactly-once cannot be given
+// "never again": an ERP that re-sends an order after a lost response, or a
+// customer who buys the same item twice, must not be silently swallowed.
+//
+// It is a variable so a test can shrink it instead of sleeping for minutes.
+var DerivedKeyWindow = 5 * time.Minute
+
+// ledgerClock is the clock the derived-key window is measured against. A test
+// replaces it to move between windows deterministically.
+var ledgerClock = func() time.Time { return time.Now().UTC() }
+
+// windowedDerivedKey scopes a derived key to the window containing now. The
+// suffix is stable inside a window (so a retry lands on the same row) and
+// different across windows (so the next window is a new operation).
+func windowedDerivedKey(key string, now time.Time) string {
+	if DerivedKeyWindow <= 0 || !strings.HasPrefix(key, derivedKeyPrefix) {
+		return key
+	}
+	suffix := ":w" + strconv.FormatInt(now.Truncate(DerivedKeyWindow).Unix(), 10)
+	if len(key)+len(suffix) > 256 {
+		// The column is 256 characters; a caller who stuffed a derived-looking key
+		// to the limit keeps the unwindowed key rather than failing the insert.
+		return key
+	}
+	return key + suffix
+}
+
+// releasedKey renames a derived key so the row stays (as evidence) while the key
+// is free for a new attempt. An explicit key is never released: the caller asked
+// for exactly-once and the recorded failure is part of that promise.
+func releasedKeySQL() string {
+	return `CASE WHEN idempotency_key LIKE '` + derivedKeyPrefix + `%'
+	                  AND idempotency_key NOT LIKE '%:released:%'
+	                  AND length(idempotency_key) <= 238
+	             THEN idempotency_key || ':released:' || substr(fence::text, 1, 8)
+	             ELSE idempotency_key END`
 }
 
 // fenceGuard is the shared "this row is still mine" predicate. It is the same
@@ -296,6 +357,10 @@ func (l *OperationLedger) beginInTx(ctx context.Context, tx pgx.Tx, prepared pre
 	case OpSucceeded:
 		result.Decision = DecisionReplay
 		result.Replayed = true
+		// A replay must be visible in structuredContent, not only in the text
+		// fallback: an agent that reads the JSON (INT-02) could not otherwise tell
+		// "nothing new happened" from "a second write happened".
+		result.Result = markReplayed(result.Result)
 		return result, nil
 	case OpFailed:
 		if isAmbiguousCode(result.ErrorCode) {
@@ -467,7 +532,13 @@ func (l *OperationLedger) failExec(ctx context.Context, ex executor, id, fence, 
 		WITH updated AS (
 			UPDATE operations
 			   SET state = 'failed', finished_at = now(), lease_expires_at = NULL,
-			       error_code = NULLIF($3, ''), updated_at = now()
+			       error_code = NULLIF($3, ''), updated_at = now(),
+			       -- A derived key is not a caller's promise of exactly-once: once
+			       -- the mutation is proven not to have happened, holding the key
+			       -- would answer the caller's retry with "the operation previously
+			       -- failed" (INT-12 / FIN-09). Rename the row so the key is free;
+			       -- the operation, its history and its audit row all survive.
+			       idempotency_key = `+releasedKeySQL()+`
 			 WHERE `+guardExecuting+`
 			RETURNING id, state, fence, attempt
 		), logged AS (
@@ -803,24 +874,16 @@ func (l *OperationLedger) Get(ctx context.Context, id string) (*OperationRecord,
 	if l == nil || l.store == nil || l.store.pool == nil {
 		return nil, fmt.Errorf("storage: operation ledger not configured")
 	}
-	var rec OperationRecord
-	var amount *int64
-	err := l.store.pool.QueryRow(ctx, `
-		SELECT id::text, idempotency_key, operation, instance_id, entity_type, entity_id, state,
-		       amount_minor, COALESCE(currency, ''), fence::text, attempt,
-		       COALESCE(upstream_ref, ''), COALESCE(result, 'null'::jsonb), COALESCE(error_code, ''),
-		       reconcile_count, finished_at
-		FROM operations WHERE id = $1::uuid`, id).
-		Scan(&rec.ID, &rec.IdempotencyKey, &rec.Operation, &rec.InstanceID, &rec.EntityType,
-			&rec.EntityID, &rec.State, &amount, &rec.Currency, &rec.Fence, &rec.Attempt,
-			&rec.UpstreamRef, &rec.Result, &rec.ErrorCode, &rec.ReconcileCount, &rec.FinishedAt)
+	row := l.store.pool.QueryRow(ctx, `
+		SELECT `+operationRecordColumns+`
+		FROM operations WHERE id = $1::uuid`, id)
+	rec, err := scanOperationRecord(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.New(errs.CodeNotFound, "operation not found").WithDetail("operation_id", id)
 		}
 		return nil, fmt.Errorf("storage: get operation: %w", err)
 	}
-	rec.AmountMinor = amount
 	return &rec, nil
 }
 
@@ -965,7 +1028,7 @@ func prepareOperation(op Operation) (prepared, error) {
 		return invalid("module", "cannot be derived from the operation name; set it explicitly")
 	}
 	p := prepared{
-		idempotencyKey: op.IdempotencyKey,
+		idempotencyKey: windowedDerivedKey(op.IdempotencyKey, ledgerClock()),
 		operation:      op.Operation,
 		instanceID:     op.InstanceID,
 		module:         module,
@@ -1238,9 +1301,15 @@ func (l *OperationLedger) MakeReconcilable(ctx context.Context, id string) (bool
 	return tag.RowsAffected() > 0, nil
 }
 
-// Escalate stops the reconciler from retrying an operation forever. The row
-// stays unknown (its outcome genuinely is unknown) but is pushed a day out and
-// flagged, so a human has to look at it.
+// Escalate stops the reconciler from retrying an operation forever: the row stays
+// unknown (its outcome genuinely is unknown) but reconcile_after becomes
+// 'infinity', so no automatic pass will read the upstream for it again.
+//
+// Escalation is not the end of the road any more. The row keeps
+// error_code='needs_manual_reconciliation', which is what List's NeedsAttention
+// filter selects and what Dispose acts on: a human either records a finding
+// (applied / not_applied) or re-queues it, which restarts the attempt budget.
+// Before that exit existed, eleven production order.create rows had nowhere to go.
 func (l *OperationLedger) Escalate(ctx context.Context, id, fence, reason string) (bool, error) {
 	if reason == "" {
 		reason = "escalated"
@@ -1262,4 +1331,375 @@ func (l *OperationLedger) Escalate(ctx context.Context, id, fence, reason string
 		return false, fmt.Errorf("storage: escalate operation: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// ---------------------------------------------------------------------------
+// Disposition of operations no automatic pass will touch again
+//
+// An unknown outcome means "the gateway could not tell whether the mutation was
+// applied". The reconciler retries the upstream read a bounded number of times and
+// then escalates (Escalate), which pushes reconcile_after to infinity. Until this
+// section existed the row then had no exit at all: nothing in the MCP surface
+// could read it, and nothing could record what a human decided (INT-07). Eleven
+// production order.create rows sat in that state.
+//
+// The disposition is deliberately a *recorded judgement*, not a delete: the caller
+// must say which of the three findings it reached, and why. "Assume it never
+// happened" is not one of the options, because it would turn an unknown outcome
+// into a silently duplicated order the moment the upstream had in fact applied it.
+// ---------------------------------------------------------------------------
+
+// DisposeJudgment is the finding an operator reached about an unknown operation.
+type DisposeJudgment string
+
+const (
+	// DisposedApplied: the upstream was read and the mutation is there. The row
+	// becomes succeeded so a replay returns it instead of writing again.
+	DisposedApplied DisposeJudgment = "applied"
+	// DisposedNotApplied: the upstream was read and the mutation is not there. The
+	// row becomes failed, which also frees a derived idempotency key.
+	DisposedNotApplied DisposeJudgment = "not_applied"
+	// DisposedRequeue: the finding is not in yet. The row stays unknown but its
+	// reconciliation budget restarts, so the reconciler reads upstream again
+	// instead of leaving the row at reconcile_after = infinity forever.
+	DisposedRequeue DisposeJudgment = "requeue"
+)
+
+// Valid reports whether j is one of the documented judgements.
+func (j DisposeJudgment) Valid() bool {
+	switch j {
+	case DisposedApplied, DisposedNotApplied, DisposedRequeue:
+		return true
+	}
+	return false
+}
+
+// EscalatedErrorCode marks a row the reconciler handed to a human.
+const EscalatedErrorCode = "needs_manual_reconciliation"
+
+// Error codes a disposition writes, so a resolved row says how it was resolved.
+const (
+	disposedAppliedCode    = "manual_applied"
+	disposedNotAppliedCode = "manual_not_applied"
+)
+
+// OperationFilter selects rows for a status query. The zero value means "the most
+// recent rows, whatever their state".
+type OperationFilter struct {
+	InstanceID string
+	Operation  string
+	State      string
+	// NeedsAttention restricts the query to rows the reconciler will never look at
+	// again: an escalated unknown, or one whose backoff is unreachable.
+	NeedsAttention bool
+	// Limit is the page size; 0 means 50 and the maximum is 200.
+	Limit int
+	// Cursor is the opaque value from a previous page's NextCursor. Rows are
+	// ordered newest first, so a cursor continues strictly after the last row.
+	Cursor string
+}
+
+// OperationPage is one page of a status query.
+type OperationPage struct {
+	Operations []OperationRecord
+	// Total is how many rows match the filter, independent of the page.
+	Total int
+	// Truncated is true when more rows match than this page carries.
+	Truncated bool
+	// NextCursor continues the listing; empty when this is the last page.
+	NextCursor string
+}
+
+const (
+	defaultOperationPageSize = 50
+	maxOperationPageSize     = 200
+)
+
+// attentionPredicate is the SQL for "no automatic pass will touch this again".
+const attentionPredicate = `(state = 'unknown' AND (
+		COALESCE(error_code, '') = '` + EscalatedErrorCode + `'
+		OR reconcile_after IS NULL
+		OR reconcile_after = 'infinity'))`
+
+// List returns a page of operations for polling and for finding the rows that
+// need a human. It is read-only.
+func (l *OperationLedger) List(ctx context.Context, f OperationFilter) (*OperationPage, error) {
+	if l == nil || l.store == nil || l.store.pool == nil {
+		return nil, fmt.Errorf("storage: operation ledger not configured")
+	}
+	limit := f.Limit
+	if limit <= 0 {
+		limit = defaultOperationPageSize
+	}
+	if limit > maxOperationPageSize {
+		limit = maxOperationPageSize
+	}
+	where := []string{"TRUE"}
+	args := []any{}
+	add := func(clause string, value any) {
+		args = append(args, value)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if f.InstanceID != "" {
+		add("instance_id = $%d", f.InstanceID)
+	}
+	if f.Operation != "" {
+		add("operation = $%d", f.Operation)
+	}
+	if f.State != "" {
+		add("state = $%d", f.State)
+	}
+	if f.NeedsAttention {
+		where = append(where, attentionPredicate)
+	}
+	filter := strings.Join(where, " AND ")
+
+	var total int
+	if err := l.store.pool.QueryRow(ctx,
+		`SELECT count(*) FROM operations WHERE `+filter, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("storage: count operations: %w", err)
+	}
+
+	page := []string{filter}
+	if f.Cursor != "" {
+		after, err := decodeOperationCursor(f.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, after.createdAt, after.id)
+		page = append(page, fmt.Sprintf("(created_at, id) < ($%d::timestamptz, $%d::uuid)", len(args)-1, len(args)))
+	}
+	args = append(args, limit+1)
+	rows, err := l.store.pool.Query(ctx, `
+		SELECT `+operationRecordColumns+`
+		FROM operations
+		WHERE `+strings.Join(page, " AND ")+`
+		ORDER BY created_at DESC, id DESC
+		LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list operations: %w", err)
+	}
+	defer rows.Close()
+	out := make([]OperationRecord, 0, limit)
+	for rows.Next() {
+		rec, err := scanOperationRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: list operations: %w", err)
+	}
+	result := &OperationPage{Operations: out, Total: total}
+	if len(out) > limit {
+		result.Operations = out[:limit]
+		result.Truncated = true
+		last := result.Operations[len(result.Operations)-1]
+		result.NextCursor = encodeOperationCursor(last.CreatedAt, last.ID)
+	}
+	return result, nil
+}
+
+// operationCursor is the keyset position of the last row of a page.
+type operationCursor struct {
+	createdAt time.Time
+	id        string
+}
+
+func encodeOperationCursor(createdAt time.Time, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(createdAt.UTC().Format(time.RFC3339Nano) + "|" + id))
+}
+
+func decodeOperationCursor(cursor string) (operationCursor, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return operationCursor{}, errs.New(errs.CodeInvalidArgument, "cursor is not a value this tool issued").
+			WithDetail("field", "cursor")
+	}
+	at, id, ok := strings.Cut(string(raw), "|")
+	if !ok {
+		return operationCursor{}, errs.New(errs.CodeInvalidArgument, "cursor is not a value this tool issued").
+			WithDetail("field", "cursor")
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, at)
+	if err != nil || !uuidPattern.MatchString(id) {
+		return operationCursor{}, errs.New(errs.CodeInvalidArgument, "cursor is not a value this tool issued").
+			WithDetail("field", "cursor")
+	}
+	return operationCursor{createdAt: createdAt, id: id}, nil
+}
+
+// operationRecordColumns is the projection Get and List share, so a row read by
+// one and a row filtered by the other cannot disagree.
+//
+// reconcile_after can literally be 'infinity' (Escalate writes it), which no
+// *time.Time can hold: it is selected as NULL plus an explicit flag, and the flag
+// is what needs_attention is computed from.
+const operationRecordColumns = `id::text, idempotency_key, operation, instance_id, entity_type, entity_id, state,
+	amount_minor, COALESCE(currency, ''), fence::text, attempt,
+	COALESCE(upstream_ref, ''), COALESCE(result, 'null'::jsonb), COALESCE(error_code, ''),
+	reconcile_count,
+	CASE WHEN reconcile_after = 'infinity' THEN NULL ELSE reconcile_after END,
+	COALESCE(reconcile_after = 'infinity', false),
+	created_at, finished_at`
+
+// rowScanner is the subset of pgx.Rows scanning needs.
+type rowScanner interface{ Scan(dest ...any) error }
+
+func scanOperationRecord(row rowScanner) (OperationRecord, error) {
+	var rec OperationRecord
+	var amount *int64
+	var reconcileNever bool
+	if err := row.Scan(&rec.ID, &rec.IdempotencyKey, &rec.Operation, &rec.InstanceID, &rec.EntityType,
+		&rec.EntityID, &rec.State, &amount, &rec.Currency, &rec.Fence, &rec.Attempt,
+		&rec.UpstreamRef, &rec.Result, &rec.ErrorCode, &rec.ReconcileCount,
+		&rec.ReconcileAfter, &reconcileNever, &rec.CreatedAt, &rec.FinishedAt); err != nil {
+		return OperationRecord{}, fmt.Errorf("storage: scan operation: %w", err)
+	}
+	rec.AmountMinor = amount
+	rec.NeedsAttention = needsAttention(rec, reconcileNever)
+	return rec, nil
+}
+
+// needsAttention mirrors attentionPredicate in Go, so a single row fetched by Get
+// agrees with a filtered list.
+func needsAttention(rec OperationRecord, reconcileNever bool) bool {
+	if rec.State != OpUnknown {
+		return false
+	}
+	return rec.ErrorCode == EscalatedErrorCode || reconcileNever || rec.ReconcileAfter == nil
+}
+
+// Dispose records what a human found out about an unknown operation and moves the
+// row to the matching state. Only an unknown row can be disposed: a pending or
+// executing row is owned by a live attempt, and a reconciling row is owned by the
+// reconciler's lease.
+//
+// note is required and is stored in the transition history, because the whole
+// point is that a person looked and this is what they saw.
+func (l *OperationLedger) Dispose(ctx context.Context, id string, judgment DisposeJudgment, note, upstreamRef string, event *audit.Event) (bool, error) {
+	if l == nil || l.store == nil || l.store.pool == nil {
+		return false, fmt.Errorf("storage: operation ledger not configured")
+	}
+	if !judgment.Valid() {
+		return false, errs.New(errs.CodeInvalidArgument,
+			"judgment must be applied, not_applied or requeue").
+			WithDetail("field", "judgment")
+	}
+	note = strings.TrimSpace(note)
+	if note == "" {
+		return false, errs.New(errs.CodeInvalidArgument,
+			"a disposition must record what the operator checked; note is required").
+			WithDetail("field", "note")
+	}
+	if !uuidPattern.MatchString(id) {
+		return false, errs.New(errs.CodeInvalidArgument, "operation_id must be a UUID").
+			WithDetail("field", "operation_id")
+	}
+	tx, err := l.store.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("storage: dispose operation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// The state check is the answer a caller needs: disposing anything but an
+	// unknown outcome is either a live attempt's row or an already-decided one.
+	var state string
+	err = tx.QueryRow(ctx,
+		`SELECT state FROM operations WHERE id = $1::uuid FOR UPDATE`, id).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, errs.New(errs.CodeNotFound, "operation not found").WithDetail("operation_id", id)
+	}
+	if err != nil {
+		return false, fmt.Errorf("storage: dispose operation: %w", err)
+	}
+	if state != OpUnknown {
+		return false, errs.New(errs.CodeConflict,
+			"only an operation whose outcome is unknown can be disposed").
+			WithDetail("operation_id", id).
+			WithDetail("state", state)
+	}
+
+	var applied bool
+	switch judgment {
+	case DisposedApplied:
+		applied, err = l.transition(ctx, tx, id, "dispose_applied", OpUnknown, `
+			WITH updated AS (
+				UPDATE operations
+				   SET state = 'succeeded', finished_at = now(), lease_expires_at = NULL,
+				       error_code = '`+disposedAppliedCode+`',
+				       upstream_ref = COALESCE(NULLIF($2, ''), upstream_ref),
+				       reconcile_after = NULL, updated_at = now()
+				 WHERE id = $1::uuid AND state = 'unknown'
+				RETURNING id, state, fence, attempt
+			), logged AS (
+				INSERT INTO operation_transitions (operation_id, from_state, to_state, fence, attempt, reason)
+				SELECT id, 'unknown', state, fence, attempt, 'disposed_applied: ' || $3 FROM updated
+			)
+			SELECT id FROM updated`, id, upstreamRef, note)
+	case DisposedNotApplied:
+		applied, err = l.transition(ctx, tx, id, "dispose_not_applied", OpUnknown, `
+			WITH updated AS (
+				UPDATE operations
+				   SET state = 'failed', finished_at = now(), lease_expires_at = NULL,
+				       error_code = '`+disposedNotAppliedCode+`',
+				       reconcile_after = NULL, updated_at = now(),
+				       idempotency_key = `+releasedKeySQL()+`
+				 WHERE id = $1::uuid AND state = 'unknown'
+				RETURNING id, state, fence, attempt
+			), logged AS (
+				INSERT INTO operation_transitions (operation_id, from_state, to_state, fence, attempt, reason)
+				SELECT id, 'unknown', state, fence, attempt, 'disposed_not_applied: ' || $2 FROM updated
+			)
+			SELECT id FROM updated`, id, note)
+	default: // DisposedRequeue
+		applied, err = l.transition(ctx, tx, id, "dispose_requeue", OpUnknown, `
+			WITH updated AS (
+				UPDATE operations
+				   SET reconcile_after = now(), reconcile_count = 0,
+				       error_code = NULL, lease_expires_at = NULL, updated_at = now()
+				 WHERE id = $1::uuid AND state = 'unknown'
+				RETURNING id, state, fence, attempt
+			), logged AS (
+				INSERT INTO operation_transitions (operation_id, from_state, to_state, fence, attempt, reason)
+				SELECT id, 'unknown', state, fence, attempt, 'disposed_requeue: ' || $2 FROM updated
+			)
+			SELECT id FROM updated`, id, note)
+	}
+	if err != nil || !applied {
+		return applied, err
+	}
+	if event != nil {
+		if err := l.auditor.RecordInTx(ctx, tx, *event); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("storage: dispose commit: %w", err)
+	}
+	return true, nil
+}
+
+// markReplayed adds the replay marker to a recorded result so a replayed call is
+// visible in structuredContent and not only in the text fallback. A recorded
+// result that is not a JSON object is left alone: there is nowhere to put it, and
+// the text fallback still says so.
+func markReplayed(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return raw
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return raw
+	}
+	if existing, ok := fields["replayed"]; ok && string(existing) == "true" {
+		return raw
+	}
+	fields["replayed"] = json.RawMessage("true")
+	marked, err := json.Marshal(fields)
+	if err != nil {
+		return raw
+	}
+	return marked
 }

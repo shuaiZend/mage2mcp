@@ -17,13 +17,15 @@ const (
 	defaultGeographyOrders = 5000
 	maxGeographyOrders     = 10000
 	geographyPageSize      = 500
+
+	geographyPagingCaveat = "offset paging is not snapshot-consistent: an order inserted or deleted while the scan runs can shift a page boundary; duplicate entity ids are dropped and any shortfall is reported in unscanned_orders"
 )
 
 // CountryStat is the PII-free per-country aggregate of an order window.
 type CountryStat struct {
-	CountryID string  `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase."`
+	CountryID string  `json:"country_id" jsonschema:"ISO 3166-1 alpha-2 country code, uppercase; UNKNOWN when the order carries no shipping address (virtual or API-created orders)."`
 	Orders    int     `json:"orders" jsonschema:"Orders that matched."`
-	Revenue   float64 `json:"revenue" jsonschema:"Revenue for this window."`
+	Revenue   float64 `json:"revenue" jsonschema:"Order grand_total revenue in this country for the window."`
 }
 
 // OrderGeography aggregates orders by shipping country over a bounded window.
@@ -42,11 +44,14 @@ type OrderGeography struct {
 	UnscannedOrders int    `json:"unscanned_orders" jsonschema:"Orders that exist but were not read."`
 	// DuplicatesSkipped counts orders returned on more than one page and
 	// dropped, so an unstable page boundary cannot double-count revenue.
-	DuplicatesSkipped int           `json:"duplicates_skipped" jsonschema:"Duplicate rows that were skipped rather than counted twice."`
-	Truncated         bool          `json:"truncated" jsonschema:"True when more records exist than were returned."`
-	TotalOrders       int           `json:"total_orders" jsonschema:"Orders counted in the window."`
-	TotalRevenue      float64       `json:"total_revenue" jsonschema:"Revenue in the window."`
-	Countries         []CountryStat `json:"countries" jsonschema:"Per-country breakdown."`
+	DuplicatesSkipped int  `json:"duplicates_skipped" jsonschema:"Duplicate rows that were skipped rather than counted twice."`
+	Truncated         bool `json:"truncated" jsonschema:"True when more records exist than were returned; the kept orders are the oldest ones, because the scan runs oldest first."`
+	// Paging states how the window was scanned and which end a cap keeps, so a
+	// truncated result can be compared with another report of the same window.
+	Paging       PagingInfo    `json:"paging" jsonschema:"Paging state of the scan, including which end of the window a cap keeps."`
+	TotalOrders  int           `json:"total_orders" jsonschema:"Orders counted in the window."`
+	TotalRevenue float64       `json:"total_revenue" jsonschema:"Order grand_total revenue in the window."`
+	Countries    []CountryStat `json:"countries" jsonschema:"Per-country breakdown."`
 }
 
 // OrderGeography aggregates orders created in [from, to) by the country of their
@@ -80,12 +85,14 @@ func (s *Service) OrderGeography(ctx context.Context, from, to time.Time, maxOrd
 		query.Set("searchCriteria[filter_groups][1][filters][0][field]", "created_at")
 		query.Set("searchCriteria[filter_groups][1][filters][0][value]", to.UTC().Format("2006-01-02 15:04:05"))
 		query.Set("searchCriteria[filter_groups][1][filters][0][condition_type]", "lt")
-		query.Set("searchCriteria[sortOrders][0][field]", "created_at")
-		query.Set("searchCriteria[sortOrders][0][direction]", "desc")
-		// created_at is not unique, so OFFSET paging needs a total order to be
-		// deterministic across pages.
-		query.Set("searchCriteria[sortOrders][1][field]", "entity_id")
-		query.Set("searchCriteria[sortOrders][1][direction]", "asc")
+		// Scan oldest first, exactly like sales.analysis: when max_orders caps the
+		// scan, both tools keep the same end of the window, so two capped reports
+		// of one window stay comparable. created_at is not unique, so OFFSET
+		// paging also needs the entity_id tiebreak to be deterministic.
+		query.Set("searchCriteria[sortOrders][0][field]", reportSortField)
+		query.Set("searchCriteria[sortOrders][0][direction]", reportSortDirection)
+		query.Set("searchCriteria[sortOrders][1][field]", reportSortTiebreak)
+		query.Set("searchCriteria[sortOrders][1][direction]", reportSortDirection)
 		raw, err := s.client.do(ctx, http.MethodGet, "/orders", query, nil)
 		if err != nil {
 			return nil, err
@@ -155,18 +162,42 @@ func (s *Service) OrderGeography(ctx context.Context, from, to time.Time, maxOrd
 	}
 	result.UnscannedOrders = result.TotalAvailable - result.OrdersScanned
 	result.Truncated = result.UnscannedOrders > 0
+	result.Paging = PagingInfo{
+		Method:             analysisPagingMethod,
+		OrderBy:            analysisPagingOrder,
+		SnapshotConsistent: false,
+		DuplicatesSkipped:  duplicatesSkipped,
+		Caveat:             geographyPagingCaveat,
+	}
+	result.TotalRevenue = roundMoney(result.TotalRevenue)
 	result.Countries = make([]CountryStat, 0, len(counts))
 	for _, stat := range counts {
+		stat.Revenue = roundMoney(stat.Revenue)
 		result.Countries = append(result.Countries, *stat)
 	}
 	sortCountryStats(result.Countries)
 	return result, nil
 }
 
+// sortCountryStats orders countries by volume, then revenue, then code.
+//
+// The tie-breaks matter for reproducibility: without them two runs over the same
+// window can list equal-volume countries in a different order, and a diff of two
+// reports shows churn that is not in the data.
 func sortCountryStats(stats []CountryStat) {
 	for i := 1; i < len(stats); i++ {
-		for j := i; j > 0 && stats[j].Orders > stats[j-1].Orders; j-- {
+		for j := i; j > 0 && countryStatLess(stats[j], stats[j-1]); j-- {
 			stats[j], stats[j-1] = stats[j-1], stats[j]
 		}
 	}
+}
+
+func countryStatLess(a, b CountryStat) bool {
+	if a.Orders != b.Orders {
+		return a.Orders > b.Orders
+	}
+	if a.Revenue != b.Revenue {
+		return a.Revenue > b.Revenue
+	}
+	return a.CountryID < b.CountryID
 }

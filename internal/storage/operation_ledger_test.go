@@ -17,6 +17,7 @@ import (
 	"time"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 )
 
@@ -761,5 +762,452 @@ func TestLedgerAmbiguousFailureIsNotRetryable(t *testing.T) {
 	}
 	if applied, err := ledger.Retry(ctx, res.OperationID); applied || err == nil {
 		t.Fatal("Retry re-opened an ambiguously failed operation")
+	}
+}
+
+// swapLedgerClock pins the derived-key window's clock for one test and restores
+// it afterwards, so a window boundary is a step instead of a sleep.
+func swapLedgerClock(t *testing.T, at time.Time) *time.Time {
+	t.Helper()
+	previous := ledgerClock
+	now := at
+	ledgerClock = func() time.Time { return now }
+	t.Cleanup(func() { ledgerClock = previous })
+	return &now
+}
+
+// derivedIntent builds an Operation whose key the gateway would have derived for
+// these arguments (the caller supplied none).
+func derivedIntent(t *testing.T, instance string, args json.RawMessage) Operation {
+	t.Helper()
+	hash, err := ArgsHash(args)
+	if err != nil {
+		t.Fatalf("ArgsHash: %v", err)
+	}
+	op := intent(t, instance, DeriveKey("agent-1", hash), args)
+	return op
+}
+
+// INT-12: a derived key deduplicates inside its window and stops afterwards. The
+// same arguments a window later are a new operation, not a permanent no-op — an
+// ERP that re-sends an order, or a customer who buys the same item twice, must not
+// be silently swallowed.
+func TestDerivedKeyDeduplicatesOnlyInsideItsWindow(t *testing.T) {
+	ledger, _, instance := ledgerFixture(t, "derived-window")
+	ctx := context.Background()
+	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	clock := swapLedgerClock(t, start)
+
+	args := json.RawMessage(`{"sku":"24-MB01","qty":1}`)
+	op := derivedIntent(t, instance, args)
+
+	id, exec := mustProceed(t, ledger, ctx, op)
+	if applied, err := ledger.Succeed(ctx, id, exec.Fence, "order:1", json.RawMessage(`{"order_id":1}`)); err != nil || !applied {
+		t.Fatalf("Succeed: applied=%v err=%v", applied, err)
+	}
+
+	// Same window: the double submit replays instead of writing twice.
+	replay, err := ledger.Begin(ctx, derivedIntent(t, instance, args))
+	if err != nil {
+		t.Fatalf("Begin in window: %v", err)
+	}
+	if replay.Decision != DecisionReplay || !replay.Replayed || replay.OperationID != id {
+		t.Fatalf("in-window begin = %+v, want a replay of %s", replay, id)
+	}
+
+	// Next window: a new operation. This is the defect INT-12 reported: the second
+	// legitimate order used to come back as replayed:true and never reach Magento.
+	*clock = start.Add(DerivedKeyWindow + time.Second)
+	next, err := ledger.Begin(ctx, derivedIntent(t, instance, args))
+	if err != nil {
+		t.Fatalf("Begin next window: %v", err)
+	}
+	if next.Decision != DecisionProceed || next.OperationID == id {
+		t.Fatalf("next-window begin = %+v, want a new operation", next)
+	}
+	page, err := ledger.List(ctx, OperationFilter{InstanceID: instance})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if page.Total != 2 {
+		t.Fatalf("operations = %d, want 2 (one per window)", page.Total)
+	}
+}
+
+// A caller-supplied key keeps exactly-once semantics across windows: the window is
+// a property of derived keys, not of keys in general.
+func TestExplicitKeyIsNotWindowed(t *testing.T) {
+	ledger, _, instance := ledgerFixture(t, "explicit-key")
+	ctx := context.Background()
+	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	clock := swapLedgerClock(t, start)
+
+	args := json.RawMessage(`{"amount":5}`)
+	op := intent(t, instance, "caller-key-1", args)
+	id, exec := mustProceed(t, ledger, ctx, op)
+	if applied, err := ledger.Succeed(ctx, id, exec.Fence, "ref", nil); err != nil || !applied {
+		t.Fatalf("Succeed: applied=%v err=%v", applied, err)
+	}
+	*clock = start.Add(24 * time.Hour)
+	replay, err := ledger.Begin(ctx, intent(t, instance, "caller-key-1", args))
+	if err != nil {
+		t.Fatalf("Begin a day later: %v", err)
+	}
+	if replay.Decision != DecisionReplay || replay.OperationID != id {
+		t.Fatalf("begin = %+v, want the same replay", replay)
+	}
+}
+
+// INT-12 / FIN-09: a proven failure must not hold a derived key hostage. The
+// recorded failure used to answer the caller's retry with "operation previously
+// failed", so a local rejection or a 400 poisoned the key for good.
+func TestFailedAttemptReleasesDerivedKey(t *testing.T) {
+	ledger, _, instance := ledgerFixture(t, "derived-release")
+	ctx := context.Background()
+	swapLedgerClock(t, time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC))
+
+	args := json.RawMessage(`{"order_id":9}`)
+	id, exec := mustProceed(t, ledger, ctx, derivedIntent(t, instance, args))
+	if applied, err := ledger.Fail(ctx, id, exec.Fence, "validation_failed"); err != nil || !applied {
+		t.Fatalf("Fail: applied=%v err=%v", applied, err)
+	}
+	failed, err := ledger.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if failed.State != OpFailed || !strings.Contains(failed.IdempotencyKey, ":released:") {
+		t.Fatalf("state=%s key=%q, want failed with a released key", failed.State, failed.IdempotencyKey)
+	}
+
+	// The same arguments in the same window now start a new attempt instead of
+	// being refused with the recorded failure.
+	retry, err := ledger.Begin(ctx, derivedIntent(t, instance, args))
+	if err != nil {
+		t.Fatalf("Begin after failure: %v", err)
+	}
+	if retry.Decision != DecisionProceed || retry.OperationID == id {
+		t.Fatalf("begin after failure = %+v, want a fresh attempt", retry)
+	}
+	// The failed row is still evidence: it was renamed, not deleted.
+	if _, err := ledger.Get(ctx, id); err != nil {
+		t.Fatalf("failed row disappeared: %v", err)
+	}
+}
+
+// An explicit key keeps its failure: the caller asked for exactly-once, and a
+// silent second attempt is exactly what the recorded failure is there to prevent.
+func TestExplicitKeyIsNotReleasedOnFailure(t *testing.T) {
+	ledger, _, instance := ledgerFixture(t, "explicit-release")
+	ctx := context.Background()
+	args := json.RawMessage(`{"order_id":9}`)
+	id, exec := mustProceed(t, ledger, ctx, intent(t, instance, "caller-key-2", args))
+	if applied, err := ledger.Fail(ctx, id, exec.Fence, "validation_failed"); err != nil || !applied {
+		t.Fatalf("Fail: applied=%v err=%v", applied, err)
+	}
+	rec, err := ledger.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if strings.Contains(rec.IdempotencyKey, ":released:") {
+		t.Fatalf("explicit key %q was released; exactly-once was the caller's promise", rec.IdempotencyKey)
+	}
+	again, err := ledger.Begin(ctx, intent(t, instance, "caller-key-2", args))
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if again.Decision != DecisionRetry {
+		t.Fatalf("decision = %s, want retry (the recorded failure)", again.Decision)
+	}
+}
+
+// INT-02: a replay must be visible in the recorded result itself, not only in the
+// text fallback, so an agent reading structuredContent can tell a replay from a
+// second write.
+func TestReplayResultCarriesTheReplayedMarker(t *testing.T) {
+	ledger, _, instance := ledgerFixture(t, "replay-marker")
+	ctx := context.Background()
+	args := json.RawMessage(`{"skus":["24-MB01"],"status":1}`)
+	id, exec := mustProceed(t, ledger, ctx, intent(t, instance, "key-marker", args))
+	// The tool's own result carries no replay marker: the ledger adds it.
+	if applied, err := ledger.Succeed(ctx, id, exec.Fence, "ref",
+		json.RawMessage(`{"total":1,"updated":1,"failed":0}`)); err != nil || !applied {
+		t.Fatalf("Succeed: applied=%v err=%v", applied, err)
+	}
+	replay, err := ledger.Begin(ctx, intent(t, instance, "key-marker", args))
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if replay.Decision != DecisionReplay {
+		t.Fatalf("decision = %s, want replay", replay.Decision)
+	}
+	var recorded map[string]any
+	if err := json.Unmarshal(replay.Result, &recorded); err != nil {
+		t.Fatalf("result %s: %v", replay.Result, err)
+	}
+	if recorded["replayed"] != true {
+		t.Fatalf("recorded result = %s, want replayed:true in the payload", replay.Result)
+	}
+	if recorded["updated"] != float64(1) {
+		t.Fatalf("recorded result = %s, the original payload must survive", replay.Result)
+	}
+	// Polling reports the operation, not a replay: the marker belongs to the
+	// replayed response, and a polled row says "succeeded" instead.
+	rec, err := ledger.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.State != OpSucceeded {
+		t.Fatalf("state = %s, want succeeded", rec.State)
+	}
+	var polled map[string]any
+	if err := json.Unmarshal(rec.Result, &polled); err != nil {
+		t.Fatalf("recorded result %s: %v", rec.Result, err)
+	}
+	if _, ok := polled["replayed"]; ok {
+		t.Fatalf("polled result = %s, the replay marker must not be written into the record", rec.Result)
+	}
+}
+
+// A recorded result that is not a JSON object has nowhere to put the marker; the
+// ledger must not mangle it.
+func TestReplayMarkerLeavesNonObjectResultsAlone(t *testing.T) {
+	for _, tc := range []struct{ name, result string }{
+		{name: "null", result: `null`},
+		{name: "array", result: `[1,2]`},
+		{name: "scalar", result: `"42"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := markReplayed(json.RawMessage(tc.result))
+			if string(got) != tc.result {
+				t.Fatalf("markReplayed(%s) = %s, want it untouched", tc.result, got)
+			}
+		})
+	}
+}
+
+// escalateUnknown drives one operation to the state the reconciler leaves it in
+// after it gives up: unknown, escalated, never reconcilable again.
+func escalateUnknown(t *testing.T, ledger *OperationLedger, store *Store, ctx context.Context, instance, key string) string {
+	t.Helper()
+	id, exec := mustProceed(t, ledger, ctx, intent(t, instance, key, json.RawMessage(`{"amount":3}`)))
+	if applied, err := ledger.Unknown(ctx, id, exec.Fence, "upstream_timeout", time.Minute); err != nil || !applied {
+		t.Fatalf("Unknown: applied=%v err=%v", applied, err)
+	}
+	makeDue(t, store, id)
+	rec, applied, err := ledger.ClaimReconcilable(ctx, time.Minute)
+	if err != nil || !applied || rec == nil || rec.OperationID != id {
+		t.Fatalf("ClaimReconcilable: rec=%v applied=%v err=%v", rec, applied, err)
+	}
+	if applied, err := ledger.Escalate(ctx, id, rec.Fence, "attempts exhausted"); err != nil || !applied {
+		t.Fatalf("Escalate: applied=%v err=%v", applied, err)
+	}
+	return id
+}
+
+// INT-07: the rows the reconciler has given up on must be findable, and the query
+// must say honestly how many there are.
+func TestListFindsOperationsThatNeedAttention(t *testing.T) {
+	ledger, store, instance := ledgerFixture(t, "attention")
+	ctx := context.Background()
+
+	escalated := escalateUnknown(t, ledger, store, ctx, instance, "key-escalated")
+
+	// A plain unknown row: the reconciler still owns it, so it is not attention.
+	unknown, exec := mustProceed(t, ledger, ctx, intent(t, instance, "key-unknown", json.RawMessage(`{"amount":4}`)))
+	if applied, err := ledger.Unknown(ctx, unknown, exec.Fence, "upstream_timeout", time.Hour); err != nil || !applied {
+		t.Fatalf("Unknown: applied=%v err=%v", applied, err)
+	}
+	// A succeeded row: nothing to do.
+	done, doneExec := mustProceed(t, ledger, ctx, intent(t, instance, "key-done", json.RawMessage(`{"amount":5}`)))
+	if applied, err := ledger.Succeed(ctx, done, doneExec.Fence, "ref", nil); err != nil || !applied {
+		t.Fatalf("Succeed: applied=%v err=%v", applied, err)
+	}
+
+	attention, err := ledger.List(ctx, OperationFilter{InstanceID: instance, NeedsAttention: true})
+	if err != nil {
+		t.Fatalf("List needs_attention: %v", err)
+	}
+	if len(attention.Operations) != 1 || attention.Operations[0].ID != escalated {
+		t.Fatalf("needs_attention = %+v, want only %s", attention.Operations, escalated)
+	}
+	rec := attention.Operations[0]
+	if !rec.NeedsAttention || rec.ErrorCode != EscalatedErrorCode {
+		t.Fatalf("record = %+v, want the escalated row", rec)
+	}
+	if rec.ReconcileAfter != nil {
+		t.Fatalf("reconcile_after = %v, want nil for an escalated row: 'never again' must not read as a date", rec.ReconcileAfter)
+	}
+
+	unknowns, err := ledger.List(ctx, OperationFilter{InstanceID: instance, State: OpUnknown})
+	if err != nil {
+		t.Fatalf("List unknown: %v", err)
+	}
+	if unknowns.Total != 2 || len(unknowns.Operations) != 2 {
+		t.Fatalf("unknown rows = %d/%d, want 2", unknowns.Total, len(unknowns.Operations))
+	}
+	for _, row := range unknowns.Operations {
+		if row.ID == escalated && !row.NeedsAttention {
+			t.Fatal("the escalated row lost its needs_attention flag when listed by state")
+		}
+	}
+
+	// Pagination is honest: the total is the match count, not the page size.
+	first, err := ledger.List(ctx, OperationFilter{InstanceID: instance, Limit: 1})
+	if err != nil {
+		t.Fatalf("List page 1: %v", err)
+	}
+	if first.Total != 3 || len(first.Operations) != 1 || !first.Truncated || first.NextCursor == "" {
+		t.Fatalf("page 1 = total %d rows %d truncated %v cursor %q, want 3/1/true/non-empty",
+			first.Total, len(first.Operations), first.Truncated, first.NextCursor)
+	}
+	second, err := ledger.List(ctx, OperationFilter{InstanceID: instance, Limit: 2, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatalf("List page 2: %v", err)
+	}
+	if len(second.Operations) != 2 || second.Truncated {
+		t.Fatalf("page 2 = %d rows truncated=%v, want the remaining 2 and no truncation",
+			len(second.Operations), second.Truncated)
+	}
+	seen := map[string]bool{first.Operations[0].ID: true}
+	for _, row := range second.Operations {
+		if seen[row.ID] {
+			t.Fatalf("row %s appeared on both pages", row.ID)
+		}
+		seen[row.ID] = true
+	}
+	if len(seen) != 3 {
+		t.Fatalf("pages covered %d rows, want 3", len(seen))
+	}
+
+	if _, err := ledger.List(ctx, OperationFilter{Cursor: "not-a-cursor"}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("bad cursor error = %v, want invalid_argument", err)
+	}
+}
+
+// INT-07: an escalated row has an exit, and the exit records what a human found
+// rather than pretending the mutation never happened.
+func TestDisposeRecordsTheJudgement(t *testing.T) {
+	t.Run("applied", func(t *testing.T) {
+		ledger, store, instance := ledgerFixture(t, "dispose-applied")
+		ctx := context.Background()
+		id := escalateUnknown(t, ledger, store, ctx, instance, "key-applied")
+		event := &audit.Event{Subject: "operator@test", IdentityClass: "human",
+			Tool: "magento.operation.dispose", Scope: "dispose", Phase: "outcome",
+			Decision: "allow", State: "succeeded"}
+		applied, err := ledger.Dispose(ctx, id, DisposedApplied, "read /V1/orders/1042: the order exists", "order:1042", event)
+		if err != nil || !applied {
+			t.Fatalf("Dispose: applied=%v err=%v", applied, err)
+		}
+		rec, err := ledger.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if rec.State != OpSucceeded || rec.ErrorCode != disposedAppliedCode {
+			t.Fatalf("state=%s code=%s, want succeeded/%s", rec.State, rec.ErrorCode, disposedAppliedCode)
+		}
+		if rec.UpstreamRef != "order:1042" || rec.FinishedAt == nil || rec.NeedsAttention {
+			t.Fatalf("record = %+v, want the upstream ref, a finish time and no attention flag", rec)
+		}
+		history, err := ledger.Transitions(ctx, id)
+		if err != nil {
+			t.Fatalf("Transitions: %v", err)
+		}
+		last := history[len(history)-1]
+		if last.ToState != OpSucceeded || !strings.Contains(last.Reason, "read /V1/orders/1042") {
+			t.Fatalf("last transition = %+v, want the operator's note in the reason", last)
+		}
+	})
+
+	t.Run("not_applied", func(t *testing.T) {
+		ledger, store, instance := ledgerFixture(t, "dispose-not-applied")
+		ctx := context.Background()
+		id := escalateUnknown(t, ledger, store, ctx, instance, "key-not-applied")
+		applied, err := ledger.Dispose(ctx, id, DisposedNotApplied, "read /V1/orders/1043: no such order", "", nil)
+		if err != nil || !applied {
+			t.Fatalf("Dispose: applied=%v err=%v", applied, err)
+		}
+		rec, err := ledger.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if rec.State != OpFailed || rec.ErrorCode != disposedNotAppliedCode {
+			t.Fatalf("state=%s code=%s, want failed/%s", rec.State, rec.ErrorCode, disposedNotAppliedCode)
+		}
+	})
+
+	t.Run("requeue", func(t *testing.T) {
+		ledger, store, instance := ledgerFixture(t, "dispose-requeue")
+		ctx := context.Background()
+		id := escalateUnknown(t, ledger, store, ctx, instance, "key-requeue")
+		before, err := ledger.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if before.ReconcileCount == 0 {
+			t.Fatal("fixture must have consumed reconciliation attempts")
+		}
+		applied, err := ledger.Dispose(ctx, id, DisposedRequeue, "upstream read timed out; try again", "", nil)
+		if err != nil || !applied {
+			t.Fatalf("Dispose: applied=%v err=%v", applied, err)
+		}
+		rec, err := ledger.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if rec.State != OpUnknown || rec.NeedsAttention || rec.ReconcileCount != 0 || rec.ErrorCode != "" {
+			t.Fatalf("record = %+v, want unknown, no attention flag, a reset budget and no error code", rec)
+		}
+		// The reconciler can claim it again instead of the row sitting at infinity.
+		claimed, applied, err := ledger.ClaimReconcilable(ctx, time.Minute)
+		if err != nil || !applied || claimed == nil || claimed.OperationID != id {
+			t.Fatalf("ClaimReconcilable after requeue: rec=%v applied=%v err=%v", claimed, applied, err)
+		}
+	})
+}
+
+// A disposition is only meaningful for an unknown outcome: anything else either
+// belongs to a live attempt or is already decided.
+func TestDisposeRefusesNonUnknownStates(t *testing.T) {
+	ledger, _, instance := ledgerFixture(t, "dispose-refuse")
+	ctx := context.Background()
+
+	running, exec := mustProceed(t, ledger, ctx, intent(t, instance, "key-running", json.RawMessage(`{"amount":1}`)))
+	_ = exec
+	if _, err := ledger.Dispose(ctx, running, DisposedApplied, "checked", "", nil); errs.CodeOf(err) != errs.CodeConflict {
+		t.Fatalf("dispose executing: err = %v, want conflict", err)
+	}
+
+	done, doneExec := mustProceed(t, ledger, ctx, intent(t, instance, "key-done-2", json.RawMessage(`{"amount":2}`)))
+	if applied, err := ledger.Succeed(ctx, done, doneExec.Fence, "ref", nil); err != nil || !applied {
+		t.Fatalf("Succeed: applied=%v err=%v", applied, err)
+	}
+	if _, err := ledger.Dispose(ctx, done, DisposedNotApplied, "checked", "", nil); errs.CodeOf(err) != errs.CodeConflict {
+		t.Fatalf("dispose succeeded: err = %v, want conflict", err)
+	}
+}
+
+// The judgement and the note are the point: without them a disposition is the
+// "assume it never happened" shortcut this API exists to prevent.
+func TestDisposeRequiresJudgementAndNote(t *testing.T) {
+	ledger, store, instance := ledgerFixture(t, "dispose-validation")
+	ctx := context.Background()
+	id := escalateUnknown(t, ledger, store, ctx, instance, "key-validation")
+
+	if _, err := ledger.Dispose(ctx, id, "whatever", "note", "", nil); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("bad judgement: err = %v, want invalid_argument", err)
+	}
+	if _, err := ledger.Dispose(ctx, id, DisposedApplied, "   ", "", nil); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("empty note: err = %v, want invalid_argument", err)
+	}
+	if _, err := ledger.Dispose(ctx, "not-a-uuid", DisposedApplied, "note", "", nil); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("bad id: err = %v, want invalid_argument", err)
+	}
+	// None of the rejected calls may have moved the row.
+	rec, err := ledger.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.State != OpUnknown || !rec.NeedsAttention {
+		t.Fatalf("record = %+v, want it untouched and still needing attention", rec)
 	}
 }

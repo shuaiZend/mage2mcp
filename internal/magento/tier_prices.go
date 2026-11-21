@@ -47,12 +47,13 @@ func (s *Service) TierPrices(ctx context.Context, sku string) ([]TierPrice, erro
 		}
 		return s.tierPricesFromProduct(ctx, sku)
 	}
-	var prices []TierPrice
-	if err := json.Unmarshal(raw, &prices); err != nil {
+	var upstream []tierPriceUpstream
+	if err := json.Unmarshal(raw, &upstream); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable tier-price payload").WithCause(err)
 	}
-	if prices == nil {
-		prices = []TierPrice{}
+	prices := make([]TierPrice, 0, len(upstream))
+	for _, item := range upstream {
+		prices = append(prices, item.tierPrice())
 	}
 	return prices, nil
 }
@@ -65,38 +66,55 @@ func (s *Service) tierPricesFromProduct(ctx context.Context, sku string) ([]Tier
 		return nil, err
 	}
 	var payload struct {
-		TierPrices []tierPriceFallback `json:"tier_prices"`
+		TierPrices []tierPriceUpstream `json:"tier_prices"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable product payload").WithCause(err)
 	}
 	prices := make([]TierPrice, 0, len(payload.TierPrices))
 	for _, item := range payload.TierPrices {
-		group := item.CustomerGroup
-		if group == "" {
-			group = strconv.Itoa(item.CustomerGroupID)
-		}
-		quantity := item.Quantity
-		if quantity == 0 {
-			quantity = item.Qty
-		}
-		prices = append(prices, TierPrice{
-			SKU: item.SKU, Price: item.Price, PriceType: item.PriceType,
-			WebsiteID: item.WebsiteID, CustomerGroup: group, Quantity: quantity,
-		})
+		prices = append(prices, item.tierPrice())
 	}
 	return prices, nil
 }
 
-type tierPriceFallback struct {
+// tierPriceUpstream is Magento's tier-price shape across both routes it is read
+// from. The storage route (GET /products/tier-prices) answers with the write
+// interface's field names (price/price_type/customer_group/qty); the product
+// resource embeds the same rows as customer_group_id/qty/value. Reading the
+// product resource with the write field names made every price read 0 and every
+// SKU empty (U-08), so both spellings are decoded and normalised here.
+type tierPriceUpstream struct {
 	SKU             string  `json:"sku" jsonschema:"Product SKU."`
 	Price           float64 `json:"price"`
+	Value           float64 `json:"value"`
 	PriceType       string  `json:"price_type"`
 	WebsiteID       int     `json:"website_id" jsonschema:"Website the entity belongs to."`
 	CustomerGroupID int     `json:"customer_group_id"`
 	CustomerGroup   string  `json:"customer_group"`
 	Quantity        float64 `json:"quantity"`
 	Qty             float64 `json:"qty" jsonschema:"Quantity at this source."`
+}
+
+// tierPrice normalises one upstream row. value wins when the price field is
+// absent (the product-resource shape); qty is the quantity field there.
+func (u tierPriceUpstream) tierPrice() TierPrice {
+	price := u.Price
+	if price == 0 && u.Value != 0 {
+		price = u.Value
+	}
+	quantity := u.Quantity
+	if quantity == 0 {
+		quantity = u.Qty
+	}
+	group := u.CustomerGroup
+	if group == "" {
+		group = strconv.Itoa(u.CustomerGroupID)
+	}
+	return TierPrice{
+		SKU: u.SKU, Price: price, PriceType: u.PriceType,
+		WebsiteID: u.WebsiteID, CustomerGroup: group, Quantity: quantity,
+	}
 }
 
 // SetTierPrices replaces the tier prices of one SKU with POST
@@ -119,8 +137,17 @@ func (s *Service) SetTierPrices(ctx context.Context, sku string, prices []TierPr
 			CustomerGroup: price.CustomerGroup, Quantity: price.Quantity,
 		})
 	}
-	_, err := s.client.do(ctx, http.MethodPost, "/products/tier-prices", nil, tierPriceSetBody{Prices: payload})
-	return err
+	raw, err := s.client.do(ctx, http.MethodPost, "/products/tier-prices", nil, tierPriceSetBody{Prices: payload})
+	if err != nil {
+		return err
+	}
+	// Magento answers this route with HTTP 200 even when the write failed,
+	// carrying the reason in a JSON array of messages. Trusting the status code
+	// reported set:true with zero rows written (U-07).
+	if err := decodeUpstreamBusinessError(http.MethodPost, "/products/tier-prices", raw, s.client.StoreCode); err != nil {
+		return err
+	}
+	return nil
 }
 
 type tierPriceSetBody struct {

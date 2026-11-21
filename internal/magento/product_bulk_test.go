@@ -4,6 +4,7 @@ package magento
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -123,5 +124,37 @@ func TestBulkUpdateProductsValidation(t *testing.T) {
 	}
 	if _, err := svc.BulkUpdateProducts(ctx, tooMany, UpdateProductInput{Status: &status}); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("ceiling err = %v", err)
+	}
+}
+
+// INT-02: a replayed bulk update must be visible in structuredContent, not only
+// in the text fallback. The ledger injects the marker into the recorded result;
+// this pins that the result type can carry it, so a replayed call is
+// distinguishable from a fresh one at the JSON boundary.
+func TestBulkUpdateResultCarriesTheReplayMarker(t *testing.T) {
+	fresh := BulkUpdateResult{Total: 1, Updated: 1, Rows: []BulkUpdateRow{{SKU: "SKU-1", Status: "updated"}}}
+	raw, err := json.Marshal(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "replayed") {
+		t.Fatalf("a fresh result must not claim to be a replay: %s", raw)
+	}
+
+	replayed := fresh
+	replayed.Replayed = true
+	raw, err = json.Marshal(replayed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["replayed"] != true {
+		t.Fatalf("replayed result = %s, want replayed:true in structuredContent", raw)
+	}
+	if decoded["updated"] != float64(1) {
+		t.Fatalf("replayed result = %s, the counts must survive the marker", raw)
 	}
 }

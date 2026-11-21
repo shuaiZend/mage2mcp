@@ -5,9 +5,11 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
@@ -120,5 +122,77 @@ func TestTierPricesFallbackToProduct(t *testing.T) {
 	}
 	if len(prices) != 1 || prices[0].Price != 8.5 || prices[0].Quantity != 10 || prices[0].CustomerGroup != "0" {
 		t.Fatalf("prices = %+v", prices)
+	}
+}
+
+// U-08: the product resource embeds tier prices as {customer_group_id, qty,
+// value}. Reading them with the write interface's field names (price/quantity)
+// reported price 0 and an empty sku for every row. Reverting the normalisation
+// makes this test fail.
+func TestTierPricesReadsProductResourceFieldNames(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/default/V1/products/tier-prices":
+			http.NotFound(w, r)
+		case "/rest/default/V1/products/SKU-1":
+			_, _ = w.Write([]byte(`{"id":1,"sku":"SKU-1","tier_prices":[
+				{"customer_group_id":0,"qty":3,"value":30},
+				{"customer_group_id":2,"qty":5,"value":28.5}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	prices, err := testService(t, ts.URL).TierPrices(context.Background(), "SKU-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prices) != 2 {
+		t.Fatalf("prices = %+v", prices)
+	}
+	if prices[0].Price != 30 || prices[0].Quantity != 3 || prices[0].CustomerGroup != "0" {
+		t.Fatalf("first row = %+v, want price 30 qty 3 group 0", prices[0])
+	}
+	if prices[1].Price != 28.5 || prices[1].Quantity != 5 || prices[1].CustomerGroup != "2" {
+		t.Fatalf("second row = %+v, want price 28.5 qty 5 group 2", prices[1])
+	}
+}
+
+// U-07: Magento answers POST /products/tier-prices with HTTP 200 even when the
+// write failed, carrying the reason in a JSON array. Reporting set:true with zero
+// rows written is the defect; reverting the decode makes this test fail.
+func TestSetTierPricesRejectsBusinessErrorIn200(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"message":"The product that was requested doesn't exist. Verify the product and try again."}]`))
+	}))
+	defer ts.Close()
+	err := testService(t, ts.URL).SetTierPrices(context.Background(), "SKU-1", []TierPrice{
+		{Price: 8.5, WebsiteID: 0, CustomerGroup: "0", Quantity: 10},
+	})
+	if err == nil {
+		t.Fatal("a 200 business error array must not be reported as success")
+	}
+	if got := errs.CodeOf(err); got != errs.CodeValidationFailed {
+		t.Fatalf("code = %s, want validation_failed", got)
+	}
+	var e *errs.Error
+	if errors.As(err, &e) && !strings.Contains(e.Details["upstream_message"], "doesn't exist") {
+		t.Fatalf("details = %v, want the upstream reason", e.Details)
+	}
+}
+
+// A successful write (Magento answers true) must still succeed.
+func TestSetTierPricesAcceptsBooleanSuccess(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`true`))
+	}))
+	defer ts.Close()
+	if err := testService(t, ts.URL).SetTierPrices(context.Background(), "SKU-1", []TierPrice{
+		{Price: 8.5, WebsiteID: 0, CustomerGroup: "0", Quantity: 10},
+	}); err != nil {
+		t.Fatalf("a boolean success body must not fail: %v", err)
 	}
 }

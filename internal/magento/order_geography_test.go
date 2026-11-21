@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,5 +145,107 @@ func TestOrderGeographyDropsDuplicateOrders(t *testing.T) {
 	}
 	if geo.DuplicatesSkipped != 1 {
 		t.Fatalf("duplicates_skipped = %d, want 1", geo.DuplicatesSkipped)
+	}
+}
+
+// --- report-caliber fixes (t11 / G6) -------------------------------------
+
+// TestOrderGeographyScansOldestFirst pins the retention end shared with
+// sales.analysis: both scans run oldest first, so a max_orders cap keeps the
+// same orders in both tools and two capped reports of one window stay
+// comparable. It also pins the paging metadata that tells a caller which end was
+// kept.
+func TestOrderGeographyScansOldestFirst(t *testing.T) {
+	var sorts []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		sorts = append(sorts,
+			q.Get("searchCriteria[sortOrders][0][field]")+" "+q.Get("searchCriteria[sortOrders][0][direction]"),
+			q.Get("searchCriteria[sortOrders][1][field]")+" "+q.Get("searchCriteria[sortOrders][1][direction]"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":3,"items":[
+			{"entity_id":1,"grand_total":10,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"PL"}}}]}},
+			{"entity_id":2,"grand_total":20,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"PL"}}}]}},
+			{"entity_id":3,"grand_total":30,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"PL"}}}]}}
+		]}`))
+	}))
+	defer ts.Close()
+	from, _ := time.Parse("2006-01-02", "2026-10-21")
+	to, _ := time.Parse("2006-01-02", "2026-11-20")
+	geo, err := testService(t, ts.URL).OrderGeography(context.Background(), from, to, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sorts) < 2 || sorts[0] != "created_at asc" || sorts[1] != "entity_id asc" {
+		t.Fatalf("sort orders = %v, want created_at asc + entity_id asc (oldest first, like sales.analysis)", sorts)
+	}
+	// The cap keeps the first (oldest) row; a descending scan would keep 30.
+	if geo.TotalRevenue != 10 {
+		t.Fatalf("total_revenue = %v, want 10 (the oldest order, not the newest)", geo.TotalRevenue)
+	}
+	if !geo.Truncated || geo.UnscannedOrders != 2 {
+		t.Fatalf("truncated = %v unscanned = %d", geo.Truncated, geo.UnscannedOrders)
+	}
+	if geo.Paging.Method != analysisPagingMethod || !strings.HasPrefix(geo.Paging.Caveat, "offset paging") {
+		t.Fatalf("paging = %+v, want the same method and a caveat as sales.analysis", geo.Paging)
+	}
+	if geo.Paging.OrderBy != analysisPagingOrder {
+		t.Fatalf("paging.order_by = %q, want %q (one shared retention end)", geo.Paging.OrderBy, analysisPagingOrder)
+	}
+	if geo.Paging.SnapshotConsistent {
+		t.Fatal("offset paging must not claim snapshot consistency")
+	}
+}
+
+// TestOrderGeographyLabelsMissingCountry proves the UNKNOWN sentinel is produced
+// for an order without a shipping address, which is what the country_id
+// description promises callers.
+func TestOrderGeographyLabelsMissingCountry(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":2,"items":[
+			{"entity_id":1,"grand_total":10,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"PL"}}}]}},
+			{"entity_id":2,"grand_total":5,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":null}}]}}
+		]}`))
+	}))
+	defer ts.Close()
+	from, _ := time.Parse("2006-01-02", "2026-10-21")
+	to, _ := time.Parse("2006-01-02", "2026-11-20")
+	geo, err := testService(t, ts.URL).OrderGeography(context.Background(), from, to, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, ok := geo.Countries[0], false
+	for _, country := range geo.Countries {
+		if country.CountryID == "UNKNOWN" {
+			unknown, ok = country, true
+		}
+	}
+	if !ok || unknown.Revenue != 5 || unknown.Orders != 1 {
+		t.Fatalf("countries = %+v, want an UNKNOWN bucket with revenue 5", geo.Countries)
+	}
+}
+
+// TestOrderGeographyRoundsMoneyToCents pins the money serialization.
+func TestOrderGeographyRoundsMoneyToCents(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":2,"items":[
+			{"entity_id":1,"grand_total":0.1,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"PL"}}}]}},
+			{"entity_id":2,"grand_total":0.2,"extension_attributes":{"shipping_assignments":[{"shipping":{"address":{"country_id":"PL"}}}]}}
+		]}`))
+	}))
+	defer ts.Close()
+	from, _ := time.Parse("2006-01-02", "2026-10-21")
+	to, _ := time.Parse("2006-01-02", "2026-11-20")
+	geo, err := testService(t, ts.URL).OrderGeography(context.Background(), from, to, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if geo.TotalRevenue != 0.3 {
+		t.Fatalf("total_revenue = %v, want 0.3 with no floating-point tail", geo.TotalRevenue)
+	}
+	if geo.Countries[0].Revenue != 0.3 {
+		t.Fatalf("country revenue = %v, want 0.3", geo.Countries[0].Revenue)
 	}
 }

@@ -66,7 +66,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	// Resolve the approver before opening the store: with authentication enabled
 	// the identity comes from the verified token, so -as is optional and a
 	// missing token is reported as such (not as a missing -as flag).
-	var approver string
+	var approver, approverClass string
 	if command == "approve" {
 		verifier, err := adminVerifierForRun(cfg)
 		if err != nil {
@@ -76,7 +76,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		approver, err = resolveApprover(context.Background(), verifier, token, as, stderr)
+		approver, approverClass, err = resolveApprover(context.Background(), verifier, token, as, stderr)
 		if err != nil {
 			return err
 		}
@@ -118,7 +118,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if err := svc.Approve(ctx, id, approver); err != nil {
+		// U-76: the verified identity class decides whether this identity may be an
+		// approver of record at all. A service/agent token is refused here.
+		if err := svc.ApproveAs(ctx, id, approver, approverClass); err != nil {
 			return err
 		}
 		// SEC-04: an approval used to leave no audit trail at all — only a hash on
@@ -228,25 +230,27 @@ func readApproverToken(path string) (string, error) {
 // With a verifier the subject is taken from the verified token and the -as flag
 // may not contradict it. Without one the identity is whatever the operator typed,
 // and that is stated on stderr rather than silently accepted as fact.
-func resolveApprover(ctx context.Context, verifier tokenVerifier, token, as string, warn io.Writer) (string, error) {
+func resolveApprover(ctx context.Context, verifier tokenVerifier, token, as string, warn io.Writer) (string, string, error) {
 	if verifier != nil {
 		if token == "" {
-			return "", fmt.Errorf("authentication is enabled, so an approval needs the approver's token: set MAGE2MCP_ADMIN_TOKEN or pass -token-file; the approver identity is taken from the verified token's subject")
+			return "", "", fmt.Errorf("authentication is enabled, so an approval needs the approver's token: set MAGE2MCP_ADMIN_TOKEN or pass -token-file; the approver identity is taken from the verified token's subject")
 		}
 		identity, err := verifier.Verify(ctx, token)
 		if err != nil {
-			return "", fmt.Errorf("approver token rejected: %w", err)
+			return "", "", fmt.Errorf("approver token rejected: %w", err)
 		}
 		if as != "" && as != identity.Subject {
-			return "", fmt.Errorf("-as %q does not match the verified subject %q; the approver identity comes from the token", as, identity.Subject)
+			return "", "", fmt.Errorf("-as %q does not match the verified subject %q; the approver identity comes from the token", as, identity.Subject)
 		}
-		return identity.Subject, nil
+		return identity.Subject, identity.Class, nil
 	}
 	if as == "" {
-		return "", fmt.Errorf("-as <approver identity> is required")
+		return "", "", fmt.Errorf("-as <approver identity> is required")
 	}
 	if warn != nil {
 		fmt.Fprintf(warn, "warning: authentication is disabled, so %q is a self-asserted approver identity and is not verified\n", as)
 	}
-	return as, nil
+	// No verifier means no class to trust; the identity is self-asserted and the
+	// warning above says so.
+	return as, "", nil
 }

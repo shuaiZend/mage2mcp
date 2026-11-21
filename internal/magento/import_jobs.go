@@ -71,7 +71,7 @@ func RegisterImportJobs(reg *registry.Registry, resolver *Resolver, queue Import
 	}
 	for _, tool := range []registry.Tool{
 		newImportStartTool(resolver, queue),
-		newImportStatusTool(resolver, queue),
+		newImportStatusTool(resolver, queue, batches),
 		newImportCancelTool(resolver, queue),
 		newImportResumeTool(resolver, queue, batches),
 		newImportBatchListTool(resolver, batches),
@@ -107,7 +107,12 @@ type importStartInput struct {
 type importStartOutput struct {
 	JobID  string `json:"job_id" jsonschema:"Import job id, used by import.status and import.batch."`
 	Rows   int    `json:"rows" jsonschema:"Number of rows processed."`
-	Queued bool   `json:"queued" jsonschema:"True when the work was queued rather than executed inline."`
+	Queued bool   `json:"queued" jsonschema:"True when the work is queued rather than executed inline. False when the idempotency key returned a job that had already finished, so nothing new was queued."`
+	// Replayed distinguishes "I queued new work" from "I got the job I asked for
+	// before". Reporting queued:true for a job that already finished makes the
+	// caller poll for a run that will never start again (U-67).
+	Replayed bool   `json:"replayed" jsonschema:"True when the idempotency key matched an existing job that had already left the queue, so this call queued nothing."`
+	State    string `json:"state,omitempty" jsonschema:"State of the returned job when it already existed: queued, running, succeeded, partial, failed or canceled."`
 }
 
 type importStatusInput struct {
@@ -117,6 +122,13 @@ type importStatusInput struct {
 
 type importStatusOutput struct {
 	Job jobs.JobRecord `json:"job" jsonschema:"The import job."`
+	// Batch is the persisted business outcome for this job. It is present when
+	// the batch store is configured and a batch exists; job.state is derived
+	// from it as well as from the job result, so the two tools cannot disagree.
+	Batch *jobs.ImportBatch `json:"batch,omitempty" jsonschema:"The persisted import batch for this job, with its counts and failed rows."`
+	// Report is the job result already parsed, so the caller does not have to
+	// decode job.result a second time (U-68).
+	Report *ImportReport `json:"report,omitempty" jsonschema:"The parsed per-row import report: totals, counts and the bounded failure list."`
 }
 
 type importCancelInput struct {
@@ -163,14 +175,34 @@ func newImportStartTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 				if err != nil {
 					return nil, importStartOutput{}, err
 				}
-				return nil, importStartOutput{JobID: jobID, Rows: rows, Queued: true}, nil
+				out := importStartOutput{JobID: jobID, Rows: rows, Queued: true}
+				// A repeated idempotency key returns the original job id, and the
+				// queue reports it the same way as a fresh insert. A job that is
+				// already terminal therefore cannot be the one this call queued:
+				// say so instead of telling the caller to wait for it.
+				if in.IdempotencyKey != "" {
+					if record, getErr := queue.GetJob(ctx, jobID, in.Instance, callerSubject(ctx)); getErr == nil && record != nil {
+						out.State = record.State
+						if isTerminalJobState(record.State) {
+							out.Replayed, out.Queued = true, false
+						}
+					}
+				}
+				return nil, out, nil
 			})
 		return nil
 	}
 	return t
 }
 
-func newImportStatusTool(resolver *Resolver, queue ImportQueue) registry.Tool {
+// newImportStatusTool builds import.status. The batch reader is optional so the
+// read-only registration path (writes disabled, tools.go) keeps compiling; when
+// it is present, job state is cross-checked against the persisted batch.
+func newImportStatusTool(resolver *Resolver, queue ImportQueue, batchReaders ...ImportBatchReader) registry.Tool {
+	var batches ImportBatchReader
+	if len(batchReaders) > 0 {
+		batches = batchReaders[0]
+	}
 	t := toolMetadata(importStatusToolName, importStatusToolTitle, importStatusToolDescription)
 	t.Capability = "magento.import.read"
 	t.Register = func(srv *mcp.Server) error {
@@ -184,17 +216,57 @@ func newImportStatusTool(resolver *Resolver, queue ImportQueue) registry.Tool {
 					return nil, importStatusOutput{}, err
 				}
 				reported := *record
+				var batch *jobs.ImportBatch
+				if batches != nil {
+					// The batch is the persisted business outcome. The job result is
+					// written separately and can be lost (lease lost on a retry, a
+					// progress write that never got a final result), which used to
+					// leave status reporting "succeeded" for a batch that says
+					// "partial" — two tools disagreeing about the same import.
+					if got, batchErr := batches.GetImportBatchByJob(ctx, in.JobID, in.Instance, callerSubject(ctx)); batchErr == nil {
+						batch = got
+					}
+				}
 				// The queue records execution; a partial import did execute, but
 				// reporting "succeeded" next to a "partial" batch tells the caller
 				// the import was fully applied when it was not.
-				if reported.State == jobs.StateSucceeded && jobs.ResultIsPartial(reported.Result) {
+				if reported.State == jobs.StateSucceeded &&
+					(jobs.ResultIsPartial(reported.Result) || (batch != nil && batch.State == jobs.StatePartial)) {
 					reported.State = jobs.StatePartial
 				}
-				return nil, importStatusOutput{Job: reported}, nil
+				return nil, importStatusOutput{Job: reported, Batch: batch, Report: parseImportReport(reported.Result)}, nil
 			})
 		return nil
 	}
 	return t
+}
+
+// isTerminalJobState reports whether a job has left the queue for good, so a
+// returned job id cannot belong to the call that just enqueued.
+func isTerminalJobState(state string) bool {
+	switch state {
+	case jobs.StateSucceeded, jobs.StatePartial, jobs.StateFailed, jobs.StateCanceled:
+		return true
+	}
+	return false
+}
+
+// parseImportReport decodes a stored job result into the report the caller needs,
+// so it does not have to parse job.result itself (U-68). A result that carries
+// only progress markers, or that is not an import report, yields nil: an
+// all-zero report would read as "nothing imported".
+func parseImportReport(result string) *ImportReport {
+	if result == "" {
+		return nil
+	}
+	var report ImportReport
+	if err := json.Unmarshal([]byte(result), &report); err != nil {
+		return nil
+	}
+	if report.Total == 0 && report.Created == 0 && report.Updated == 0 && report.Skipped == 0 && report.Failed == 0 {
+		return nil
+	}
+	return &report
 }
 
 func newImportCancelTool(resolver *Resolver, queue ImportQueue) registry.Tool {
@@ -260,12 +332,12 @@ const (
 	}, "required": ["instance", "format", "data_base64"], "additionalProperties": false}`
 
 	importStatusSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import job id returned by import.start or import.execute."}
 	}, "required": ["instance", "job_id"], "additionalProperties": false}`
 
 	importCancelSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import job id returned by import.start or import.execute."},
 		"confirmation_id": {"type": "string", "maxLength": 128}
 	}, "required": ["instance", "job_id"], "additionalProperties": false}`
@@ -278,7 +350,7 @@ const (
 	importResumeToolDescription = "Queues a new asynchronous import on the named instance containing only the failed rows of a previous job " +
 		"(from its bounded report). Only the caller that started the original job can resume it, and the new job runs on the same instance. Requires confirmation and a configured database queue; repeated resumes of the same job return the same new job."
 	importResumeSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import job id returned by import.start or import.execute."},
 		"confirmation_id": {"type": "string", "maxLength": 128}
 	}, "required": ["instance", "job_id"], "additionalProperties": false}`
@@ -371,12 +443,12 @@ const (
 	importBatchGetToolDescription = "Returns one asynchronous import batch by id on the named instance with its counts and every failed row. Only the caller that started the owning job can read it. Read-only."
 
 	importBatchListSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
 	}, "required": ["instance"], "additionalProperties": false}`
 
 	importBatchGetSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"batch_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import batch id, as returned in import.batches[].id. It is not the job id; use the job id with import.status."}
 	}, "required": ["instance", "batch_id"], "additionalProperties": false}`
 )

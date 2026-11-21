@@ -305,9 +305,42 @@ func resultFor(err error) *mcp.CallToolResult {
 	}
 	return &mcp.CallToolResult{
 		IsError:           true,
-		Content:           []mcp.Content{&mcp.TextContent{Text: code + ": " + message}},
+		Content:           []mcp.Content{&mcp.TextContent{Text: errorText(code, message, envelope)}},
 		StructuredContent: json.RawMessage(raw),
 	}
+}
+
+// errorText renders the human-readable channel of a tool error.
+//
+// The text channel is all an agent sees when it prints a result, so it has to
+// carry the reason the structured envelope already knows. A schema rejection used
+// to read "invalid_argument: arguments do not match the tool schema" and nothing
+// else, even though details.validation named the exact property and pattern; a
+// denial said "permission denied" without details.reason (U-28). Both details are
+// bounded by the caller, so the text stays bounded too.
+func errorText(code, message string, envelope map[string]any) string {
+	text := code + ": " + message
+	for _, key := range []string{"validation", "reason"} {
+		detail := detailString(envelope["details"], key)
+		if detail == "" {
+			continue
+		}
+		text += " (" + key + ": " + detail + ")"
+	}
+	return text
+}
+
+// detailString reads one detail from either shape an envelope can carry: the
+// taxonomy's map[string]string or a decoded JSON object.
+func detailString(details any, key string) string {
+	switch typed := details.(type) {
+	case map[string]string:
+		return typed[key]
+	case map[string]any:
+		value, _ := typed[key].(string)
+		return value
+	}
+	return ""
 }
 
 // errorResult is the package-local alias used by Add; it is the same renderer

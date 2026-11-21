@@ -266,3 +266,66 @@ func TestCreateAttributeOptionScalarResponse(t *testing.T) {
 		t.Fatalf("option = %+v", option)
 	}
 }
+
+// U-36: GET /categories/{id}/products answers with rows that carry only sku, so
+// the tool returned name "", price 0 and status 0 for real products. The page is
+// enriched with one sku-in search; reverting the hydration makes this test fail.
+func TestCategoryProductsHydratesListingRows(t *testing.T) {
+	var searchQuery url.Values
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/default/V1/categories/5/products":
+			_, _ = w.Write([]byte(`[{"id":1,"sku":"SKU-1"},{"id":2,"sku":"SKU-2"}]`))
+		case "/rest/default/V1/products":
+			searchQuery = r.URL.Query()
+			_, _ = w.Write([]byte(`{"items":[
+				{"id":1,"sku":"SKU-1","name":"Widget","price":9.99,"status":1,"visibility":4},
+				{"id":2,"sku":"SKU-2","name":"Gadget","price":19.5,"status":1,"visibility":4}],"total_count":2}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	products, _, err := testService(t, ts.URL).CategoryProducts(context.Background(), 5, 10, 0)
+	if err != nil {
+		t.Fatalf("CategoryProducts: %v", err)
+	}
+	if got := searchQuery.Get("searchCriteria[filter_groups][0][filters][0][condition_type]"); got != "in" {
+		t.Fatalf("condition_type = %q, want in", got)
+	}
+	if got := searchQuery.Get("searchCriteria[filter_groups][0][filters][0][value]"); got != "SKU-1,SKU-2" {
+		t.Fatalf("sku filter = %q, want SKU-1,SKU-2", got)
+	}
+	if len(products) != 2 || products[0].Name != "Widget" || products[0].Price != 9.99 || products[0].Status != 1 {
+		t.Fatalf("products = %+v, want the hydrated projection", products)
+	}
+	if products[1].Name != "Gadget" {
+		t.Fatalf("products = %+v", products)
+	}
+}
+
+// U-36: a listing that already carries the full projection must not trigger the
+// enrichment request.
+func TestCategoryProductsSkipsHydrationWhenComplete(t *testing.T) {
+	searches := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/default/V1/categories/5/products":
+			_, _ = w.Write([]byte(`[{"id":1,"sku":"SKU-1","name":"Widget","price":9.99,"status":1}]`))
+		case "/rest/default/V1/products":
+			searches++
+			_, _ = w.Write([]byte(`{"items":[],"total_count":0}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	if _, _, err := testService(t, ts.URL).CategoryProducts(context.Background(), 5, 10, 0); err != nil {
+		t.Fatalf("CategoryProducts: %v", err)
+	}
+	if searches != 0 {
+		t.Fatalf("searches = %d, want 0 for a complete listing", searches)
+	}
+}

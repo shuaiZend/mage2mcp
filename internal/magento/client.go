@@ -380,6 +380,7 @@ var routeWords = map[string]struct{}{
 	"inventory": {}, "sources": {}, "stocks": {}, "source-items": {}, "bulk": {}, "async": {},
 	"import": {}, "integration": {}, "admin": {}, "token": {}, "search": {}, "comments": {},
 	"emails": {}, "hold": {}, "unhold": {}, "cancel": {}, "capture": {}, "items": {},
+	"ship":                 {},
 	"shipping-information": {}, "totals": {}, "order": {}, "store": {}, "storeConfigs": {},
 	"taxClasses": {}, "directory": {}, "countries": {}, "groups": {},
 	"stockItems": {}, "configurable-products": {}, "children": {},

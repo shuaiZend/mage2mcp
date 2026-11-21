@@ -782,3 +782,270 @@ func TestExecuteImportFallsBackWhenBatchLookupFails(t *testing.T) {
 		t.Fatalf("per-row GETs = %d, want 1 fallback read", perRowGets)
 	}
 }
+
+// captureImportFake records every product write so a test can assert the exact
+// payload the import built. GET answers 200 for the SKUs in existing and 404 for
+// everything else, which is what decides create versus update.
+type captureImportFake struct {
+	existing map[string]bool
+	fail     map[string]string
+	writes   []capturedProductWrite
+}
+
+type capturedProductWrite struct {
+	method string
+	sku    string
+	body   map[string]any
+}
+
+func newCaptureImportFake(t *testing.T, existing map[string]bool, fail map[string]string) (*httptest.Server, *captureImportFake) {
+	t.Helper()
+	fake := &captureImportFake{existing: existing, fail: fail}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sku := ""
+		if parts := strings.Split(r.URL.Path, "/products/"); len(parts) == 2 {
+			sku = parts[1]
+		}
+		if r.Method == http.MethodGet {
+			if fake.existing[sku] {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":1,"sku":"` + sku + `","name":"Existing","type_id":"simple"}`))
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode %s %s body: %v", r.Method, r.URL.Path, err)
+		}
+		if sku == "" {
+			// A create posts to /products, so the SKU is only in the body.
+			if product, ok := body["product"].(map[string]any); ok {
+				sku, _ = product["sku"].(string)
+			}
+		}
+		fake.writes = append(fake.writes, capturedProductWrite{method: r.Method, sku: sku, body: body})
+		if msg := fake.fail[sku]; msg != "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(msg))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"sku":"` + sku + `","name":"Written","type_id":"simple"}`))
+	}))
+	t.Cleanup(server.Close)
+	return server, fake
+}
+
+// productBody returns the decoded "product" object of the last write to sku.
+func (f *captureImportFake) productBody(t *testing.T, sku string) map[string]any {
+	t.Helper()
+	for i := len(f.writes) - 1; i >= 0; i-- {
+		if f.writes[i].sku != sku {
+			continue
+		}
+		product, ok := f.writes[i].body["product"].(map[string]any)
+		if !ok {
+			t.Fatalf("write to %s has no product object: %+v", sku, f.writes[i].body)
+		}
+		return product
+	}
+	t.Fatalf("no write to %s; writes = %+v", sku, f.writes)
+	return nil
+}
+
+// customAttributesOf flattens custom_attributes into code -> value.
+func customAttributesOf(t *testing.T, product map[string]any) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	raw, _ := product["custom_attributes"].([]any)
+	for _, entry := range raw {
+		attribute, ok := entry.(map[string]any)
+		if !ok {
+			t.Fatalf("custom attribute is not an object: %+v", entry)
+		}
+		code, _ := attribute["attribute_code"].(string)
+		value, _ := attribute["value"].(string)
+		out[code] = value
+	}
+	return out
+}
+
+// U-01 (P0) reached the import through Update(): the pricing slice started at
+// weight, so every value landed one slot early and a weight-only import row
+// rewrote the selling price. This is the import-level guard: it fails if the
+// update payload ever shifts the pricing attributes again.
+func TestImportUpdateKeepsPricingAttributesInPlace(t *testing.T) {
+	server, fake := newCaptureImportFake(t, map[string]bool{"OLD-1": true}, nil)
+	svc := newImportServiceAgainst(t, server.URL)
+	data := []byte("sku,price,special_price,weight\nOLD-1,45.00,39.99,1.25\n")
+	result, err := svc.ExecuteImport(context.Background(), "csv", data, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Updated != 1 || result.Failed != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	product := fake.productBody(t, "OLD-1")
+	if product["price"] != "45.00" {
+		t.Fatalf("price = %v, want 45.00", product["price"])
+	}
+	if product["weight"] != "1.25" {
+		t.Fatalf("weight = %v, want 1.25 (static field, not a custom attribute)", product["weight"])
+	}
+	attributes := customAttributesOf(t, product)
+	if got := attributes["special_price"]; got != "39.99" {
+		t.Fatalf("special_price = %q, want 39.99; custom_attributes = %+v", got, attributes)
+	}
+	// The misalignment signature: weight occupied the special_price slot, so these
+	// codes appeared with values that belonged to another field.
+	for _, shifted := range []string{"special_from_date", "special_to_date", "cost", "tax_class_id"} {
+		if value, ok := attributes[shifted]; ok {
+			t.Fatalf("%s = %q was written by a row that never named it: %+v", shifted, value, attributes)
+		}
+	}
+	if value, ok := attributes["weight"]; ok {
+		t.Fatalf("weight = %q was sent as a custom attribute; Magento ignores it there", value)
+	}
+	if len(attributes) != 1 {
+		t.Fatalf("custom_attributes = %+v, want only special_price", attributes)
+	}
+}
+
+// U-65: a repricing file carries no name column. The row is an update, so
+// validation must accept it and the update must not blank the stored name.
+func TestImportAcceptsPriceOnlyUpdateRow(t *testing.T) {
+	preview, err := testImportService(t).ValidateImport(context.Background(), "csv", []byte("sku,price\nOLD-1,39.99\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Valid != 1 || preview.Invalid != 0 || len(preview.Errors) != 0 {
+		t.Fatalf("preview = %+v, want one valid row", preview)
+	}
+	warned := false
+	for _, warning := range preview.Warnings {
+		if warning.Field == "name" {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("warnings = %+v, want a name warning", preview.Warnings)
+	}
+
+	server, fake := newCaptureImportFake(t, map[string]bool{"OLD-1": true}, nil)
+	svc := newImportServiceAgainst(t, server.URL)
+	result, err := svc.ExecuteImport(context.Background(), "csv", []byte("sku,price\nOLD-1,39.99\n"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Updated != 1 || result.Failed != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	product := fake.productBody(t, "OLD-1")
+	if name, ok := product["name"]; ok {
+		t.Fatalf("name = %v was sent by a row without one; Magento would store an empty name", name)
+	}
+	if product["price"] != "39.99" {
+		t.Fatalf("price = %v, want 39.99", product["price"])
+	}
+}
+
+// A row without a name is only invalid when it turns out to create: the failure
+// is per row, and the rest of the batch still runs.
+func TestImportCreateWithoutNameFailsOnlyThatRow(t *testing.T) {
+	server, fake := newCaptureImportFake(t, nil, nil)
+	svc := newImportServiceAgainst(t, server.URL)
+	data := []byte("sku,name,type_id,price,attribute_set_id\nNEW-1,,simple,9.99,4\nNEW-2,Widget,simple,8.99,4\n")
+	result, err := svc.ExecuteImport(context.Background(), "csv", data, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Created != 1 || result.Failed != 1 || result.Total != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+	failed := result.Rows[0]
+	if failed.SKU != "NEW-1" || failed.Status != "failed" {
+		t.Fatalf("failed row = %+v", failed)
+	}
+	if !strings.Contains(failed.Error, "name") || !strings.Contains(failed.Error, "field=name") {
+		t.Fatalf("row error = %q, want it to name the missing field", failed.Error)
+	}
+	if created := fake.productBody(t, "NEW-2"); created["name"] != "Widget" {
+		t.Fatalf("the valid row did not create its product: %+v", created)
+	}
+}
+
+// U-65 / INT-10: a failed row used to read "validation_failed: Magento rejected
+// the request as invalid", which names no column. The upstream reason (verbatim
+// or redacted) and the field must survive into the per-row error.
+func TestImportRowErrorKeepsUpstreamReason(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantAll []string
+	}{
+		{
+			name:    "quoted field placeholder is redacted but kept",
+			body:    `{"message":"Validation Failed","errors":[{"message":"\"%field\" can not be empty.","parameters":{"field":"postcode"}}]}`,
+			wantAll: []string{"can not be empty", "field=postcode"},
+		},
+		{
+			name:    "plain business rule travels verbatim",
+			body:    `{"message":"Can not save link related to Default Source or Default Stock"}`,
+			wantAll: []string{"Can not save link related to Default Source or Default Stock"},
+		},
+		{
+			// A reason that echoes a SKU stays server-side by policy (SEC-10), so
+			// the row keeps the status instead of collapsing to a bare sentence.
+			name:    "identifier-bearing reason keeps the status",
+			body:    `{"message":"The product with SKU \"ABC123\" does not exist. Verify the product and try again."}`,
+			wantAll: []string{"upstream_status=400"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _ := newCaptureImportFake(t, map[string]bool{"OLD-1": true}, map[string]string{"OLD-1": tc.body})
+			svc := newImportServiceAgainst(t, server.URL)
+			result, err := svc.ExecuteImport(context.Background(), "csv", []byte("sku,name,price\nOLD-1,Widget,39.99\n"), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Failed != 1 || len(result.Rows) != 1 {
+				t.Fatalf("result = %+v", result)
+			}
+			rowError := result.Rows[0].Error
+			for _, want := range tc.wantAll {
+				if !strings.Contains(rowError, want) {
+					t.Fatalf("row error = %q, want it to contain %q", rowError, want)
+				}
+			}
+		})
+	}
+}
+
+// U-65: the async enqueue rejected the whole file with the first bad row only, so
+// an operator fixed one row per upload. Every invalid row is named, bounded.
+func TestValidateImportShapeReportsEveryInvalidRow(t *testing.T) {
+	data := []byte("sku,name,price\n,NoSku,1.00\nB-1,Ok,abc\nC-1,Ok,1.00\nC-1,Dup,1.00\n")
+	_, err := ValidateImportShape("csv", data)
+	if err == nil {
+		t.Fatal("invalid rows must be rejected")
+	}
+	var typed *errs.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("err = %v, want a taxonomy error", err)
+	}
+	if got := typed.Details["invalid_rows"]; got != "3" {
+		t.Fatalf("invalid_rows = %q, want 3 (rows 2, 3 and 5)", got)
+	}
+	for _, want := range []string{"row 2:", "row 3:", "row 5:"} {
+		if !strings.Contains(typed.Details["rows"], want) {
+			t.Fatalf("rows = %q, want it to contain %q", typed.Details["rows"], want)
+		}
+	}
+	if typed.Details["row"] != "2" || typed.Details["reason"] == "" {
+		t.Fatalf("details = %+v, want the first row kept for compatibility", typed.Details)
+	}
+}

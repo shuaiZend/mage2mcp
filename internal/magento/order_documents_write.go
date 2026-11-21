@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"regexp"
@@ -56,8 +57,13 @@ type CreditmemoCreateInput struct {
 	Items              []DocumentLine `json:"items" jsonschema:"Entries returned by this call."`
 	AdjustmentPositive float64        `json:"adjustment_positive,omitempty"`
 	AdjustmentNegative float64        `json:"adjustment_negative,omitempty"`
-	Comment            string         `json:"comment,omitempty"`
-	Notify             bool           `json:"notify"`
+	// ShippingAmount is the shipping refunded with this credit memo. Omitting it
+	// no longer sweeps the order's whole remaining shipping into a partial refund:
+	// nil means "refund the remaining shipping only when this memo refunds every
+	// remaining refundable unit", and 0 means "refund no shipping" (U-11).
+	ShippingAmount *float64 `json:"shipping_amount,omitempty"`
+	Comment        string   `json:"comment,omitempty"`
+	Notify         bool     `json:"notify"`
 
 	// IdempotencyKey makes the call replayable: repeating it with the same
 	// arguments returns the recorded credit memo instead of refunding twice.
@@ -68,10 +74,14 @@ type CreditmemoCreateInput struct {
 
 // CreditmemoCreateResult is the recorded outcome of a credit memo creation.
 type CreditmemoCreateResult struct {
-	Creditmemo  Creditmemo `json:"creditmemo" jsonschema:"The credit memo that was created or read."`
-	InvoiceID   int        `json:"invoice_id"`
-	OperationID string     `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
-	Replayed    bool       `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so nothing new happened."`
+	Creditmemo Creditmemo `json:"creditmemo" jsonschema:"The credit memo that was created or read."`
+	// InvoiceID is the invoice this call validated the refund against. Magento
+	// does not always store that link, so InvoiceLinked says whether the read-back
+	// proved it (U-15).
+	InvoiceID     int    `json:"invoice_id"`
+	InvoiceLinked bool   `json:"invoice_linked" jsonschema:"True when Magento's read-back reports the same invoice link this call validated against."`
+	OperationID   string `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
+	Replayed      bool   `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so nothing new happened."`
 }
 
 // CreateShipment ships order items with POST /order/{id}/ship.
@@ -96,7 +106,7 @@ func (s *Service) CreateShipment(ctx context.Context, in ShipmentCreateInput) (*
 		Notify:        in.Notify,
 	}
 	if in.Comment != "" {
-		body.Comment = &documentComment{Comment: in.Comment, IsVisibleOnFront: false}
+		body.Comment = &documentComment{Comment: in.Comment, IsVisibleOnFront: 0}
 	}
 	// The create route is /order/{id}/ship and it answers with the new shipment id;
 	// /shipments is not a route at all, and the id is not the shipment object.
@@ -142,7 +152,25 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 	if err != nil {
 		return nil, err
 	}
-	amount, err := authorisedAmount(documentLinesToInvoiceLines(in.Items), state.Items, state.Currency)
+	// U-13: a credit memo may not refund more units than the invoice it is linked
+	// to actually invoiced. The order-level check below only knows qty_invoiced
+	// across all invoices, so refunding 2 units against a 1-unit invoice passed.
+	invoiced, err := s.invoiceItemQuantities(ctx, invoiceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkInvoiceQuantities(in.Items, invoiced); err != nil {
+		return nil, err
+	}
+	// U-11: decide the shipping refund explicitly instead of letting Magento
+	// sweep the order's whole remaining shipping into a partial refund.
+	shipping, err := state.shippingRefund(in)
+	if err != nil {
+		return nil, err
+	}
+	// U-69: the ledger records the document total (lines + shipping +
+	// adjustments), not the line subtotal it used to under-report.
+	amount, err := state.creditmemoTotal(in, shipping)
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +188,7 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 		Amount: &amount,
 		Args: creditmemoArgs{
 			OrderID: in.OrderID, InvoiceID: invoiceID, Items: in.Items,
+			ShippingAmount:     shipping,
 			AdjustmentPositive: in.AdjustmentPositive, AdjustmentNegative: in.AdjustmentNegative,
 		},
 	})
@@ -181,6 +210,13 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 		_ = run.Fail(ctx, string(errs.CodeOf(err)))
 		return nil, err
 	}
+	// U-12: bound the money too. adjustment_positive used to consume the
+	// refundable amount while the local check only counted units, so the last
+	// unit could never be refunded and the upstream reason was unreadable.
+	if err := state.checkRefundableAmount(amount); err != nil {
+		_ = run.Fail(ctx, string(errs.CodeOf(err)))
+		return nil, err
+	}
 	items := make([]invoiceItemBody, 0, len(in.Items))
 	for _, line := range in.Items {
 		items = append(items, invoiceItemBody(line))
@@ -189,12 +225,14 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 		Items: items, AppendComment: in.Comment != "", Notify: in.Notify,
 	}
 	if in.Comment != "" {
-		body.Comment = &documentComment{Comment: in.Comment, IsVisibleOnFront: false}
+		body.Comment = &documentComment{Comment: in.Comment, IsVisibleOnFront: 0}
 	}
-	if in.AdjustmentPositive != 0 || in.AdjustmentNegative != 0 {
-		body.Arguments = &refundOrderArguments{
-			AdjustmentPositive: in.AdjustmentPositive, AdjustmentNegative: in.AdjustmentNegative,
-		}
+	// Always send arguments.shipping_amount, including 0. Leaving the field out is
+	// what let Magento refund the order's whole remaining shipping on a one-unit
+	// refund (U-11): the upstream default is "all of it", not "none".
+	body.Arguments = &refundOrderArguments{
+		ShippingAmount:     &shipping,
+		AdjustmentPositive: in.AdjustmentPositive, AdjustmentNegative: in.AdjustmentNegative,
 	}
 	// The create route is /order/{id}/refund; /creditmemos is not a route, and the
 	// answer is the new credit memo id as a JSON scalar rather than the document.
@@ -228,7 +266,11 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 		}
 		creditmemo.TotalQty = &total
 	}
-	result := &CreditmemoCreateResult{Creditmemo: creditmemo, InvoiceID: invoiceID, OperationID: run.ID()}
+	result := &CreditmemoCreateResult{
+		Creditmemo: creditmemo, InvoiceID: invoiceID,
+		InvoiceLinked: creditmemo.InvoiceID != 0 && creditmemo.InvoiceID == invoiceID,
+		OperationID:   run.ID(),
+	}
 	ref := "creditmemo:" + creditmemo.IncrementID
 	if creditmemo.IncrementID == "" {
 		ref = "creditmemo:" + strconv.Itoa(creditmemo.EntityID)
@@ -244,6 +286,7 @@ type creditmemoArgs struct {
 	OrderID            int            `json:"order_id" jsonschema:"Magento order entity id, not the increment id."`
 	InvoiceID          int            `json:"invoice_id"`
 	Items              []DocumentLine `json:"items" jsonschema:"Entries returned by this call."`
+	ShippingAmount     float64        `json:"shipping_amount"`
 	AdjustmentPositive float64        `json:"adjustment_positive"`
 	AdjustmentNegative float64        `json:"adjustment_negative"`
 }
@@ -255,6 +298,11 @@ type orderRefundState struct {
 	GrandTotal float64           `json:"grand_total" jsonschema:"Document total including shipping and tax."`
 	Items      []OrderItem       `json:"items" jsonschema:"Entries returned by this call."`
 	Refund     []orderRefundItem `json:"-"`
+
+	// ShippingAmount and ShippingRefunded bound how much shipping a credit memo
+	// may return, so a partial refund cannot sweep the whole amount (U-11).
+	ShippingAmount   float64 `json:"shipping_amount"`
+	ShippingRefunded float64 `json:"shipping_refunded"`
 }
 
 // orderRefundItem carries the invoiced and refunded quantities of one line.
@@ -272,10 +320,12 @@ func (s *Service) orderRefundState(ctx context.Context, orderID int) (*orderRefu
 		return nil, err
 	}
 	var wire struct {
-		EntityID   int     `json:"entity_id" jsonschema:"Magento entity id."`
-		Currency   string  `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
-		GrandTotal float64 `json:"grand_total" jsonschema:"Document total including shipping and tax."`
-		Items      []struct {
+		EntityID         int     `json:"entity_id" jsonschema:"Magento entity id."`
+		Currency         string  `json:"order_currency_code" jsonschema:"ISO 4217 code the amounts are expressed in."`
+		GrandTotal       float64 `json:"grand_total" jsonschema:"Document total including shipping and tax."`
+		ShippingAmount   float64 `json:"shipping_amount"`
+		ShippingRefunded float64 `json:"shipping_refunded"`
+		Items            []struct {
 			ItemID      int     `json:"item_id"`
 			SKU         string  `json:"sku" jsonschema:"Product SKU."`
 			Price       float64 `json:"price"`
@@ -287,7 +337,10 @@ func (s *Service) orderRefundState(ctx context.Context, orderID int) (*orderRefu
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order payload").WithCause(err)
 	}
-	state := &orderRefundState{EntityID: wire.EntityID, Currency: wire.Currency, GrandTotal: wire.GrandTotal}
+	state := &orderRefundState{
+		EntityID: wire.EntityID, Currency: wire.Currency, GrandTotal: wire.GrandTotal,
+		ShippingAmount: wire.ShippingAmount, ShippingRefunded: wire.ShippingRefunded,
+	}
 	state.Items = make([]OrderItem, 0, len(wire.Items))
 	state.Refund = make([]orderRefundItem, 0, len(wire.Items))
 	for _, item := range wire.Items {
@@ -315,8 +368,193 @@ func (s *orderRefundState) checkRefundable(lines []DocumentLine) error {
 			return invalidf("order item %d is not part of the order", line.OrderItemID)
 		}
 		if line.Qty > available+1e-9 {
-			return invalidf("order item %d has %g refundable units, cannot refund %g",
-				line.OrderItemID, math.Max(0, available), line.Qty)
+			remaining := math.Max(0, available)
+			// U-21: the refundable quantity is data, not prose: put it in details so
+			// a caller does not have to parse the sentence, and get the singular right.
+			unit := "units"
+			if remaining == 1 {
+				unit = "unit"
+			}
+			return errs.New(errs.CodeInvalidArgument,
+				fmt.Sprintf("order item %d has %g refundable %s, cannot refund %g",
+					line.OrderItemID, remaining, unit, line.Qty)).
+				WithDetail("order_item_id", strconv.Itoa(line.OrderItemID)).
+				WithDetail("refundable_units", strconv.FormatFloat(remaining, 'f', -1, 64)).
+				WithDetail("requested_units", strconv.FormatFloat(line.Qty, 'f', -1, 64))
+		}
+	}
+	return nil
+}
+
+// remainingShipping is the shipping still refundable on the order.
+func (s *orderRefundState) remainingShipping() float64 {
+	remaining := s.ShippingAmount - s.ShippingRefunded
+	if remaining < 0 || math.IsNaN(remaining) {
+		return 0
+	}
+	return remaining
+}
+
+// coversAllRefundable reports whether the requested lines consume every
+// remaining refundable unit of the order, which is the only case where omitting
+// shipping_amount refunds the remaining shipping.
+func (s *orderRefundState) coversAllRefundable(lines []DocumentLine) bool {
+	requested := make(map[int]float64, len(lines))
+	for _, line := range lines {
+		requested[line.OrderItemID] += line.Qty
+	}
+	for _, item := range s.Refund {
+		remaining := item.QtyInvoiced - item.QtyRefunded
+		if remaining <= 1e-9 {
+			continue
+		}
+		if requested[item.ItemID] < remaining-1e-9 {
+			return false
+		}
+	}
+	return true
+}
+
+// shippingRefund resolves the shipping amount this memo returns. An explicit
+// shipping_amount wins (and is bounded by what is still refundable); otherwise a
+// full refund returns the remaining shipping and a partial refund returns none,
+// instead of letting Magento refund the whole amount (U-11).
+func (s *orderRefundState) shippingRefund(in CreditmemoCreateInput) (float64, error) {
+	remaining := s.remainingShipping()
+	if in.ShippingAmount != nil {
+		requested := *in.ShippingAmount
+		if requested < 0 {
+			return 0, invalidf("shipping_amount must not be negative")
+		}
+		if requested > remaining+1e-9 {
+			return 0, errs.New(errs.CodeValidationFailed,
+				"shipping_amount exceeds the shipping still refundable on this order").
+				WithDetail("refundable_shipping", formatAmount(remaining)).
+				WithDetail("currency", s.Currency)
+		}
+		return requested, nil
+	}
+	if s.coversAllRefundable(in.Items) {
+		return remaining, nil
+	}
+	return 0, nil
+}
+
+// creditmemoTotal is the document total this memo should produce: the refunded
+// line amount plus shipping and adjustments. The ledger records this figure, so
+// a document that returns shipping is no longer under-reported (U-69).
+func (s *orderRefundState) creditmemoTotal(in CreditmemoCreateInput, shipping float64) (Money, error) {
+	lines, err := authorisedAmount(documentLinesToInvoiceLines(in.Items), s.Items, s.Currency)
+	if err != nil {
+		return Money{}, err
+	}
+	shippingMoney, err := moneyFromAmount(shipping, s.Currency)
+	if err != nil {
+		return Money{}, err
+	}
+	adjust := int64(math.Round(in.AdjustmentPositive*100)) - int64(math.Round(in.AdjustmentNegative*100))
+	total := lines.Minor + shippingMoney.Minor + adjust
+	if total < 0 {
+		total = 0
+	}
+	return Money{Minor: total, Currency: lines.Currency}, nil
+}
+
+// refundableRemaining is the money still refundable on the order: every unit
+// still refundable at its unit price, plus the remaining shipping.
+func (s *orderRefundState) refundableRemaining() (Money, error) {
+	priceByID := make(map[int]float64, len(s.Items))
+	for _, item := range s.Items {
+		priceByID[item.ItemID] = item.Price
+	}
+	var total int64
+	for _, item := range s.Refund {
+		remaining := item.QtyInvoiced - item.QtyRefunded
+		if remaining <= 1e-9 {
+			continue
+		}
+		unit, err := moneyFromAmount(priceByID[item.ItemID], s.Currency)
+		if err != nil {
+			return Money{}, err
+		}
+		qtyMilli := int64(math.Round(remaining * 1000))
+		total += (unit.Minor*qtyMilli + 500) / 1000
+	}
+	shipping, err := moneyFromAmount(s.remainingShipping(), s.Currency)
+	if err != nil {
+		return Money{}, err
+	}
+	return Money{Minor: total + shipping.Minor, Currency: s.Currency}, nil
+}
+
+// checkRefundableAmount rejects a memo whose total exceeds what the order can
+// still refund, before any upstream write (U-12).
+func (s *orderRefundState) checkRefundableAmount(requested Money) error {
+	refundable, err := s.refundableRemaining()
+	if err != nil {
+		return err
+	}
+	if requested.Minor <= refundable.Minor {
+		return nil
+	}
+	return errs.New(errs.CodeValidationFailed,
+		"the requested credit memo exceeds the amount still refundable").
+		WithDetail("refundable_amount", formatAmount(float64(refundable.Minor)/100)).
+		WithDetail("requested_amount", formatAmount(float64(requested.Minor)/100)).
+		WithDetail("currency", refundable.Currency)
+}
+
+// formatAmount renders a currency amount with two decimals for an error detail.
+func formatAmount(amount float64) string {
+	return strconv.FormatFloat(amount, 'f', 2, 64)
+}
+
+// invoiceItemQuantities reads how many units of each order item the invoice
+// actually invoiced, so a refund cannot exceed the invoice it is linked to
+// (U-13).
+func (s *Service) invoiceItemQuantities(ctx context.Context, invoiceID int) (map[int]float64, error) {
+	raw, err := s.client.do(ctx, http.MethodGet, "/invoices/"+strconv.Itoa(invoiceID), nil, nil)
+	if err != nil {
+		// A store that does not expose the single-invoice route cannot be checked
+		// at invoice level; the order-level quantity check still applies.
+		if errs.CodeOf(err) == errs.CodeNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var payload struct {
+		Items []struct {
+			OrderItemID int     `json:"order_item_id"`
+			Qty         float64 `json:"qty"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable invoice payload").WithCause(err)
+	}
+	out := make(map[int]float64, len(payload.Items))
+	for _, item := range payload.Items {
+		if item.OrderItemID <= 0 {
+			continue
+		}
+		out[item.OrderItemID] += item.Qty
+	}
+	return out, nil
+}
+
+// checkInvoiceQuantities enforces the invoice-level quantity cap. A build that
+// reports no item rows leaves the cap to the order-level check.
+func checkInvoiceQuantities(lines []DocumentLine, invoiced map[int]float64) error {
+	if len(invoiced) == 0 {
+		return nil
+	}
+	for _, line := range lines {
+		available := invoiced[line.OrderItemID]
+		if line.Qty > available+1e-9 {
+			return errs.New(errs.CodeValidationFailed,
+				"the refund exceeds the quantity on the invoice it is linked to").
+				WithDetail("order_item_id", strconv.Itoa(line.OrderItemID)).
+				WithDetail("invoice_qty", strconv.FormatFloat(available, 'f', -1, 64)).
+				WithDetail("requested_qty", strconv.FormatFloat(line.Qty, 'f', -1, 64))
 		}
 	}
 	return nil
@@ -357,9 +595,12 @@ func documentLinesToInvoiceLines(lines []DocumentLine) []InvoiceLine {
 	return out
 }
 
+// documentComment is Magento's sales Data\DocumentCommentInterface. Its
+// is_visible_on_front member is declared as an int, so a JSON boolean made every
+// commented refund or shipment fail with HTTP 400 (U-10).
 type documentComment struct {
 	Comment          string `json:"comment,omitempty"`
-	IsVisibleOnFront bool   `json:"is_visible_on_front"`
+	IsVisibleOnFront int    `json:"is_visible_on_front"`
 }
 
 // shipmentOrderBody is the body of POST /order/{orderId}/ship
@@ -397,8 +638,12 @@ type refundOrderBody struct {
 // refundOrderArguments carries the optional credit-memo adjustments; they are a
 // parameter of the refund route, not top-level fields.
 type refundOrderArguments struct {
-	AdjustmentPositive float64 `json:"adjustment_positive,omitempty"`
-	AdjustmentNegative float64 `json:"adjustment_negative,omitempty"`
+	// ShippingAmount is the shipping refunded by this memo. Magento's
+	// CreditmemoArgumentsInterface takes it here, and leaving it out is what made
+	// a one-unit refund return the order's whole shipping (U-11).
+	ShippingAmount     *float64 `json:"shipping_amount,omitempty"`
+	AdjustmentPositive float64  `json:"adjustment_positive,omitempty"`
+	AdjustmentNegative float64  `json:"adjustment_negative,omitempty"`
 }
 
 func validateDocumentLines(orderID int, lines []DocumentLine) error {
@@ -468,6 +713,9 @@ func validateCreditmemoCreate(in CreditmemoCreateInput) error {
 	}
 	if in.AdjustmentPositive < 0 || in.AdjustmentNegative < 0 {
 		return invalidf("adjustments must not be negative")
+	}
+	if in.ShippingAmount != nil && *in.ShippingAmount < 0 {
+		return invalidf("shipping_amount must not be negative")
 	}
 	return nil
 }

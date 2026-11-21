@@ -30,19 +30,19 @@ const (
 	getToolDescription = "Reads one product from the configured Magento 2 REST catalog " +
 		"(GET /rest/{store_code}/V1/products/{sku}) using the integration credential. " +
 		"Read-only: it never creates, updates, or deletes data. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	searchToolDescription = "Searches the configured Magento 2 REST catalog " +
 		"(GET /rest/{store_code}/V1/products with searchCriteria filter groups) using the integration credential. " +
 		"Read-only: it never creates, updates, or deletes data. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	// Tool input JSON schemas are authoritative for validation.
 	productGetSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}
 	}, "required": ["instance", "sku"], "additionalProperties": false}`
 	productSearchSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"query": {"type": "string", "maxLength": 128, "description": "Case-insensitive substring filter on the product name."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Exact SKU filter; 1-64 characters from [A-Za-z0-9._:-]."},
 		"type_id": {"type": "string", "enum": ["simple", "configurable", "virtual", "downloadable", "bundle", "grouped"], "description": "Magento product type filter."},
@@ -320,16 +320,16 @@ const (
 	orderGetToolDescription = "Reads one order from the configured Magento 2 REST API " +
 		"(GET /rest/{store_code}/V1/orders/{id}) including its line items. " +
 		"Read-only. Customer email, addresses, and payment data are not returned. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	orderSearchToolDescription = "Searches the configured Magento 2 REST API " +
 		"(GET /rest/{store_code}/V1/orders with searchCriteria filter groups) by status, state, increment id, " +
 		"creation window, or store view. Read-only; line items are omitted from search results. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	salesSummaryToolDescription = "Aggregates Magento orders per day over a bounded window: order count, " +
 		"grand-total revenue, and item quantity. Scans at most 1000 orders and reports total_available, " +
 		"scanned_orders, excluded_orders, and whether anything was excluded. " +
 		"Revenue is order grand_total (tax and shipping included) and is not GA4 purchase revenue. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	orderGetSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -500,16 +500,16 @@ const (
 
 	categoryGetToolDescription = "Reads one category from the configured Magento 2 REST API " +
 		"(GET /rest/{store_code}/V1/categories/{id}). Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	categoryTreeToolDescription = "Reads the category subtree under a root category " +
 		"(GET /rest/{store_code}/V1/categories?rootCategoryId&depth), nested up to depth 1-5. " +
-		"Read-only. The instance input is resolved by the server when only one Magento instance is configured."
+		"Read-only. The instance input is required and must name a configured Magento instance."
 	attributeSetsToolDescription = "Lists the product attribute sets " +
 		"(GET /rest/{store_code}/V1/products/attribute-sets/sets/list), at most 200. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	attributesToolDescription = "Lists the attributes of one product attribute set " +
 		"(GET /rest/{store_code}/V1/products/attribute-sets/{setId}/attributes). Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	categoryGetSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -666,13 +666,13 @@ const (
 
 	productMediaToolDescription = "Lists the media gallery of one product " +
 		"(GET /rest/{store_code}/V1/products/{sku}/media). Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	stockStatusToolDescription = "Reads the catalog inventory status of one SKU " +
 		"(GET /rest/{store_code}/V1/stockItems/{sku}): quantity, in-stock flag, and backorders. " +
 		"On multi-source installations this is the aggregated catalog value; use source_items for per-source quantities. Read-only."
 	sourceItemsToolDescription = "Lists MSI source quantities for up to 20 SKUs " +
 		"(GET /rest/{store_code}/V1/inventory/source-items with a sku in-filter). Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	productMediaSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -793,19 +793,19 @@ const (
 
 	orderHistoryToolDescription = "Reads the status history of one order " +
 		"(GET /rest/{store_code}/V1/orders/{id}/comments), including status, comment, and notification flags. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	invoiceListToolDescription = "Lists the invoices of one order " +
 		"(GET /rest/{store_code}/V1/invoices filtered by order_id) with totals and quantities. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	invoiceGetToolDescription = "Reads one invoice by id " +
 		"(GET /rest/{store_code}/V1/invoices/{id}) with totals and quantities. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	shipmentListToolDescription = "Lists the shipments of one order " +
 		"(GET /rest/{store_code}/V1/shipments filtered by order_id) with total quantity and tracking numbers. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	shipmentGetToolDescription = "Reads one shipment by id " +
 		"(GET /rest/{store_code}/V1/shipment/{id}) with total quantity and tracking numbers. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	orderIDOnlySchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -979,10 +979,10 @@ const (
 
 	creditmemoListToolDescription = "Lists the credit memos of one order " +
 		"(GET /rest/{store_code}/V1/creditmemos filtered by order_id) with totals and quantities. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	creditmemoGetToolDescription = "Reads one credit memo by id " +
 		"(GET /rest/{store_code}/V1/creditmemo/{id}) with totals and quantities. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	creditmemoIDSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -1059,13 +1059,13 @@ const (
 
 	configurableChildrenToolDescription = "Lists the child products linked to a configurable product " +
 		"(GET /rest/{store_code}/V1/configurable-products/{sku}/children). Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	attributeOptionsToolDescription = "Lists the options of a select or multiselect attribute " +
 		"(GET /rest/{store_code}/V1/products/attributes/{code}/options); configurable variants reference options by value_index. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	categoryProductsToolDescription = "Lists the products assigned to a category " +
 		"(GET /rest/{store_code}/V1/categories/{id}/products) with pagination. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	configurableChildrenSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -1206,11 +1206,11 @@ const (
 
 	customerGetToolDescription = "Reads one customer from the configured Magento 2 REST API " +
 		"(GET /rest/{store_code}/V1/customers/{id}). Read-only and PII-safe: the projection omits email, name, and addresses. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	customerSearchToolDescription = "Finds customers by exact email " +
 		"(GET /rest/{store_code}/V1/customers/search with an email eq filter). The response omits the email, name, and addresses: " +
 		"it returns id, group, website, store, and timestamps only. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	customerGetSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -1302,7 +1302,7 @@ const (
 
 	productLinksToolDescription = "Lists related, upsell, or cross-sell links of a product " +
 		"(GET /rest/{store_code}/V1/products/{sku}/links?linkType=...). Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	productLinksSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -1348,7 +1348,7 @@ const (
 
 	productsBatchToolDescription = "Reads up to 50 products by SKU in one search " +
 		"(GET /rest/{store_code}/V1/products with a sku in-filter). Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	productsBatchSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -1523,7 +1523,7 @@ const (
 
 	tierPricesToolDescription = "Lists the quantity-based tier prices of one product " +
 		"(GET /rest/{store_code}/V1/products/tier-prices?skus={sku}), including website, customer group, quantity, and price. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	tierPricesSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
@@ -1569,10 +1569,10 @@ const (
 
 	inventorySourcesToolDescription = "Lists the MSI inventory sources (GET /rest/{store_code}/V1/inventory/sources), " +
 		"at most 100, with code, name, enabled flag, and location fields. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	inventoryStocksToolDescription = "Lists the MSI inventory stocks (GET /rest/{store_code}/V1/inventory/stocks), " +
 		"at most 100, with stock id and name. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	instanceOnlySchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."}
@@ -1647,10 +1647,10 @@ const (
 	mediaGetToolTitle       = "Get a Magento media entry"
 	mediaGetToolDescription = "Returns one product gallery entry " +
 		"(GET /rest/{store_code}/V1/products/{sku}/media/{id}) with file, label, position, types, and disabled flag. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	mediaGetSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product whose gallery entry is read."},
 		"media_id": {"type": "integer", "minimum": 1, "description": "Gallery entry id, as returned by product.media or product.media.upload. It is not the file name."}
 	}, "required": ["instance", "sku", "media_id"], "additionalProperties": false}`
@@ -1695,7 +1695,7 @@ const (
 		"over a bounded window (order count, grand-total revenue, item quantity) and returns the same aggregate " +
 		"plus deprecated=true and use=magento.sales.summary so a client can migrate. Scans at most 1000 orders and " +
 		"reports total_available, scanned_orders, excluded_orders, and whether anything was excluded. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 )
 
 // orderSummaryOutput is deliberately not salesSummaryOutput: the deprecated
@@ -1741,10 +1741,10 @@ const (
 
 	productOptionsToolDescription = "Lists a product's custom options (not configurable variant options) " +
 		"(GET /rest/{store_code}/V1/products/{sku}/options), including each value's price and price type. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	productOptionsSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU."}
 	}, "required": ["instance", "sku"], "additionalProperties": false}`
 )
@@ -1785,10 +1785,10 @@ const (
 
 	mediaTypesToolDescription = "Lists the media roles available for an attribute set " +
 		"(GET /rest/{store_code}/V1/products/media/types/{attributeSetName}) so media uploads use valid type codes. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	mediaTypesSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"attribute_set_name": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Attribute set name, for example Default. Media roles are defined per set."}
 	}, "required": ["instance", "attribute_set_name"], "additionalProperties": false}`
 )
@@ -1829,16 +1829,16 @@ const (
 
 	customerGroupsToolDescription = "Lists customer groups (GET /rest/{store_code}/V1/customerGroups/search) with id, code, and tax class id, " +
 		"which the customer write tools accept as group_id. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	taxClassesToolName  = "magento.tax.classes"
 	taxClassesToolTitle = "List Magento tax classes"
 
 	taxClassesToolDescription = "Lists tax classes (GET /rest/{store_code}/V1/taxClasses/search) with id, name, and type, " +
 		"which product writes accept as tax_class_id. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	customerGroupsSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."}
 	}, "required": ["instance"], "additionalProperties": false}`
 )
 
@@ -1904,10 +1904,10 @@ const (
 		"(GET /rest/{store_code}/V1/orders with a created_at filter), returning country codes, order counts, and revenue only. " +
 		"Address details and customer PII are never returned. Scans at most 10,000 orders and reports total_available, " +
 		"unscanned_orders, and duplicates_skipped. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	orderGeographySchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD."},
 		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD."},
 		"max_orders": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 5000}
@@ -1964,10 +1964,10 @@ const (
 		"status/payment/store/currency mix, shipping methods, AOV bands, shipping country, top SKUs, and shipment latency. " +
 		"Only aggregates are returned; customer PII never enters the result. Scans at most 20,000 orders and reports " +
 		"total_available, excluded_orders, duplicates_skipped, and the paging caveat. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	salesAnalysisSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD."},
 		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD."},
 		"max_orders": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 10000},
@@ -2023,16 +2023,16 @@ const (
 
 	storeConfigsToolDescription = "Lists store views (GET /rest/{store_code}/V1/store/storeConfigs) with id, code, website, locale, " +
 		"currencies, timezone, and base URL. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 	flatCategoriesToolName  = "magento.categories.flat"
 	flatCategoriesToolTitle = "List Magento categories flat"
 
 	flatCategoriesToolDescription = "Flattens the category tree (GET /rest/{store_code}/V1/categories) into id, parent, name, level, " +
 		"and slash-separated path rows, which is what product-to-category mapping needs. Read-only. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	storeConfigsSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."}
 	}, "required": ["instance"], "additionalProperties": false}`
 )
 

@@ -35,6 +35,12 @@ type BulkUpdateResult struct {
 	Updated int             `json:"updated" jsonschema:"Rows that updated a product."`
 	Failed  int             `json:"failed" jsonschema:"Rows that failed."`
 	Rows    []BulkUpdateRow `json:"rows" jsonschema:"Per-row results, in input order."`
+	// Replayed is set by the operation ledger when this call returned a recorded
+	// result instead of writing again (INT-02). Without it a caller reading only
+	// structuredContent cannot tell a replay from a fresh write, which is how an
+	// ERP's re-send turned into a silent no-op: "updated:1" and a product that was
+	// still disabled.
+	Replayed bool `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency key, so no second write happened."`
 }
 
 // ensureBulkSKUsExist rejects a bulk request that names a SKU with no product.

@@ -228,3 +228,44 @@ t13 的第 2/3 条验收按 B 判：「构造函数与查询方法完成 + 接�
 `operation_unknown` 的含义是「不知道上游做没做」。因此 `dispose` **不能**是「当作没发生」——
 必须记录人的判断（谁、何时、依据什么、结论是什么）。**这比工具叫什么名字重要**：如果 dispose
 只是把状态改掉，等于把「不确定」洗成「确定」，那比留着 unknown 更危险。
+
+## t11 交付与待接线的配方
+
+t11 按 B 交付：改了 4 个 in-scope 文件，13 条修复，16 条新测试，**11 组变异验证**（逐条把修复
+改回旧实现，11/11 都被测试杀掉）。
+
+### 它诚实标注的未闭环项
+
+| 项 | 位置 | 状态 |
+|---|---|---|
+| U-50 summary 侧（时区日桶、`timezone` 字段） | `order.go` / `tools.go` | **未接线** |
+| U-47（无 tax/refund 字段）、U-54（1000 单误报 truncated）、U-56（366 天上限） | `order.go` | 未动 |
+| U-62/63/64 | `order.go` / `tools.go` | 未动 |
+
+### 后续任务的接线配方（t11 提供）
+
+共享 helper 签名：
+
+```text
+(s *Service) resolveTimezone(ctx, timezone string) (*time.Location, string, error)
+reportDay(createdAt string, loc *time.Location) string
+windowLocalRange(from, to time.Time, loc *time.Location) WindowLocal
+parseReportWindow(fromRaw, toRaw string, loc *time.Location) (time.Time, time.Time, error)
+```
+
+接线三步：
+
+1. `SalesSummary` 加 `Timezone string`，用 `resolveTimezone(ctx, "")` 解析，日桶改 `reportDay(order.CreatedAt, loc)`
+2. `tools.go` 里 `newSalesAnalysisTool` 的 handler 换成 `svc.AnalyzeSalesWindow(ctx, in.From, in.To, in.MaxOrders, in.Timezone)`（一行）
+3. 可复用 `parseReportWindow` 给 summary 解析 from/to
+
+### 一个值得记的过程信息
+
+t11 报告：工作期间别人并发改同包，`go test` 一度编译失败（`document_write_test.go` 的 fakeLedger
+缺 `Dispose`、`operations_test.go` 的 `operation.dispose` 缺描述）。它用
+`git worktree add --detach HEAD` 建隔离树跑门禁，等对方落定后在真实树重跑也全绿。
+
+**这是正确的应对**：并发编辑下，一个 agent 看到红不一定是自己造成的。它没有去改别人的文件来
+"修好编译"，而是隔离验证、事后复核——这避免了互相踩踏。
+
+**但它也留下一条要求**：t9/t13 后续若再改，**以真实树重跑为准**，不能只看隔离树的绿。

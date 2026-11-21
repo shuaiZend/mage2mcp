@@ -37,7 +37,7 @@ const (
 	priceInputPattern         = `^[0-9]+(\\.[0-9]{1,4})?$`
 	attributeCodeInputPattern = `^[a-z0-9_]{1,64}$`
 	sourceCodeInputPattern    = `^[a-z0-9_]{1,64}$`
-	instanceResolutionNote    = " The instance input is resolved by the server when only one Magento instance is configured."
+	instanceResolutionNote    = " The instance input is required and must name a configured Magento instance."
 
 	productCreateToolDescription = "Creates one product in the configured Magento 2 REST catalog " +
 		"(POST /rest/{store_code}/V1/products) using the integration credential. " +
@@ -81,7 +81,7 @@ const (
 		"At most 100 items are accepted per call. MSI source items alone do not update a configurable parent's legacy stock status; verify the parent is salable after assigning child stock." +
 		instanceResolutionNote
 
-	instanceProp                = `"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; resolved by the server when only one instance is configured."}`
+	instanceProp                = `"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."}`
 	confirmationProp            = `"confirmation_id": {"type": "string", "maxLength": 128, "description": "Approval id from a confirmation_required response; resend the same arguments with this id to execute."}`
 	idempotencyKeyProp          = `"idempotency_key": {"type": "string", "maxLength": 256, "description": "Optional replay key. Repeating it with the same arguments returns the recorded outcome without a second upstream mutation; reusing it with different arguments is rejected as idempotency_key_reuse. Without a key one is derived from the arguments. The key is not caller-scoped, so treat it as a secret: use an unguessable value (a UUID), never a predictable one."}`
 	configurableOperationIDProp = `"operation_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$", "description": "Optional resume handle. Pass the operation_id returned by a partial configurable.create to resume it: children and a parent that already exist are reused instead of re-created, missing links are repaired, and no duplicate SKU is written. Omit it for a fresh create, which refuses a pre-existing SKU."}`
@@ -2460,7 +2460,7 @@ const (
 	bulkLinkDescription = "Magento write operation: adds (POST /rest/{store_code}/V1/products/{sku}/links) or removes " +
 		"(DELETE /rest/{store_code}/V1/products/{sku}/links/{type}/{linkedSku}) one link type (related, upsell, crosssell) for up to 50 target SKUs " +
 		"on one product, one call per target, with a per-target partial-success report. Earlier changes are not rolled back. " +
-		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The instance input is required and must name a configured Magento instance. Requires human confirmation."
 
 	bulkLinkSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
 		"link_type": {"type": "string", "enum": ["related", "upsell", "crosssell"], "description": "Relation kind: related (also bought), upsell (upgrade) or crosssell (add-on)."},
@@ -2508,7 +2508,7 @@ const (
 	bulkOptionCreateDescription = "Magento write operation: adds up to 50 option labels to one select or multiselect attribute " +
 		"(POST /rest/{store_code}/V1/products/attributes/{code}/options, one call per label) with a per-label partial-success report. " +
 		"Duplicate labels are skipped; earlier options stay on failure. " +
-		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The instance input is required and must name a configured Magento instance. Requires human confirmation."
 
 	bulkOptionCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"attribute_code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `", "description": "Attribute code such as color. It is the code, not the attribute id or label."},
@@ -2552,7 +2552,7 @@ const (
 	configurableUpdateToolTitle   = "Update a Magento configurable product"
 	configurableUpdateDescription = "Magento write operation: updates a configurable parent's name, price, status, visibility, attributes, SEO fields, " +
 		"pricing fields, or assignments via the product update endpoint (PUT /rest/{store_code}/V1/products/{sku}). " +
-		"Refuses SKUs whose type is not configurable. The instance input is resolved by the server when only one Magento instance is configured. " +
+		"Refuses SKUs whose type is not configurable. The instance input is required and must name a configured Magento instance. " +
 		"Requires human confirmation."
 )
 
@@ -2582,11 +2582,11 @@ const (
 	creditmemoEmailToolName = "magento.creditmemo.email"
 
 	invoiceEmailDescription = "Magento write operation: sends the invoice email (POST /rest/{store_code}/V1/invoices/{id}/emails) on the resolved instance. " +
-		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is required and must name a configured Magento instance. Requires human confirmation."
 	shipmentEmailDescription = "Magento write operation: sends the shipment email (POST /rest/{store_code}/V1/shipment/{id}/emails) on the resolved instance. " +
-		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is required and must name a configured Magento instance. Requires human confirmation."
 	creditmemoEmailDescription = "Magento write operation: sends the credit memo email (POST /rest/{store_code}/V1/creditmemo/{id}/emails) on the resolved instance. " +
-		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The recipient is the order's customer email; the gateway never accepts an address. The instance input is required and must name a configured Magento instance. Requires human confirmation."
 
 	documentEmailSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"document_id": {"type": "integer", "minimum": 1, "description": "Document entity id of the invoice, shipment or credit memo to email."}
@@ -2636,12 +2636,12 @@ const (
 	inventorySourceCreateToolTitle   = "Create a Magento inventory source"
 	inventorySourceCreateDescription = "Magento write operation: creates an MSI source " +
 		"(POST /rest/{store_code}/V1/inventory/sources) on the resolved instance with code, name, enabled flag, and location. " +
-		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The instance input is required and must name a configured Magento instance. Requires human confirmation."
 	stockSourceLinkToolName    = "magento.inventory.stock_source_link"
 	stockSourceLinkToolTitle   = "Link a source to a Magento stock"
 	stockSourceLinkDescription = "Magento write operation: attaches an MSI source to a stock " +
 		"(POST /rest/{store_code}/V1/inventory/stock-source-links) on the resolved instance with a position. " +
-		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The instance input is required and must name a configured Magento instance. Requires human confirmation."
 
 	inventorySourceCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"source_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$", "description": "Inventory source code, for example default."},
@@ -2741,7 +2741,7 @@ const (
 	stockSourceUnlinkDescription = "Magento write operation: detaches an MSI source from a stock " +
 		"(POST /rest/{store_code}/V1/inventory/stock-source-links-delete) on the resolved instance. Products keep their source items; " +
 		"the stock stops selling from that source. Destructive and confirmation-gated. " +
-		"The instance input is resolved by the server when only one Magento instance is configured."
+		"The instance input is required and must name a configured Magento instance."
 
 	stockSourceUnlinkSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"stock_id": {"type": "integer", "minimum": 1, "description": "Inventory stock id. The default stock is 1."},
@@ -2789,7 +2789,7 @@ const (
 	createVariationsDescription = "Magento write operation: creates simple children for an existing configurable parent and links them " +
 		"(POST /rest/{store_code}/V1/products then POST /rest/{store_code}/V1/configurable-products/{sku}/child) on the resolved instance. " +
 		"Existing SKUs are skipped, so the call is idempotent per SKU; failures are reported per row and earlier children are not rolled back. " +
-		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The instance input is required and must name a configured Magento instance. Requires human confirmation."
 
 	createVariationsSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "SKU of the configurable parent product."},
@@ -2846,7 +2846,7 @@ const (
 	setConfigurableOptionsToolTitle   = "Set configurable variant options"
 	setConfigurableOptionsDescription = "Magento write operation: declares the variant attributes and value ordering of an existing configurable parent " +
 		"(POST /rest/{store_code}/V1/configurable-products/{sku}/options, one option per call) on the resolved instance. " +
-		"Earlier options stay if a later one fails. The instance input is resolved by the server when only one Magento instance is configured. " +
+		"Earlier options stay if a later one fails. The instance input is required and must name a configured Magento instance. " +
 		"Requires human confirmation."
 
 	setConfigurableOptionsSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
@@ -2908,7 +2908,7 @@ const (
 	productOptionCreateToolTitle   = "Create a Magento product custom option"
 	productOptionCreateDescription = "Magento write operation: adds one custom option to a product " +
 		"(POST /rest/{store_code}/V1/products/{sku}/options) on the resolved instance. Selectable types require 1-50 values with fixed or percent pricing. " +
-		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The instance input is required and must name a configured Magento instance. Requires human confirmation."
 
 	productOptionCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
 		"title": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Label shown to the shopper for this custom option."},
@@ -2977,12 +2977,12 @@ const (
 	productOptionUpdateToolTitle   = "Update a Magento product custom option"
 	productOptionUpdateDescription = "Magento write operation: updates one custom option " +
 		"(PUT /rest/{store_code}/V1/products/{sku}/options/{optionId}) on the resolved instance. Selectable types require 1-50 values with fixed or percent pricing. " +
-		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The instance input is required and must name a configured Magento instance. Requires human confirmation."
 	productOptionDeleteToolName    = "magento.product.options.delete"
 	productOptionDeleteToolTitle   = "Delete a Magento product custom option"
 	productOptionDeleteDescription = "Magento write operation: deletes one custom option " +
 		"(DELETE /rest/{store_code}/V1/products/{sku}/options/{optionId}) on the resolved instance. Irreversible; existing selections in carts are not restored. " +
-		"The instance input is resolved by the server when only one Magento instance is configured. Requires human confirmation."
+		"The instance input is required and must name a configured Magento instance. Requires human confirmation."
 
 	productOptionUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
 		"option_id": {"type": "integer", "minimum": 1, "description": "Custom option id from product.options, or the attribute option id for attribute tools."},

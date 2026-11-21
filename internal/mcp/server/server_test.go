@@ -2476,3 +2476,280 @@ func TestLedgerGatedWriteOutcomeAuditHasRequestID(t *testing.T) {
 		t.Fatalf("outcome audit = %+v, want phase outcome/decision allow", gate.finishes[0].Audit)
 	}
 }
+
+// U-80 / SEC-05: an instance value that cannot name any configured instance is
+// refused before the audit sink sees it. The raw argument used to be recorded
+// first and rejected by the tool schema afterwards, so a caller could write
+// arbitrary strings — 5000-character values, embedded newlines, forged
+// attribution lines — into audit_events.
+func TestForgedInstanceIsRejectedBeforeAudit(t *testing.T) {
+	reg := registry.New()
+	ran := false
+	if err := reg.Register(authzStubTool(t, "magento.product.get", registry.PermissionRead, &ran)); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var audited []string
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), audited...)
+	}
+	opts := Options{Version: "test", Registry: reg,
+		Audit: func(_ context.Context, _, instance, phase, _, _ string) {
+			mu.Lock()
+			defer mu.Unlock()
+			audited = append(audited, phase+"="+instance)
+		}}
+	srv, err := NewMCP(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forged := range []string{
+		"demo\nFORGED audit line: subject=admin",
+		strings.Repeat("A", 5000),
+		"../../demo",
+		"demo zone",
+	} {
+		res := callToolHTTP(t, srv, reg, "magento.product.get", map[string]any{"instance": forged})
+		if code := resultMap(t, res)["code"]; code != "invalid_argument" {
+			t.Fatalf("instance %q: code = %v, want invalid_argument", forged, code)
+		}
+		if res.Meta != nil {
+			if echoed, ok := res.Meta["instance"]; ok {
+				t.Fatalf("instance %q was echoed in _meta: %v", forged, echoed)
+			}
+		}
+		details, _ := resultMap(t, res)["details"].(map[string]any)
+		if details["validation"] == "" || details["validation"] == nil {
+			t.Fatalf("instance %q: details.validation is missing (%v)", forged, details)
+		}
+	}
+	if ran {
+		t.Fatal("the handler ran for a forged instance")
+	}
+	if got := snapshot(); len(got) != 0 {
+		t.Fatalf("audit rows written for rejected instances: %v", got)
+	}
+
+	// A well-formed id must still be audited even when it names no configured
+	// instance: the guard bounds the shape, it does not decide authorization.
+	callToolHTTP(t, srv, reg, "magento.product.get", map[string]any{"instance": "demo2"})
+	if got := snapshot(); len(got) != 2 || got[0] != "intent=demo2" || got[1] != "outcome=demo2" {
+		t.Fatalf("audit rows for a well-formed unknown instance = %v, want intent+outcome on demo2", got)
+	}
+}
+
+// U-28: an unknown tool name is a caller error. Before this check the call fell
+// through to the SDK, whose plain error became code=internal — the same code a
+// real crash returns, so a client could not tell "fix your tool name" from
+// "page someone".
+func TestUnknownToolReturnsNotFoundNotInternal(t *testing.T) {
+	reg := registry.New()
+	if err := reg.Register(authzStubTool(t, "magento.product.get", registry.PermissionRead, nil)); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewMCP(Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := callToolHTTP(t, srv, reg, "magento.operation.status", map[string]any{"instance": "demo"})
+	body := resultMap(t, res)
+	if body["code"] != "not_found" {
+		t.Fatalf("code = %v, want not_found (internal means the SDK error leaked)", body["code"])
+	}
+	details, _ := body["details"].(map[string]any)
+	if details["tool"] != "magento.operation.status" {
+		t.Fatalf("details.tool = %v, want the requested tool name", details["tool"])
+	}
+	if text := resultText(t, res); !strings.Contains(text, "not_found") {
+		t.Fatalf("text = %q, want the code", text)
+	}
+}
+
+// U-28 (second half): the text channel of a schema rejection names the field and
+// rule, not just "arguments do not match the tool schema". An agent that prints
+// only content used to have no way to see which property was wrong.
+func TestSchemaRejectionTextCarriesValidationDetail(t *testing.T) {
+	reg := registry.New()
+	tool := registry.Tool{
+		Name: "magento.product.schema", Title: "Schema fixture",
+		Description: "Schema detail fixture.", Capability: "magento.product.read",
+		Permission: registry.PermissionRead, Timeout: 5 * time.Second,
+		Annotations: mcp.ToolAnnotations{ReadOnlyHint: true},
+	}
+	tool.Register = func(srv *mcp.Server) error {
+		toolerr.Add(srv, &mcp.Tool{
+			Name: tool.Name, Title: tool.Title, Description: tool.Description,
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"value":{"type":"string","maxLength":10,"description":"Bounded value."}},"required":["value"],"additionalProperties":false}`),
+		}, func(context.Context, *mcp.CallToolRequest, authzInput) (*mcp.CallToolResult, authzOutput, error) {
+			return nil, authzOutput{OK: true}, nil
+		})
+		return nil
+	}
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewMCP(Options{Version: "test", Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := callToolHTTP(t, srv, reg, "magento.product.schema", map[string]any{"value": strings.Repeat("x", 40)})
+	if code := resultMap(t, res)["code"]; code != "invalid_argument" {
+		t.Fatalf("code = %v, want invalid_argument", code)
+	}
+	text := resultText(t, res)
+	if !strings.Contains(text, "validation:") || !strings.Contains(text, "maxLength") {
+		t.Fatalf("text = %q, want the validation detail (property + rule) inline", text)
+	}
+}
+
+// U-85: the event stream must declare UTF-8. The SDK writes
+// "Content-Type: text/event-stream" with no charset, and HTTP then defaults a
+// text/* type to ISO-8859-1, so a client that follows the default decodes Polish
+// product names and error text as mojibake.
+func TestEventStreamResponseDeclaresUTF8(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(Handler(srv, Options{Registry: mustRegistry(t)}))
+	defer ts.Close()
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"charset-test","version":"0"}}}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want an event stream for this request", contentType)
+	}
+	if !strings.Contains(strings.ToLower(contentType), "charset=utf-8") {
+		t.Fatalf("Content-Type = %q, want charset=utf-8", contentType)
+	}
+}
+
+// U-81: a required `instance` property may not be described as resolved by the
+// server. 101 tools require the field; the description used to promise it could
+// be omitted when one instance was configured, so the first call an agent made
+// from the description failed with invalid_argument.
+func TestMagentoInstanceDescriptionsMatchRequiredSchema(t *testing.T) {
+	signer, err := magento.ParseCredential("bearer:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := magento.NewClient(magento.ClientConfig{
+		BaseURL: "https://shop.example.com", StoreCode: "default", Signer: signer, Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := magento.NewService(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registry.New()
+	if err := magento.Register(reg, svc); err != nil {
+		t.Fatal(err)
+	}
+	if err := magento.RegisterWrites(reg, svc); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := magento.NewResolver(map[string]*magento.Service{"demo": svc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := magento.RegisterImportJobs(reg, resolver, importQueueStub{}, importBatchStub{}); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewMCP(Options{Version: "test", Registry: reg, Confirm: serverTestConfirm(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	mcpClient, err := mcp.NewClient(&mcp.Implementation{Name: "schema-audit", Version: "0"}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = mcpClient.Close() }()
+	list, err := mcpClient.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	claims := []string{"resolved by the server", "may be omitted", "can be omitted"}
+	checked := 0
+	for _, tool := range list.Tools {
+		for _, claim := range claims {
+			if strings.Contains(strings.ToLower(tool.Description), claim) {
+				t.Errorf("%s: tool description still says %q while instance is required", tool.Name, claim)
+			}
+		}
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatalf("%s: input schema: %v", tool.Name, err)
+		}
+		var schema struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+			Required []string `json:"required"`
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("%s: input schema: %v", tool.Name, err)
+		}
+		property, hasInstance := schema.Properties["instance"]
+		if !hasInstance {
+			continue
+		}
+		required := slices.Contains(schema.Required, "instance")
+		if required {
+			checked++
+			for _, claim := range claims {
+				if strings.Contains(strings.ToLower(property.Description), claim) {
+					t.Errorf("%s: instance is required but described as %q", tool.Name, claim)
+				}
+			}
+		}
+	}
+	if checked < 100 {
+		t.Fatalf("checked %d tools with a required instance, want the whole catalog (read, write and import)", checked)
+	}
+}
+
+// importQueueStub and importBatchStub satisfy magento's async-import interfaces so
+// the schema audit can register the import tools without a database or worker.
+type importQueueStub struct{}
+
+func (importQueueStub) Enqueue(context.Context, jobs.Task) (string, error) { return "", nil }
+func (importQueueStub) Cancel(context.Context, string, string, string) error {
+	return nil
+}
+func (importQueueStub) GetJob(context.Context, string, string, string) (*jobs.JobRecord, error) {
+	return nil, nil
+}
+
+type importBatchStub struct{}
+
+func (importBatchStub) GetImportBatchByJob(context.Context, string, string, string) (*jobs.ImportBatch, error) {
+	return nil, nil
+}
+func (importBatchStub) GetImportBatch(context.Context, string, string, string) (*jobs.ImportBatch, error) {
+	return nil, nil
+}
+func (importBatchStub) ListImportBatches(context.Context, string, int) ([]jobs.ImportBatch, error) {
+	return nil, nil
+}
