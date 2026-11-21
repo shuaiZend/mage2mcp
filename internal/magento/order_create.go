@@ -117,7 +117,13 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Create
 	run, begun, err := ops.Begin(ctx, OperationRequest{
 		Tool: "magento.order.create", Instance: s.operationInstanceID(in.Instance),
 		Subject: callerSubject(ctx), IdempotencyKey: in.IdempotencyKey,
-		EntityType: storage.EntityOrder, EntityID: strconv.Itoa(in.CustomerID),
+		// The order does not exist yet, so there is no order id to record: the
+		// only entity that provably exists when the placement begins is the
+		// customer. Recording the customer id under entity_type=order made an
+		// operator look up order 5 (someone else's order) for a row that was
+		// about customer 5 (U-70). The order id is written to upstream_ref when
+		// the placement succeeds.
+		EntityType: storage.EntityCustomer, EntityID: strconv.Itoa(in.CustomerID),
 		// Magento computes the order total; the cart total is read only for
 		// reconciliation, so the intent carries no amount.
 		Args: orderCreateArgsFrom(in),

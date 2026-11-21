@@ -869,11 +869,13 @@ func (s *Service) ObserveOperation(ctx context.Context, operation, entityType, e
 		}
 		return ObservationInconclusive, nil
 	case "order":
-		// magento.order.create records the *customer* id here, because the order
-		// does not exist yet when the operation begins. Reading /orders/{id} would
-		// fetch an unrelated order and could report a placement as applied that
-		// never happened, so this operation is left to the placement path and to a
-		// human: it is inconclusive by construction.
+		// magento.order.create no longer files itself under this entity type: it
+		// records the customer it places the order for (U-70), so a *new*
+		// order-typed row always names a real order. The guard stays because rows
+		// written before that fix still carry entity_type=order with a customer id
+		// in entity_id; reading /orders/{that id} would fetch someone else's order
+		// and could report a placement as applied that never happened. Such rows
+		// are inconclusive by construction and belong to a human.
 		if operation == "magento.order.create" {
 			return ObservationInconclusive, nil
 		}
@@ -930,6 +932,16 @@ func (s *Service) ObserveOperation(ctx context.Context, operation, entityType, e
 		}
 		return ObservationApplied, nil
 	case "customer":
+		// magento.order.create records the customer, not the order, because the
+		// order does not exist yet when the operation begins (U-70). A customer
+		// that exists proves nothing about whether an order was placed for it:
+		// reading /customers/{id} would report an ambiguous placement as applied,
+		// so this operation is inconclusive by construction and is left to the
+		// placement path and to a human. Every other customer-typed operation
+		// (customer.update, ...) is still decided by the read below.
+		if operation == "magento.order.create" {
+			return ObservationInconclusive, nil
+		}
 		_, err := s.client.do(ctx, http.MethodGet, "/customers/"+url.PathEscape(entityID), nil, nil)
 		if observation, done := observeError(err); done {
 			return observation, nil

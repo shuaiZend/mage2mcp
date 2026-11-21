@@ -509,8 +509,11 @@ func TestReadOnlyDatabaseRegistrationPinsInventory(t *testing.T) {
 	if _, err := server.NewMCP(server.Options{Version: "test", Registry: reg, Confirm: testConfirmService(t)}); err != nil {
 		t.Fatalf("NewMCP: %v", err)
 	}
-	if got := reg.Len(); got != 56 {
-		t.Fatalf("read-only+database registry = %d tools, want 56", got)
+	// 58 = the previous 56 plus the two read-only ledger tools (operation.get,
+	// operation.list). operation.dispose is a write tool and must stay out of a
+	// read-only deployment.
+	if got := reg.Len(); got != 58 {
+		t.Fatalf("read-only+database registry = %d tools, want 58", got)
 	}
 	magento, nonRead := 0, 0
 	for _, tool := range reg.List() {
@@ -521,8 +524,8 @@ func TestReadOnlyDatabaseRegistrationPinsInventory(t *testing.T) {
 			nonRead++
 		}
 	}
-	if magento != 46 || nonRead != 0 {
-		t.Fatalf("read-only+database: magento=%d non-read=%d, want 46/0", magento, nonRead)
+	if magento != 48 || nonRead != 0 {
+		t.Fatalf("read-only+database: magento=%d non-read=%d, want 48/0", magento, nonRead)
 	}
 	for _, name := range []string{"magento.import.status", "magento.import.batches", "magento.import.batch"} {
 		if _, ok := reg.Lookup(name); !ok {

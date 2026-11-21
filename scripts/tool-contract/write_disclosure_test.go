@@ -77,8 +77,10 @@ func TestWriteToolDescriptionsDiscloseSideEffects(t *testing.T) {
 		writes++
 		checkWriteDisclosure(t, "registry", tool.Name, tool.Description)
 	}
-	if writes != 55 {
-		t.Fatalf("write tool count = %d, want 55", writes)
+	// 56 = the previous 55 plus magento.operation.dispose, the ledger disposition
+	// write tool. A new write tool must be counted here on purpose.
+	if writes != 56 {
+		t.Fatalf("write tool count = %d, want 56", writes)
 	}
 
 	// The agent-facing mcp.Tool descriptions are built separately from the

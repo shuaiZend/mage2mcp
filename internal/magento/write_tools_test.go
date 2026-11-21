@@ -40,6 +40,7 @@ var writeToolNames = []string{
 	inventorySourceCreateToolName, stockSourceLinkToolName, stockSourceUnlinkToolName,
 	createVariationsToolName, setConfigurableOptionsToolName, productOptionCreateToolName,
 	productOptionUpdateToolName, productOptionDeleteToolName,
+	operationDisposeToolName,
 }
 
 func TestRegisterWritesMetadata(t *testing.T) {

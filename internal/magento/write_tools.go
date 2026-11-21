@@ -327,6 +327,7 @@ func registerWriteTools(reg *registry.Registry, lookup serviceLookup) error {
 		newConfigurableUpdateTool(lookup), newInventorySourceCreateTool(lookup), newStockSourceLinkTool(lookup),
 		newStockSourceUnlinkTool(lookup), newCreateVariationsTool(lookup), newSetConfigurableOptionsTool(lookup),
 		newProductOptionCreateTool(lookup), newProductOptionUpdateTool(lookup), newProductOptionDeleteTool(lookup),
+		newOperationDisposeTool(),
 	}
 	tools = append(tools, newDocumentEmailTools(lookup)...)
 	for _, tool := range tools {
@@ -399,6 +400,7 @@ func writeToolSchemas() map[string]string {
 		productOptionCreateToolName:    productOptionCreateSchema,
 		productOptionUpdateToolName:    productOptionUpdateSchema,
 		productOptionDeleteToolName:    productOptionDeleteSchema,
+		operationDisposeToolName:       operationDisposeSchema,
 	}
 }
 
@@ -477,6 +479,7 @@ var writeDisclosures = map[string]writeDisclosure{
 	"magento.invoice.capture":                {mutates: "the invoice payment state and the customer's payment method", idempotency: "idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded capture, and an ambiguous outcome is recorded as unknown and never retried"},
 	"magento.invoice.create":                 {mutates: "the order's invoice record", idempotency: "idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded invoice, and an ambiguous outcome is recorded as unknown and never retried"},
 	"magento.invoice.email":                  {mutates: "the invoice email state", idempotency: "not idempotent; a retry can send a duplicate email"},
+	"magento.operation.dispose":              {mutates: "the operation ledger's state for one unknown operation", idempotency: "not idempotent; only an unknown operation can be disposed, so a second call returns conflict"},
 	"magento.order.cancel":                   {mutates: "the sales order state", idempotency: "idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded cancellation, and an ambiguous outcome is reconciled against the order state"},
 	"magento.order.comment":                  {mutates: "the order status history", idempotency: "not idempotent; a retry appends a duplicate comment"},
 	"magento.order.create":                   {mutates: "the sales order and the customer's payment method", idempotency: "idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded order, and an ambiguous placement is reconciled before it is recorded"},

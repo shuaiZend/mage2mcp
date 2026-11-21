@@ -831,3 +831,77 @@ func TestDecodeUpstreamBusinessError(t *testing.T) {
 		t.Fatalf("upstream_message = %q, want Magento's reason", e.Details["upstream_message"])
 	}
 }
+
+// U-70: magento.order.create files its ledger row under the customer, because the
+// order does not exist when the placement begins. The reconciler must not read
+// the customer and call an ambiguous placement applied — a customer that exists
+// says nothing about whether an order was placed for it. Without this guard the
+// reconciler would resolve a placement that never happened as succeeded, with no
+// human in the loop.
+func TestOrderCreateReconciliationDoesNotTreatTheCustomerAsProof(t *testing.T) {
+	var paths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":7,"email":"ada@example.com"}`)
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	observation, err := svc.ObserveOperation(context.Background(), "magento.order.create", "customer", "7")
+	if err != nil {
+		t.Fatalf("ObserveOperation: %v", err)
+	}
+	if observation != ObservationInconclusive {
+		t.Fatalf("observation = %q, want inconclusive: an existing customer does not prove an order was placed", observation)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("observer read %v, want no upstream read for a placement", paths)
+	}
+}
+
+// The guard above must be scoped to order.create: every other customer-typed
+// operation still decides by reading the customer, or the guard would have
+// turned the whole branch into "never know".
+func TestCustomerObservationsStillReadTheCustomer(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		want       Observation
+		wantPath   string
+		bodyWanted string
+	}{
+		{name: "existing customer is applied", status: http.StatusOK, want: ObservationApplied,
+			wantPath: "/rest/default/V1/customers/7", bodyWanted: `{"id":7}`},
+		{name: "missing customer is not applied", status: http.StatusNotFound, want: ObservationNotApplied,
+			wantPath: "/rest/default/V1/customers/7"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var paths []string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				paths = append(paths, r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				if tc.status == http.StatusNotFound {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `{"message":"The customer that was requested doesn't exist."}`)
+					return
+				}
+				_, _ = io.WriteString(w, tc.bodyWanted)
+			}))
+			defer ts.Close()
+			svc := testService(t, ts.URL)
+
+			observation, err := svc.ObserveOperation(context.Background(), "magento.customer.update", "customer", "7")
+			if err != nil {
+				t.Fatalf("ObserveOperation: %v", err)
+			}
+			if observation != tc.want {
+				t.Fatalf("observation = %q, want %q", observation, tc.want)
+			}
+			if len(paths) != 1 || paths[0] != tc.wantPath {
+				t.Fatalf("reads = %v, want [%s]", paths, tc.wantPath)
+			}
+		})
+	}
+}

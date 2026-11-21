@@ -28,11 +28,11 @@ Do not edit the tables by hand; run the generator after changing registration.
 
 | Configuration | Tools | Magento |
 |---|---:|---:|
-| Maximal (all modules, `tools.writes: true`, `database.url` set, bindings configured) | 112 | 101 |
-| Read-only default (all modules, no writes, no database) | 54 | 43 |
-| Read-only, database, no bindings | 56 | 46 |
+| Maximal (all modules, `tools.writes: true`, `database.url` set, bindings configured) | 115 | 104 |
+| Read-only default (all modules, no writes, no database) | 56 | 45 |
+| Read-only, database, no bindings | 58 | 48 |
 
-`tools.writes` gates 52 Magento write/destructive tools; `database.url` gates 3 import read tools (status/batches/batch); start/cancel/resume require both. Module enablement and bindings gate the Cloudflare, GA4, and unified tools; `platform.info` is always registered.
+`tools.writes` gates 53 Magento write/destructive tools; `database.url` gates 3 import read tools (status/batches/batch); start/cancel/resume require both. Module enablement and bindings gate the Cloudflare, GA4, and unified tools; `platform.info` is always registered.
 
 A database-enabled read-only deployment registers only the three read import tools; start/cancel/resume also require `tools.writes`.
 
@@ -42,7 +42,7 @@ A database-enabled read-only deployment registers only the three read import too
 |---|---|---|---|---|---|---|
 | `platform.info` | read | no | no | 30s | always | Server information: version, protocol versions, registered tools, instances, and the writes flag. |
 
-### Magento 2 (101 tools)
+### Magento 2 (104 tools)
 
 | Tool | Scope | Write? | Confirmation | Timeout | Gate | Notes |
 |---|---|---|---|---|---|---|
@@ -104,6 +104,9 @@ A database-enabled read-only deployment registers only the three read import too
 | `magento.invoice.email` | write | yes | yes | 60s | tools.writes | Magento write operation: sends the invoice email (POST /rest/{store_code}/V1/invoices/{id}/emails) on the resolved instance. |
 | `magento.invoice.get` | read | no | no | 30s | always | Reads one invoice by id (GET /rest/{store_code}/V1/invoices/{id}) with totals and quantities. |
 | `magento.invoice.list` | read | no | no | 30s | always | Lists the invoices of one order (GET /rest/{store_code}/V1/invoices filtered by order_id) with totals and quantities. |
+| `magento.operation.dispose` | write | yes | yes | 60s | tools.writes | Magento write operation: Records what an operator found out about an operation whose outcome is unknown, and moves it to the matching state. |
+| `magento.operation.get` | read | no | no | 30s | always | Reads one ledger operation by its operation_id: the tool it represents, the entity, the state (pending, executing, succeeded, failed, unknown, reconciling), the recorded result,... |
+| `magento.operation.list` | read | no | no | 30s | always | Lists ledger operations newest first, optionally filtered by instance, tool name, state, or needs_attention. |
 | `magento.order.cancel` | destructive | yes | yes | 60s | tools.writes | Magento write operation: cancels an order (POST /rest/{store_code}/V1/orders/{id}/cancel) on the resolved instance. |
 | `magento.order.comment` | write | yes | yes | 60s | tools.writes | Magento write operation: appends a status-history comment to an order (POST /rest/{store_code}/V1/orders/{id}/comments) on the resolved instance; a non-empty status also transit... |
 | `magento.order.create` | write | yes | yes | 60s | tools.writes | Magento write operation: places an order through the admin cart flow (cart, items, shipping information, then PUT /rest/{store_code}/V1/carts/{cartId}/order) on the resolved ins... |

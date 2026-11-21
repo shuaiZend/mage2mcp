@@ -318,3 +318,191 @@ func TestSalesSummaryReportsExcludedOrders(t *testing.T) {
 		t.Fatal("truncated = false although orders were excluded")
 	}
 }
+
+// --- summary timezone wiring (t16) ---------------------------------------
+
+// summaryTimezoneServer serves a store view timezone and one order whose UTC
+// timestamp is 23:30 on the 21st: 00:30 on the 22nd in Europe/Warsaw.
+func summaryTimezoneServer(t *testing.T, queries *[]url.Values) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/default/V1/store/storeConfigs":
+			_, _ = w.Write([]byte(`[{"id":1,"code":"pl","timezone":"Europe/Warsaw","base_currency_code":"PLN"}]`))
+		case "/rest/default/V1/orders":
+			if queries != nil {
+				*queries = append(*queries, r.URL.Query())
+			}
+			_, _ = w.Write([]byte(`{"items":[
+				{"created_at":"2026-11-21 23:30:00","grand_total":10,"total_qty_ordered":1,"order_currency_code":"PLN"}
+			],"total_count":1}`))
+		default:
+			_, _ = w.Write([]byte(`{"items":[],"total_count":0}`))
+		}
+	}))
+}
+
+// TestSalesSummaryBucketsByReportTimezone pins the wired timezone: the day bucket
+// is the store view's calendar day, the date-only window is sent as that day's
+// UTC instants, and the scan is ordered oldest first like sales.analysis.
+func TestSalesSummaryBucketsByReportTimezone(t *testing.T) {
+	var queries []url.Values
+	ts := summaryTimezoneServer(t, &queries)
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	summary, err := svc.SalesSummaryWindow(context.Background(), "2026-11-21", "2026-11-22")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Timezone != "Europe/Warsaw" {
+		t.Fatalf("timezone = %q, want Europe/Warsaw", summary.Timezone)
+	}
+	if len(summary.Days) != 1 || summary.Days[0].Date != "2026-11-22" {
+		t.Fatalf("days = %+v, want the order on the local day 2026-11-22", summary.Days)
+	}
+	if summary.Window != "2026-11-20T23:00:00Z/2026-11-21T23:00:00Z" {
+		t.Fatalf("window = %q, want the UTC instants of the Warsaw day", summary.Window)
+	}
+	if len(queries) == 0 {
+		t.Fatal("no order query was issued")
+	}
+	got := queries[0]
+	if v := got.Get("searchCriteria[filter_groups][0][filters][0][value]"); v != "2026-11-20 23:00:00" {
+		t.Fatalf("lower bound sent = %q, want the local day start in UTC", v)
+	}
+	if v := got.Get("searchCriteria[filter_groups][1][filters][0][value]"); v != "2026-11-21 23:00:00" {
+		t.Fatalf("upper bound sent = %q, want the local day end in UTC", v)
+	}
+	if f, d := got.Get("searchCriteria[sortOrders][0][field]"), got.Get("searchCriteria[sortOrders][0][direction]"); f != reportSortField || d != reportSortDirection {
+		t.Fatalf("primary sort = %s %s, want %s %s", f, d, reportSortField, reportSortDirection)
+	}
+	if f := got.Get("searchCriteria[sortOrders][1][field]"); f != reportSortTiebreak {
+		t.Fatalf("tiebreak sort = %q, want %q", f, reportSortTiebreak)
+	}
+}
+
+// TestSalesSummaryAndAnalysisAgreeOnTheOrderDay is the cross-tool check: an order
+// created between 23:00 and 24:00 UTC must land on the same calendar day in
+// sales.summary and sales.analysis. Before the wiring, summary sliced created_at
+// (UTC day) while analysis used the store timezone, so the two reports of one
+// window disagreed by a day.
+func TestSalesSummaryAndAnalysisAgreeOnTheOrderDay(t *testing.T) {
+	ts := summaryTimezoneServer(t, nil)
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+	ctx := context.Background()
+
+	summary, err := svc.SalesSummaryWindow(ctx, "2026-11-21", "2026-11-22")
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysis, err := svc.AnalyzeSalesWindow(ctx, "2026-11-21", "2026-11-22", 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.Days) != 1 || len(analysis.ByDay) != 1 {
+		t.Fatalf("summary days = %+v, analysis by_day = %+v", summary.Days, analysis.ByDay)
+	}
+	if summary.Timezone != analysis.Timezone {
+		t.Fatalf("timezones disagree: summary %q analysis %q", summary.Timezone, analysis.Timezone)
+	}
+	if summary.Days[0].Date != analysis.ByDay[0].Date {
+		t.Fatalf("the same 23:30Z order lands on %q in summary and %q in analysis",
+			summary.Days[0].Date, analysis.ByDay[0].Date)
+	}
+	if summary.Days[0].Date != "2026-11-22" {
+		t.Fatalf("day = %q, want the store's local 2026-11-22", summary.Days[0].Date)
+	}
+}
+
+// TestSalesSummaryWindowRejectsInvalidDate pins the input validation that moved
+// with the window parsing.
+func TestSalesSummaryWindowRejectsInvalidDate(t *testing.T) {
+	svc := testService(t, "https://shop.example.com")
+	if _, err := svc.SalesSummaryWindow(context.Background(), "2026-11-21", "yesterday-ish"); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("err = %v, want invalid_argument", err)
+	}
+	if _, err := svc.SalesSummaryWindow(context.Background(), "", "2026-11-22"); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("empty from err = %v, want invalid_argument", err)
+	}
+}
+
+// summaryPagedServer serves a fixed number of orders across the 200-row pages the
+// summary scans, optionally reporting total_count.
+func summaryPagedServer(t *testing.T, total int, reportTotal bool) *httptest.Server {
+	t.Helper()
+	perPage := maxOrderLimit
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/rest/default/V1/orders" {
+			_, _ = w.Write([]byte(`{"items":[],"total_count":0}`))
+			return
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("searchCriteria[currentPage]"))
+		if page < 1 {
+			page = 1
+		}
+		from := (page - 1) * perPage
+		count := perPage
+		if from+count > total {
+			count = total - from
+		}
+		if count < 0 {
+			count = 0
+		}
+		items := make([]string, 0, count)
+		for i := 0; i < count; i++ {
+			items = append(items, `{"created_at":"2026-11-17 10:00:00","grand_total":1,"total_qty_ordered":1,"order_currency_code":"PLN"}`)
+		}
+		if reportTotal {
+			_, _ = fmt.Fprintf(w, `{"items":[%s],"total_count":%d}`, strings.Join(items, ","), total)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"items":[%s]}`, strings.Join(items, ","))
+	}))
+}
+
+// TestSalesSummaryExactCapIsNotTruncated covers U-54: a window holding exactly
+// maxSummaryOrders orders ran out of loop iterations instead of seeing a short
+// page, so it claimed truncated=true while excluding nothing.
+func TestSalesSummaryExactCapIsNotTruncated(t *testing.T) {
+	ts := summaryPagedServer(t, maxSummaryOrders, true)
+	defer ts.Close()
+	from := time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+	summary, err := testService(t, ts.URL).SalesSummary(context.Background(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ScannedOrders != maxSummaryOrders || summary.TotalAvailable != maxSummaryOrders {
+		t.Fatalf("scanned = %d total_available = %d, want %d both", summary.ScannedOrders, summary.TotalAvailable, maxSummaryOrders)
+	}
+	if summary.ExcludedOrders != 0 {
+		t.Fatalf("excluded_orders = %d, want 0", summary.ExcludedOrders)
+	}
+	if summary.Truncated {
+		t.Fatalf("truncated = true for a complete %d-order scan", maxSummaryOrders)
+	}
+}
+
+// TestSalesSummaryUnknownTotalAtCapStaysTruncated is the other half of U-54: when
+// the store omits total_count, reaching the cap is not proof of completeness, so
+// the summary must keep saying it may be truncated.
+func TestSalesSummaryUnknownTotalAtCapStaysTruncated(t *testing.T) {
+	ts := summaryPagedServer(t, maxSummaryOrders, false)
+	defer ts.Close()
+	from := time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+	summary, err := testService(t, ts.URL).SalesSummary(context.Background(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ScannedOrders != maxSummaryOrders {
+		t.Fatalf("scanned = %d, want %d", summary.ScannedOrders, maxSummaryOrders)
+	}
+	if !summary.Truncated {
+		t.Fatal("truncated = false although total_count was omitted: an unknown total at the cap must stay truncated")
+	}
+}

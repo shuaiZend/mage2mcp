@@ -162,7 +162,7 @@ func (s *Service) SearchOrders(ctx context.Context, q OrderQuery) ([]Order, int,
 
 // SalesDay is one calendar day of aggregated sales.
 type SalesDay struct {
-	Date    string  `json:"date" jsonschema:"Calendar day, YYYY-MM-DD."`
+	Date    string  `json:"date" jsonschema:"Calendar day YYYY-MM-DD in the report timezone (see timezone)."`
 	Orders  int     `json:"orders" jsonschema:"Orders that matched."`
 	Revenue float64 `json:"revenue" jsonschema:"Revenue for this window."`
 	Items   float64 `json:"items" jsonschema:"Entries returned by this call."`
@@ -176,7 +176,8 @@ type SalesDay struct {
 // order was excluded.
 type SalesSummary struct {
 	Window         string     `json:"window" jsonschema:"Time window the figures cover, as RFC 3339 start/end."`
-	Days           []SalesDay `json:"days" jsonschema:"Per-day breakdown, oldest first."`
+	Timezone       string     `json:"timezone" jsonschema:"IANA time zone the day buckets use: the store view timezone."`
+	Days           []SalesDay `json:"days" jsonschema:"Per-day breakdown, oldest first, bucketed by the report timezone (see timezone)."`
 	TotalOrders    int        `json:"total_orders" jsonschema:"Orders counted in the window."`
 	TotalRevenue   float64    `json:"total_revenue" jsonschema:"Revenue in the window."`
 	TotalItems     float64    `json:"total_items" jsonschema:"Units sold in the window."`
@@ -190,14 +191,47 @@ type SalesSummary struct {
 
 // SalesSummary aggregates order count, revenue, and item quantity per day.
 //
-// It scans at most maxSummaryOrders orders (newest first) and reports whether
-// the window was truncated. Revenue is order grand_total, which includes tax
-// and shipping; it is not comparable to GA4 purchase revenue without stating
-// the difference.
+// It scans at most maxSummaryOrders orders, oldest first, and reports whether the
+// window was truncated. Day buckets are calendar days in the store view timezone,
+// the same rule sales.analysis uses (reportDay); revenue is order grand_total,
+// which includes tax and shipping and is not comparable to GA4 purchase revenue
+// without stating the difference.
+//
+// from and to are absolute instants. Callers that accept date-only input must use
+// SalesSummaryWindow so the window edges and the day buckets share one calendar.
 func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesSummary, error) {
 	if s == nil || s.client == nil {
 		return nil, errs.New(errs.CodeInternal, "Magento order service is not configured")
 	}
+	loc, zoneName, err := s.resolveTimezone(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return s.salesSummary(ctx, from, to, loc, zoneName)
+}
+
+// SalesSummaryWindow is SalesSummary for the raw from/to inputs of the tool.
+//
+// A bare YYYY-MM-DD value is a calendar day in the report timezone (the store
+// view timezone), so a date-only window and its day buckets share one calendar:
+// an order at 23:30Z on the 21st is reported on the 22nd by both this tool and
+// sales.analysis. An RFC 3339 value is an absolute instant and is used as given.
+func (s *Service) SalesSummaryWindow(ctx context.Context, fromRaw, toRaw string) (*SalesSummary, error) {
+	if s == nil || s.client == nil {
+		return nil, errs.New(errs.CodeInternal, "Magento order service is not configured")
+	}
+	loc, zoneName, err := s.resolveTimezone(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	from, to, err := parseReportWindow(fromRaw, toRaw, loc)
+	if err != nil {
+		return nil, err
+	}
+	return s.salesSummary(ctx, from, to, loc, zoneName)
+}
+
+func (s *Service) salesSummary(ctx context.Context, from, to time.Time, loc *time.Location, zoneName string) (*SalesSummary, error) {
 	if !to.After(from) {
 		return nil, invalidf("to must be after from")
 	}
@@ -205,8 +239,9 @@ func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesS
 		return nil, invalidf("sales window must be at most %d days", maxSummaryWindowDays)
 	}
 	summary := &SalesSummary{
-		Window: from.UTC().Format(time.RFC3339) + "/" + to.UTC().Format(time.RFC3339),
-		Days:   []SalesDay{},
+		Window:   from.UTC().Format(time.RFC3339) + "/" + to.UTC().Format(time.RFC3339),
+		Timezone: zoneName,
+		Days:     []SalesDay{},
 	}
 	byDate := map[string]*SalesDay{}
 	limit := maxOrderLimit
@@ -226,6 +261,13 @@ func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesS
 			return nil, err
 		}
 		query.Set("fields", orderSearchField)
+		// Scan oldest first, exactly like sales.analysis: when maxSummaryOrders
+		// caps the scan both reports keep the same end of the window, so two
+		// capped reports of one window stay comparable.
+		query.Set("searchCriteria[sortOrders][0][field]", reportSortField)
+		query.Set("searchCriteria[sortOrders][0][direction]", reportSortDirection)
+		query.Set("searchCriteria[sortOrders][1][field]", reportSortTiebreak)
+		query.Set("searchCriteria[sortOrders][1][direction]", reportSortDirection)
 		raw, err := s.client.do(ctx, http.MethodGet, "/orders", query, nil)
 		if err != nil {
 			return nil, err
@@ -238,8 +280,8 @@ func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesS
 			return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order search payload").WithCause(err)
 		}
 		for _, order := range payload.Items {
-			date := orderDate(order.CreatedAt)
-			if date == "" {
+			date, ok := summaryDay(order.CreatedAt, loc)
+			if !ok {
 				continue
 			}
 			day := byDate[date]
@@ -276,17 +318,43 @@ func (s *Service) SalesSummary(ctx context.Context, from, to time.Time) (*SalesS
 		summary.TotalAvailable = summary.ScannedOrders
 	}
 	summary.ExcludedOrders = summary.TotalAvailable - summary.ScannedOrders
+	// A scan that reached the cap has still covered the whole window when the
+	// store reported exactly as many orders as were read. Without this, a window
+	// holding exactly maxSummaryOrders orders ran out of loop iterations instead
+	// of seeing a short page and claimed to be truncated while excluding nothing.
+	// The check uses the raw total, not the normalized field: an omitted
+	// total_count is unknown, and unknown must stay truncated rather than be
+	// mistaken for complete.
+	if totalAvailable > 0 && summary.ScannedOrders >= totalAvailable {
+		scannedAll = true
+	}
 	// Truncation is a property of the finished scan. Two independent facts can
 	// establish it: a known total larger than what we scanned, or a scan that
 	// stopped at the cap without ever seeing a short page. Relying on the total
 	// alone was wrong — the total was omitted by the fields projection, so a
 	// capped scan reported truncated=false and claimed completeness.
 	summary.Truncated = summary.ExcludedOrders > 0 || !scannedAll
+	summary.TotalRevenue = roundMoney(summary.TotalRevenue)
 	for _, day := range byDate {
+		day.Revenue = roundMoney(day.Revenue)
 		summary.Days = append(summary.Days, *day)
 	}
 	sortSalesDays(summary.Days)
 	return summary, nil
+}
+
+// summaryDay returns the report-timezone calendar day of an order timestamp, and
+// whether the timestamp parsed.
+//
+// The bucketing itself is reportDay — the same rule sales.analysis uses — so the
+// two reports cannot disagree about which day an order belongs to. A malformed
+// timestamp is skipped rather than attributed to today: the order would otherwise
+// inflate a day it does not belong to.
+func summaryDay(createdAt string, loc *time.Location) (string, bool) {
+	if _, err := time.ParseInLocation("2006-01-02 15:04:05", createdAt, time.UTC); err != nil {
+		return "", false
+	}
+	return reportDay(createdAt, loc), true
 }
 
 func orderSearchCriteria(q OrderQuery) (url.Values, error) {
@@ -373,13 +441,6 @@ func parseOrderTime(value, field string) (string, error) {
 		return t.UTC().Format("2006-01-02 15:04:05"), nil
 	}
 	return "", invalidf("%s must be an RFC 3339 timestamp or YYYY-MM-DD date", field)
-}
-
-func orderDate(createdAt string) string {
-	if len(createdAt) >= 10 && createdAt[4] == '-' && createdAt[7] == '-' {
-		return createdAt[:10]
-	}
-	return ""
 }
 
 func sortSalesDays(days []SalesDay) {

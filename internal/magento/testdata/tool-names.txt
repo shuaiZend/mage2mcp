@@ -56,6 +56,9 @@ magento.invoice.create
 magento.invoice.email
 magento.invoice.get
 magento.invoice.list
+magento.operation.dispose
+magento.operation.get
+magento.operation.list
 magento.order.cancel
 magento.order.comment
 magento.order.create

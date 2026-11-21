@@ -72,8 +72,8 @@ func newRegisteredTools(t *testing.T) (*registry.Registry, *fakeMagento) {
 
 func TestRegisterMetadata(t *testing.T) {
 	reg, _ := newRegisteredTools(t)
-	if reg.Len() != 43 {
-		t.Fatalf("registry has %d tools, want 43", reg.Len())
+	if reg.Len() != 45 {
+		t.Fatalf("registry has %d tools, want 45", reg.Len())
 	}
 	for _, name := range []string{getToolName, searchToolName} {
 		tool, ok := reg.Lookup(name)
@@ -279,5 +279,113 @@ func TestToolsThroughInMemoryTransport(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatal("missing required sku must be a tool error")
+	}
+}
+
+// --- operation.* registration and summary description (t16) ---------------
+
+// TestToolListCarriesTheOperationTools is the registration contract: the three
+// ledger tools appear in tools/list, the two read tools are read-only, and the
+// disposition tool is a write that requires confirmation. The count is pinned
+// because the tools/list surface is a public contract (102 -> 105 with
+// platform.info).
+func TestToolListCarriesTheOperationTools(t *testing.T) {
+	reg := registry.New()
+	svc := testService(t, "https://shop.example.com")
+	if err := Register(reg, svc); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := RegisterWrites(reg, svc); err != nil {
+		t.Fatalf("RegisterWrites: %v", err)
+	}
+	resolver, err := NewResolver(map[string]*Service{"store-us": svc})
+	if err != nil {
+		t.Fatalf("NewResolver: %v", err)
+	}
+	if err := RegisterImportJobs(reg, resolver, &fakeImportQueue{}); err != nil {
+		t.Fatalf("RegisterImportJobs: %v", err)
+	}
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg, Confirm: magentoConfirmService(t)})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer func() { _ = session.Close() }()
+
+	listed, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(listed.Tools) != 105 {
+		t.Fatalf("tools/list has %d tools, want 105 (104 Magento + platform.info)", len(listed.Tools))
+	}
+	readOnly := map[string]bool{}
+	for _, tool := range listed.Tools {
+		if tool.Annotations != nil {
+			readOnly[tool.Name] = tool.Annotations.ReadOnlyHint
+		}
+	}
+	for _, name := range []string{operationGetToolName, operationListToolName} {
+		if !readOnly[name] {
+			t.Fatalf("tool %q must be read-only", name)
+		}
+	}
+	if readOnly[operationDisposeToolName] {
+		t.Fatalf("tool %q must not be read-only", operationDisposeToolName)
+	}
+	dispose, ok := reg.Lookup(operationDisposeToolName)
+	if !ok {
+		t.Fatalf("%s is not registered", operationDisposeToolName)
+	}
+	if !dispose.RequiresConfirmation || dispose.Permission != registry.PermissionWrite {
+		t.Fatalf("dispose metadata = permission %q confirmation %v, want a confirmed write",
+			dispose.Permission, dispose.RequiresConfirmation)
+	}
+}
+
+// TestOperationReadToolsStayOutOfTheReadPath pins the deployment rule behind the
+// split registration: a read-only deployment (tools.writes=false) must not expose
+// the disposition write tool, so only the two read tools may be registered by
+// Register.
+func TestOperationReadToolsStayOutOfTheReadPath(t *testing.T) {
+	reg, _ := newRegisteredTools(t)
+	for _, name := range []string{operationGetToolName, operationListToolName} {
+		if _, ok := reg.Lookup(name); !ok {
+			t.Fatalf("%s is missing from the read registry", name)
+		}
+	}
+	if _, ok := reg.Lookup(operationDisposeToolName); ok {
+		t.Fatalf("%s must not be registered by Register: a read-only deployment would expose a write tool",
+			operationDisposeToolName)
+	}
+}
+
+// TestSalesSummaryDescriptionStatesTheWindowCap covers U-56 and the timezone
+// documentation: a caller must learn the 366-day cap and the day-bucket timezone
+// from the tool description, not from an invalid_argument after the fact.
+func TestSalesSummaryDescriptionStatesTheWindowCap(t *testing.T) {
+	reg, _ := newRegisteredTools(t)
+	for _, name := range []string{salesSummaryToolName, orderSummaryToolName} {
+		tool, ok := reg.Lookup(name)
+		if !ok {
+			t.Fatalf("%s is not registered", name)
+		}
+		for _, want := range []string{"366 days", "timezone"} {
+			if !strings.Contains(tool.Description, want) {
+				t.Fatalf("%s description must mention %q: %q", name, want, tool.Description)
+			}
+		}
 	}
 }

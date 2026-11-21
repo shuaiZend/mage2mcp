@@ -582,6 +582,10 @@ func selfLedgeredTools() map[string]bool {
 		"magento.creditmemo.create": true,
 		"magento.order.create":      true,
 		"magento.order.cancel":      true,
+		// Disposing an operation is itself a ledger write: the middleware opening
+		// a second operation for it would create a new unknown row to reconcile
+		// while reconciling one.
+		"magento.operation.dispose": true,
 	}
 }
 

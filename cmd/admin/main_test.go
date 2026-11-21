@@ -161,12 +161,17 @@ func (f *fakeAuditor) Record(_ context.Context, e audit.Event) error {
 // same verifier the gateway uses, so the recorded identity is not self-asserted.
 func TestResolveApproverUsesTheVerifiedSubject(t *testing.T) {
 	verifier := &fakeVerifier{subject: "reviewer@example.com"}
-	approver, err := resolveApprover(context.Background(), verifier, "token-abc", "", io.Discard)
+	approver, class, err := resolveApprover(context.Background(), verifier, "token-abc", "", io.Discard)
 	if err != nil {
 		t.Fatalf("resolveApprover: %v", err)
 	}
 	if approver != "reviewer@example.com" {
 		t.Fatalf("approver = %q, want the verified subject", approver)
+	}
+	// U-76: the verified class travels with the subject so the approval can be
+	// refused for a non-human identity.
+	if class != "human" {
+		t.Fatalf("class = %q, want human", class)
 	}
 	if verifier.calls != 1 {
 		t.Fatalf("verifier calls = %d, want 1", verifier.calls)
@@ -177,7 +182,7 @@ func TestResolveApproverUsesTheVerifiedSubject(t *testing.T) {
 // would let an operator record an identity the token does not support.
 func TestResolveApproverRejectsContradictingFlag(t *testing.T) {
 	verifier := &fakeVerifier{subject: "reviewer@example.com"}
-	if _, err := resolveApprover(context.Background(), verifier, "token-abc", "someone-else", io.Discard); err == nil {
+	if _, _, err := resolveApprover(context.Background(), verifier, "token-abc", "someone-else", io.Discard); err == nil {
 		t.Fatal("want an error when -as contradicts the verified subject")
 	}
 }
@@ -186,7 +191,7 @@ func TestResolveApproverRejectsContradictingFlag(t *testing.T) {
 // falling back to the self-asserted string.
 func TestResolveApproverRequiresTokenWhenAuthEnabled(t *testing.T) {
 	verifier := &fakeVerifier{subject: "reviewer@example.com"}
-	_, err := resolveApprover(context.Background(), verifier, "", "reviewer@example.com", io.Discard)
+	_, _, err := resolveApprover(context.Background(), verifier, "", "reviewer@example.com", io.Discard)
 	if err == nil {
 		t.Fatal("want an error when auth is enabled and no token is supplied")
 	}
@@ -199,12 +204,17 @@ func TestResolveApproverRequiresTokenWhenAuthEnabled(t *testing.T) {
 // labelled as unverified instead of being presented as fact.
 func TestResolveApproverWarnsWhenUnverified(t *testing.T) {
 	var warn bytes.Buffer
-	approver, err := resolveApprover(context.Background(), nil, "", "operator", &warn)
+	approver, class, err := resolveApprover(context.Background(), nil, "", "operator", &warn)
 	if err != nil {
 		t.Fatalf("resolveApprover: %v", err)
 	}
 	if approver != "operator" {
 		t.Fatalf("approver = %q", approver)
+	}
+	// No verifier means no class to trust: the caller must not present the
+	// self-asserted identity as a verified human.
+	if class != "" {
+		t.Fatalf("class = %q, want empty for a self-asserted approver", class)
 	}
 	if !strings.Contains(warn.String(), "not verified") {
 		t.Fatalf("warning = %q, want it to say the identity is unverified", warn.String())
@@ -213,6 +223,7 @@ func TestResolveApproverWarnsWhenUnverified(t *testing.T) {
 
 type fakeVerifier struct {
 	subject string
+	class   string
 	err     error
 	calls   int
 }
@@ -222,7 +233,11 @@ func (f *fakeVerifier) Verify(context.Context, string) (*auth.Identity, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &auth.Identity{Subject: f.subject}, nil
+	class := f.class
+	if class == "" {
+		class = auth.ClassHuman
+	}
+	return &auth.Identity{Subject: f.subject, Class: class}, nil
 }
 
 // TestRecordApprovalPersistsUnderAuditConstraints is the SEM-03 regression: the
@@ -309,7 +324,7 @@ database:
 // The token's verified subject is the approver identity when -as is omitted.
 func TestAdminApproveTokenNoASUsesSubject(t *testing.T) {
 	verifier := &fakeVerifier{subject: "reviewer@example.com"}
-	approver, err := resolveApprover(context.Background(), verifier, "token-abc", "", io.Discard)
+	approver, _, err := resolveApprover(context.Background(), verifier, "token-abc", "", io.Discard)
 	if err != nil {
 		t.Fatalf("resolveApprover: %v", err)
 	}
@@ -321,7 +336,7 @@ func TestAdminApproveTokenNoASUsesSubject(t *testing.T) {
 // A contradicting -as is still refused even though it is optional.
 func TestAdminApproveTokenContradictingASIsRejected(t *testing.T) {
 	verifier := &fakeVerifier{subject: "reviewer@example.com"}
-	_, err := resolveApprover(context.Background(), verifier, "token-abc", "someone-else", io.Discard)
+	_, _, err := resolveApprover(context.Background(), verifier, "token-abc", "someone-else", io.Discard)
 	if err == nil {
 		t.Fatal("want a contradiction error")
 	}

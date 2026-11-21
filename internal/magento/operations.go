@@ -175,7 +175,13 @@ type OperationRequest struct {
 	// unguessable value such as a UUID rather than a predictable one.
 	IdempotencyKey string
 	EntityType     string // storage.EntityOrder, storage.EntityInvoice, ...
-	EntityID       string // stable handle known before the mutation
+	// EntityID is a stable handle that is known BEFORE the mutation and that
+	// identifies the entity the operation is about. It is also what the reconciler
+	// reads when the outcome is unknown, so it must never be a proxy for the
+	// document the call is going to create: a placement that does not exist yet
+	// records the customer it is for (U-70), and the created document's id goes to
+	// upstream_ref when the call succeeds.
+	EntityID       string
 	Amount         *Money // money in minor units; nil when Magento computes it
 	Args           any    // canonical arguments, hashed for replay detection
 	ConfirmationID string // the approval that authorised the call, when known
@@ -549,7 +555,8 @@ const operationDisposeToolDescription = "Records what an operator found out abou
 	"idempotency key; judgment=requeue leaves it unknown but restarts the reconciliation budget so the " +
 	"reconciler reads the upstream again instead of leaving the row escalated forever. The note is " +
 	"required and is kept in the transition history. Only an unknown operation can be disposed. " +
-	"Requires approval."
+	"The operation belongs to the resolved instance: its id is the only handle, and the ledger row " +
+	"records which instance and tool it came from. Requires approval."
 
 const operationGetSchema = `{"type": "object", "properties": {
 	"operation_id": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", "description": "Operation id from an operation_unknown or conflict response, or from magento.operation.list."}

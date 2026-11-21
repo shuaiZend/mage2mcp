@@ -149,6 +149,7 @@ func registerReadTools(reg *registry.Registry, lookup serviceLookup) error {
 		newOrderSummaryTool(lookup), newProductOptionsTool(lookup), newMediaTypesTool(lookup),
 		newCustomerGroupsTool(lookup), newTaxClassesTool(lookup), newOrderGeographyTool(lookup),
 		newSalesAnalysisTool(lookup), newStoreConfigsTool(lookup), newFlatCategoriesTool(lookup),
+		newOperationGetTool(), newOperationListTool(),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
@@ -326,8 +327,11 @@ const (
 		"creation window, or store view. Read-only; line items are omitted from search results. " +
 		"The instance input is required and must name a configured Magento instance."
 	salesSummaryToolDescription = "Aggregates Magento orders per day over a bounded window: order count, " +
-		"grand-total revenue, and item quantity. Scans at most 1000 orders and reports total_available, " +
-		"scanned_orders, excluded_orders, and whether anything was excluded. " +
+		"grand-total revenue, and item quantity. The window must be at most 366 days; split a longer " +
+		"range into several calls. Scans at most 1000 orders, oldest first, and reports total_available, " +
+		"scanned_orders, excluded_orders, and whether anything was excluded. Day buckets are calendar " +
+		"days in the store view timezone (returned as timezone), and a date-only from/to is a day in " +
+		"that timezone, so the buckets line up with the requested window. " +
 		"Revenue is order grand_total (tax and shipping included) and is not GA4 purchase revenue. " +
 		"The instance input is required and must name a configured Magento instance."
 
@@ -351,8 +355,8 @@ const (
 
 	salesSummarySchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
-		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD."},
-		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD."}
+		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD; a date is a calendar day in the store view timezone."},
+		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD; a date is a calendar day in the store view timezone."}
 	}, "required": ["instance", "from", "to"], "additionalProperties": false}`
 )
 
@@ -454,19 +458,11 @@ func newSalesSummaryTool(lookup serviceLookup) registry.Tool {
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(salesSummaryToolName, salesSummaryToolTitle, salesSummaryToolDescription, salesSummarySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in salesSummaryInput) (*mcp.CallToolResult, salesSummaryOutput, error) {
-				from, err := parseSummaryTime(in.From, "from")
-				if err != nil {
-					return nil, salesSummaryOutput{}, err
-				}
-				to, err := parseSummaryTime(in.To, "to")
-				if err != nil {
-					return nil, salesSummaryOutput{}, err
-				}
 				svc, err := lookup(in.Instance)
 				if err != nil {
 					return nil, salesSummaryOutput{}, err
 				}
-				summary, err := svc.SalesSummary(ctx, from, to)
+				summary, err := svc.SalesSummaryWindow(ctx, in.From, in.To)
 				if err != nil {
 					return nil, salesSummaryOutput{}, err
 				}
@@ -475,17 +471,6 @@ func newSalesSummaryTool(lookup serviceLookup) registry.Tool {
 		return nil
 	}
 	return t
-}
-
-// parseSummaryTime accepts RFC 3339 or a date; a date is midnight UTC.
-func parseSummaryTime(value, field string) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339, value); err == nil {
-		return t, nil
-	}
-	if t, err := time.Parse("2006-01-02", value); err == nil {
-		return t, nil
-	}
-	return time.Time{}, invalidf("%s must be an RFC 3339 timestamp or YYYY-MM-DD date", field)
 }
 
 const (
@@ -1693,8 +1678,10 @@ const (
 
 	orderSummaryToolDescription = "Deprecated alias for magento.sales.summary. Aggregates Magento orders per day " +
 		"over a bounded window (order count, grand-total revenue, item quantity) and returns the same aggregate " +
-		"plus deprecated=true and use=magento.sales.summary so a client can migrate. Scans at most 1000 orders and " +
-		"reports total_available, scanned_orders, excluded_orders, and whether anything was excluded. " +
+		"plus deprecated=true and use=magento.sales.summary so a client can migrate. The window must be at most " +
+		"366 days. Scans at most 1000 orders, oldest first, and reports total_available, scanned_orders, " +
+		"excluded_orders, and whether anything was excluded. Day buckets are calendar days in the store view " +
+		"timezone (returned as timezone), and a date-only from/to is a day in that timezone. " +
 		"The instance input is required and must name a configured Magento instance."
 )
 
@@ -1712,19 +1699,11 @@ func newOrderSummaryTool(lookup serviceLookup) registry.Tool {
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(orderSummaryToolName, orderSummaryToolTitle, orderSummaryToolDescription, salesSummarySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in salesSummaryInput) (*mcp.CallToolResult, orderSummaryOutput, error) {
-				from, err := parseSummaryTime(in.From, "from")
-				if err != nil {
-					return nil, orderSummaryOutput{}, err
-				}
-				to, err := parseSummaryTime(in.To, "to")
-				if err != nil {
-					return nil, orderSummaryOutput{}, err
-				}
 				svc, err := lookup(in.Instance)
 				if err != nil {
 					return nil, orderSummaryOutput{}, err
 				}
-				summary, err := svc.SalesSummary(ctx, from, to)
+				summary, err := svc.SalesSummaryWindow(ctx, in.From, in.To)
 				if err != nil {
 					return nil, orderSummaryOutput{}, err
 				}
@@ -1932,15 +1911,17 @@ func newOrderGeographyTool(lookup serviceLookup) registry.Tool {
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(orderGeographyToolName, orderGeographyToolTitle, orderGeographyToolDescription, orderGeographySchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in orderGeographyInput) (*mcp.CallToolResult, orderGeographyOutput, error) {
-				from, err := parseSummaryTime(in.From, "from")
-				if err != nil {
-					return nil, orderGeographyOutput{}, err
-				}
-				to, err := parseSummaryTime(in.To, "to")
-				if err != nil {
-					return nil, orderGeographyOutput{}, err
-				}
 				svc, err := lookup(in.Instance)
+				if err != nil {
+					return nil, orderGeographyOutput{}, err
+				}
+				// Same window rule as sales.summary and sales.analysis: a
+				// date-only bound is a calendar day in the store view timezone.
+				loc, _, err := svc.resolveTimezone(ctx, "")
+				if err != nil {
+					return nil, orderGeographyOutput{}, err
+				}
+				from, to, err := parseReportWindow(in.From, in.To, loc)
 				if err != nil {
 					return nil, orderGeographyOutput{}, err
 				}
@@ -1994,19 +1975,11 @@ func newSalesAnalysisTool(lookup serviceLookup) registry.Tool {
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpTool(salesAnalysisToolName, salesAnalysisToolTitle, salesAnalysisToolDescription, salesAnalysisSchema),
 			func(ctx context.Context, _ *mcp.CallToolRequest, in salesAnalysisInput) (*mcp.CallToolResult, salesAnalysisOutput, error) {
-				from, err := parseSummaryTime(in.From, "from")
-				if err != nil {
-					return nil, salesAnalysisOutput{}, err
-				}
-				to, err := parseSummaryTime(in.To, "to")
-				if err != nil {
-					return nil, salesAnalysisOutput{}, err
-				}
 				svc, err := lookup(in.Instance)
 				if err != nil {
 					return nil, salesAnalysisOutput{}, err
 				}
-				analysis, err := svc.AnalyzeSales(ctx, from, to, in.MaxOrders, in.Timezone)
+				analysis, err := svc.AnalyzeSalesWindow(ctx, in.From, in.To, in.MaxOrders, in.Timezone)
 				if err != nil {
 					return nil, salesAnalysisOutput{}, err
 				}

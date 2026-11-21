@@ -14,29 +14,29 @@ func TestInventoryCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inv.MaximalCount != 112 {
-		t.Errorf("maximal count = %d, want 112", inv.MaximalCount)
+	if inv.MaximalCount != 115 {
+		t.Errorf("maximal count = %d, want 115", inv.MaximalCount)
 	}
-	if inv.MagentoCount != 101 {
-		t.Errorf("Magento count = %d, want 101", inv.MagentoCount)
+	if inv.MagentoCount != 104 {
+		t.Errorf("Magento count = %d, want 104", inv.MagentoCount)
 	}
-	if inv.ReadOnlyCount != 54 {
-		t.Errorf("read-only count = %d, want 54", inv.ReadOnlyCount)
+	if inv.ReadOnlyCount != 56 {
+		t.Errorf("read-only count = %d, want 56", inv.ReadOnlyCount)
 	}
-	if inv.MagentoReadOnly != 43 {
-		t.Errorf("read-only Magento count = %d, want 43", inv.MagentoReadOnly)
+	if inv.MagentoReadOnly != 45 {
+		t.Errorf("read-only Magento count = %d, want 45", inv.MagentoReadOnly)
 	}
-	if inv.ReadOnlyDBCount != 56 {
-		t.Errorf("read-only+database count = %d, want 56", inv.ReadOnlyDBCount)
+	if inv.ReadOnlyDBCount != 58 {
+		t.Errorf("read-only+database count = %d, want 58", inv.ReadOnlyDBCount)
 	}
-	if inv.MagentoReadOnlyDB != 46 {
-		t.Errorf("read-only+database Magento count = %d, want 46", inv.MagentoReadOnlyDB)
+	if inv.MagentoReadOnlyDB != 48 {
+		t.Errorf("read-only+database Magento count = %d, want 48", inv.MagentoReadOnlyDB)
 	}
 	if inv.ReadOnlyDBNonRead != 0 {
 		t.Errorf("read-only+database non-read tools = %d, want 0", inv.ReadOnlyDBNonRead)
 	}
-	if inv.WritesGate != 52 {
-		t.Errorf("tools.writes gate = %d, want 52", inv.WritesGate)
+	if inv.WritesGate != 53 {
+		t.Errorf("tools.writes gate = %d, want 53", inv.WritesGate)
 	}
 	if inv.DatabaseGate != 3 {
 		t.Errorf("database.url gate = %d, want 3", inv.DatabaseGate)
@@ -44,8 +44,8 @@ func TestInventoryCounts(t *testing.T) {
 	if inv.CombinedGate != 3 {
 		t.Errorf("tools.writes+database.url gate = %d, want 3", inv.CombinedGate)
 	}
-	if len(inv.Rows) != 112 {
-		t.Errorf("rows = %d, want 112", len(inv.Rows))
+	if len(inv.Rows) != 115 {
+		t.Errorf("rows = %d, want 115", len(inv.Rows))
 	}
 }
 

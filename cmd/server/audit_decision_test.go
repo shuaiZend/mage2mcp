@@ -67,7 +67,10 @@ func TestEveryWriteToolIsGatedOrDeclaredSelfLedgered(t *testing.T) {
 	}
 	// Pinned counts: a new write tool must be consciously placed on one of the
 	// two paths (and this test updated), never silently inherit a default.
-	const wantWrite, wantGated, wantSelfLedgered = 55, 50, 5
+	// 56 write tools = the previous 55 plus magento.operation.dispose, which is
+	// self-ledgered: a disposition is itself a ledger write, so the middleware
+	// must not open a second operation for it (gated stays 50, self-ledgered 5->6).
+	const wantWrite, wantGated, wantSelfLedgered = 56, 50, 6
 	if writeTools != wantWrite || gated != wantGated || selfLedgered != wantSelfLedgered {
 		t.Fatalf("catalog coverage changed: %d write tools (%d gated, %d self-ledgered), want %d/%d/%d; "+
 			"place the new tool on a path and update this guard",

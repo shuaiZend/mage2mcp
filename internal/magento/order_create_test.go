@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
@@ -97,8 +99,18 @@ func TestCreateOrderCartFlow(t *testing.T) {
 		t.Fatal("operation id is empty")
 	}
 	row := ledger.row(result.OperationID)
-	if row == nil || row.state != storage.OpSucceeded || row.entityType != storage.EntityOrder {
+	if row == nil || row.state != storage.OpSucceeded {
 		t.Fatalf("ledger row = %+v, want a succeeded order operation", row)
+	}
+	// U-70: the row names the customer that provably existed at Begin time, and
+	// the placed order is recorded in upstream_ref — never the customer id dressed
+	// up as an order id.
+	if row.entityType != storage.EntityCustomer || row.entityID != "7" {
+		t.Fatalf("ledger entity = %s/%s, want customer/7 (the customer id is not an order id)",
+			row.entityType, row.entityID)
+	}
+	if row.upstreamRef != "order:000000099" {
+		t.Fatalf("upstream_ref = %q, want the placed order", row.upstreamRef)
 	}
 }
 
@@ -236,8 +248,11 @@ func (f *orderFake) handler() http.HandlerFunc {
 			_, _ = io.WriteString(w, body)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/default/V1/orders/"):
 			id := strings.TrimPrefix(r.URL.Path, "/rest/default/V1/orders/")
+			// customer_id is what Magento returns for a customer order; the
+			// operation.get assertion needs it to prove the ledger row shows the
+			// customer next to the placed order (U-70).
 			_, _ = fmt.Fprintf(w, `{"entity_id":%s,"increment_id":"%09s","status":"pending",`+
-				`"grand_total":19.98,"order_currency_code":"USD"}`, id, id)
+				`"customer_id":7,"grand_total":19.98,"order_currency_code":"USD"}`, id, id)
 		default:
 			http.NotFound(w, r)
 		}
@@ -585,5 +600,123 @@ func TestCreateOrderPreservesUpstreamField(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "regionId is required") {
 		t.Fatalf("agent-facing message leaked upstream text: %v", err)
+	}
+}
+
+// U-70: an unknown placement used to be filed as entity_type=order with the
+// customer id as the order id, so an operator looking the row up in Magento read
+// order 7 — someone else's order. The row must name the customer, and the
+// candidate order ids stay in the error rather than being guessed into the ledger.
+func TestCreateOrderUnknownRowNamesTheCustomerNotAnOrder(t *testing.T) {
+	fastReconcile(t)
+	fake := &orderFake{
+		placeStatus: http.StatusInternalServerError,
+		ordersJSON:  ordersJSON(orderJSON(99, 7), orderJSON(100, 8)),
+	}
+	ts := httptest.NewServer(fake.handler())
+	defer ts.Close()
+	ledger := newFakeLedger()
+	useLedger(t, ledger)
+	svc := testService(t, ts.URL)
+	in := validOrderInput()
+	in.IdempotencyKey = "order-unknown-entity"
+
+	result, err := svc.CreateOrder(context.Background(), in)
+	if errs.CodeOf(err) != errs.CodeOperationUnknown {
+		t.Fatalf("err = %v, want operation_unknown", err)
+	}
+	operationID := operationIDFromError(t, err)
+	row := ledger.row(operationID)
+	if row == nil {
+		t.Fatalf("no ledger row for %s", operationID)
+	}
+	if row.state != storage.OpUnknown {
+		t.Fatalf("state = %s, want unknown", row.state)
+	}
+	if row.entityType != storage.EntityCustomer || row.entityID != "7" {
+		t.Fatalf("ledger entity = %s/%s, want customer/7; a customer id must not be filed as an order id",
+			row.entityType, row.entityID)
+	}
+	// The candidate orders are in the error, not in the ledger: neither may be
+	// mistaken for the id of the order this operation created.
+	for _, orderID := range []string{"99", "100"} {
+		if row.entityID == orderID {
+			t.Fatalf("ledger entity_id = %q, which is a candidate order id, not the customer", row.entityID)
+		}
+	}
+	if result != nil {
+		t.Fatalf("result = %+v, want no result for an unknown placement", result)
+	}
+}
+
+// operationIDFromError pulls the operation id out of an operation_unknown error,
+// which is the only handle the caller gets for an inconclusive placement.
+func operationIDFromError(t *testing.T, err error) string {
+	t.Helper()
+	var typed *errs.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("err = %v, want a taxonomy error", err)
+	}
+	id := typed.Details["operation_id"]
+	if id == "" {
+		t.Fatalf("error carries no operation_id: %v", typed.Details)
+	}
+	return id
+}
+
+// U-70, acceptance 2: after a placement, operation.get must show both facts an
+// operator needs — the customer the row belongs to and the order that was placed.
+func TestOperationGetShowsCustomerAndPlacedOrder(t *testing.T) {
+	fake := &orderFake{placeBody: `"99"`}
+	ts := httptest.NewServer(fake.handler())
+	defer ts.Close()
+	ledger := newFakeLedger()
+	useLedger(t, ledger)
+	svc := testService(t, ts.URL)
+	in := validOrderInput()
+	in.IdempotencyKey = "order-operation-get"
+	result, err := svc.CreateOrder(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateOrder: %v", err)
+	}
+
+	session := operationToolsServer(t)
+	got, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: operationGetToolName, Arguments: map[string]any{"operation_id": result.OperationID},
+	})
+	if err != nil {
+		t.Fatalf("operation.get: %v", err)
+	}
+	if got.IsError {
+		t.Fatalf("operation.get returned an error: %v", got.StructuredContent)
+	}
+	record, ok := got.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("structured content = %T, want an object", got.StructuredContent)
+	}
+	operation, _ := record["operation"].(map[string]any)
+	if operation["entity_type"] != storage.EntityCustomer || operation["entity_id"] != "7" {
+		t.Fatalf("operation.get entity = %v/%v, want customer/7", operation["entity_type"], operation["entity_id"])
+	}
+	if operation["upstream_ref"] != "order:000000099" {
+		t.Fatalf("upstream_ref = %v, want order:000000099", operation["upstream_ref"])
+	}
+	// The result carries the order itself: entity 99 belongs to customer 7.
+	rawResult, _ := json.Marshal(operation["result"])
+	var replay struct {
+		Order struct {
+			EntityID    int    `json:"entity_id"`
+			IncrementID string `json:"increment_id"`
+			CustomerID  *int   `json:"customer_id"`
+		} `json:"order"`
+	}
+	if err := json.Unmarshal(rawResult, &replay); err != nil {
+		t.Fatalf("result is not the recorded order: %v (%s)", err, rawResult)
+	}
+	if replay.Order.EntityID != 99 || replay.Order.IncrementID != "000000099" {
+		t.Fatalf("recorded order = %+v, want order 99", replay.Order)
+	}
+	if replay.Order.CustomerID == nil || *replay.Order.CustomerID != 7 {
+		t.Fatalf("recorded order customer = %v, want 7 so the customer is visible next to the order", replay.Order.CustomerID)
 	}
 }

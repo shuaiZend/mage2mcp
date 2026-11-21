@@ -268,13 +268,13 @@ count is configuration-dependent:
 
 | Configuration | Magento | Total |
 |---|---:|---:|
-| Read-only, no database, no bindings | 43 | 53 |
-| Read-only, no database, with bindings | 43 | 54 |
-| Writes, no database, no bindings | 95 | 105 |
-| Writes, no database, with bindings | 95 | 106 |
-| Read-only, database, no bindings | 46 | 56 |
-| Writes + database, no bindings | 101 | 111 |
-| Writes + database + bindings (maximum) | 101 | 112 |
+| Read-only, no database, no bindings | 45 | 55 |
+| Read-only, no database, with bindings | 45 | 56 |
+| Writes, no database, no bindings | 98 | 108 |
+| Writes, no database, with bindings | 98 | 109 |
+| Read-only, database, no bindings | 48 | 58 |
+| Writes + database, no bindings | 104 | 114 |
+| Writes + database + bindings (maximum) | 104 | 115 |
 
 The maximum also requires single-instance Cloudflare and GA4 modules (multi-instance
 bindings are rejected; see ADR-0018).
