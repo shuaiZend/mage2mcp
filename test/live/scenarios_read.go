@@ -229,7 +229,24 @@ func readCases() []Case {
 				}
 				return nil
 			}},
-		{Group: "import-read", Tool: "magento.import.batches", Case: "lists import batches"},
+		{Group: "import-read", Tool: "magento.import.batches", Case: "lists import batches",
+			Check: func(e *Env, res *ToolResult) error {
+				// Keep the newest batch id so import.batch can be exercised with a
+				// real batch rather than the job id.
+				out, err := output(res)
+				if err != nil {
+					return err
+				}
+				batches, _ := out["batches"].([]any)
+				if len(batches) > 0 {
+					if first, ok := batches[0].(map[string]any); ok {
+						if id := str(first, "id"); id != "" {
+							e.Set("batch_id", id)
+						}
+					}
+				}
+				return nil
+			}},
 
 		{Group: "errors", Tool: "magento.product.get", Case: "unknown instance is not_found",
 			Args: func(e *Env) (map[string]any, error) {

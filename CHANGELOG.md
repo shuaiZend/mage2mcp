@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Three inventory routes and one field name were wrong.** `inventory.unassign` and
+  `inventory.stock_source_unlink` used `DELETE`; Magento's MSI delete endpoints are
+  `POST` with a `-delete` suffix, so both returned 404 and never worked.
+  `inventory.stock_source_link` sent `position` where Magento requires `priority`.
+  Their unit tests asserted the wrong routes, which is why they looked covered.
+- **`magento.customer.addresses.update` gave up on a store without a dedicated address
+  route.** It now falls back to replacing the address through `PUT /customers/{id}`,
+  the same way create already did.
 - **`magento.customer.addresses` failed for any customer that has an address.** Magento
   returns a customer address's `region` as an object
   (`{region_code, region, region_id}`) while the order address returns a plain string.

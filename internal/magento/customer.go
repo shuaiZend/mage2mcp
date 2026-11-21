@@ -580,10 +580,116 @@ func (s *Service) UpdateCustomerAddress(ctx context.Context, customerID, address
 	body := customerAddressBody{Address: payload}
 	raw, err := s.client.do(ctx, http.MethodPut,
 		"/customers/"+strconv.Itoa(customerID)+"/addresses/"+strconv.Itoa(addressID), nil, body)
-	if err != nil {
-		return nil, addressRouteError(err, "update")
+	if err == nil {
+		return decodeCustomerAddress(raw)
 	}
-	return decodeCustomerAddress(raw)
+	if errs.CodeOf(err) != errs.CodeNotFound {
+		return nil, err
+	}
+	// Not every build exposes a dedicated address route. The supported fallback is to
+	// PUT the customer with the address replaced, which is what the old error message
+	// told the operator to do by hand.
+	updated, fallbackErr := s.updateAddressViaCustomerUpdate(ctx, customerID, addressID, in)
+	if fallbackErr != nil && errs.CodeOf(fallbackErr) == errs.CodeNotFound {
+		return nil, addressRouteError(fallbackErr, "update")
+	}
+	return updated, fallbackErr
+}
+
+// updateAddressViaCustomerUpdate replaces one address by updating the customer.
+func (s *Service) updateAddressViaCustomerUpdate(ctx context.Context, customerID, addressID int, in CustomerAddressUpdateInput) (*CustomerAddress, error) {
+	path := "/customers/" + strconv.Itoa(customerID)
+	raw, err := s.client.do(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var current map[string]any
+	if err := json.Unmarshal(raw, &current); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable customer payload").WithCause(err)
+	}
+	existing, _ := current["addresses"].([]any)
+	found := false
+	for _, entry := range existing {
+		address, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id, ok := address["id"].(float64); !ok || int(id) != addressID {
+			continue
+		}
+		found = true
+		applyAddressUpdate(address, in)
+	}
+	if !found {
+		return nil, errs.New(errs.CodeNotFound, "the customer does not have that address").
+			WithDetail("customer_id", strconv.Itoa(customerID)).
+			WithDetail("address_id", strconv.Itoa(addressID))
+	}
+	current["id"] = customerID
+	current["addresses"] = existing
+	if _, err := s.client.do(ctx, http.MethodPut, path, nil, map[string]any{"customer": current}); err != nil {
+		return nil, err
+	}
+	raw, err = s.client.do(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var updated struct {
+		Addresses []map[string]any `json:"addresses"`
+	}
+	if err := json.Unmarshal(raw, &updated); err != nil {
+		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable customer payload").WithCause(err)
+	}
+	for _, candidate := range updated.Addresses {
+		if id, ok := candidate["id"].(float64); ok && int(id) == addressID {
+			return &CustomerAddress{
+				ID: addressID, CountryID: stringField(candidate, "country_id"),
+				Region:          stringField(candidate, "region"),
+				DefaultBilling:  boolField(candidate, "default_billing"),
+				DefaultShipping: boolField(candidate, "default_shipping"),
+			}, nil
+		}
+	}
+	return nil, errs.New(errs.CodeUpstreamUnavailable,
+		"Magento accepted the address update but the customer does not list it; verify before retrying").
+		WithDetail("customer_id", strconv.Itoa(customerID))
+}
+
+// applyAddressUpdate copies the provided fields onto one address object.
+func applyAddressUpdate(address map[string]any, in CustomerAddressUpdateInput) {
+	set := func(key string, value *string) {
+		if value != nil {
+			address[key] = *value
+		}
+	}
+	set("firstname", in.Firstname)
+	set("lastname", in.Lastname)
+	set("city", in.City)
+	set("postcode", in.Postcode)
+	set("country_id", in.CountryID)
+	set("telephone", in.Telephone)
+	set("region", in.Region)
+	if in.Street != nil {
+		address["street"] = *in.Street
+	}
+	if in.DefaultBilling != nil {
+		address["default_billing"] = *in.DefaultBilling
+	}
+	if in.DefaultShipping != nil {
+		address["default_shipping"] = *in.DefaultShipping
+	}
+}
+
+// stringField reads a string field from a decoded map, tolerating absence.
+func stringField(m map[string]any, key string) string {
+	value, _ := m[key].(string)
+	return value
+}
+
+// boolField reads a bool field from a decoded map, tolerating absence.
+func boolField(m map[string]any, key string) bool {
+	value, _ := m[key].(bool)
+	return value
 }
 
 // addressRouteError turns a missing customer-address route into an actionable

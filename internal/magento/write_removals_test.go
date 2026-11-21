@@ -59,7 +59,8 @@ func TestUnassignSourceItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if method != http.MethodDelete || path != "/rest/default/V1/inventory/source-items" {
+	// MSI delete endpoints are POSTs with a -delete suffix; DELETE is not a route.
+	if method != http.MethodPost || path != "/rest/default/V1/inventory/source-items-delete" {
 		t.Fatalf("request = %s %s", method, path)
 	}
 	if len(body.SourceItems) != 2 || body.SourceItems[1].SourceCode != "warehouse" {

@@ -1073,3 +1073,59 @@ func TestCustomerAddressesAcceptsBothRegionShapes(t *testing.T) {
 		t.Fatalf("string region = %+v, want Mazowieckie", addresses[1])
 	}
 }
+
+// Found by the v0.11.2 live run: customer.addresses.update returned
+// unsupported_capability on a store that has no dedicated address route, although the
+// PUT /customers/{id} fallback the error recommended works — the same gap the create
+// path had.
+func TestUpdateCustomerAddressFallsBackToCustomerUpdate(t *testing.T) {
+	var putBody map[string]any
+	gets := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/addresses/"):
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet:
+			gets++
+			if gets == 1 {
+				_, _ = io.WriteString(w, `{"id":7,"website_id":1,"email":"a@example.com","firstname":"Ada","lastname":"Lovelace",
+					"addresses":[{"id":42,"city":"London","country_id":"GB","region":"","default_billing":true}]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"id":7,"addresses":[{"id":42,"city":"Krakow","country_id":"PL","region":"Malopolskie","default_billing":true}]}`)
+		case r.Method == http.MethodPut:
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &putBody)
+			_, _ = io.WriteString(w, `{"id":7}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	svc := testService(t, ts.URL)
+
+	city := "Krakow"
+	country := "PL"
+	region := "Malopolskie"
+	updated, err := svc.UpdateCustomerAddress(context.Background(), 7, 42,
+		CustomerAddressUpdateInput{City: &city, CountryID: &country, Region: &region})
+	if err != nil {
+		t.Fatalf("UpdateCustomerAddress fallback: %v", err)
+	}
+	if updated.ID != 42 || updated.Region != "Malopolskie" || updated.CountryID != "PL" {
+		t.Fatalf("updated = %+v, want the read-back address", updated)
+	}
+	customer, _ := putBody["customer"].(map[string]any)
+	if customer == nil {
+		t.Fatalf("PUT body = %v, want a customer object", putBody)
+	}
+	addresses, _ := customer["addresses"].([]any)
+	if len(addresses) != 1 {
+		t.Fatalf("addresses = %v, want the one address replaced", addresses)
+	}
+	entry, _ := addresses[0].(map[string]any)
+	if entry["city"] != "Krakow" || entry["country_id"] != "PL" {
+		t.Fatalf("address = %v, want the requested fields applied", entry)
+	}
+}

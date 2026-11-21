@@ -188,3 +188,56 @@
 3. **决定 `PERF-16`**：配置商品路径是否为并行化改动错误契约（见
    [`perf-16-options.md`](perf-16-options.md)）
 4. **考虑为 demo 站提供替代环境**：自定义选项路由缺失导致该能力无法验证
+
+---
+
+## 八、后续修复轮次（本次会话）
+
+在 v0.11.2 发布后继续修复，又发现 **3 个真实缺陷**，并补齐了 configurable 域的测试覆盖。
+
+### 8.1 新发现的缺陷
+
+| 工具 | 现象 | 根因 | 状态 |
+|---|---|---|---|
+| `magento.inventory.unassign` | `not_found: 无此路由` | 用了 `DELETE /inventory/source-items`；真实路由是 `POST /inventory/source-items-delete` | 已修复 |
+| `magento.inventory.stock_source_unlink` | `not_found: 无此路由` | 用了 `DELETE /inventory/stock-source-links`；真实路由是 `POST /inventory/stock-source-links-delete` | 已修复 |
+| `magento.inventory.stock_source_link` | `validation_failed: 400` | 载荷字段名用了 `position`；Magento 要求 `priority` | 已修复 |
+
+三条都已直连验证：`POST /inventory/source-items-delete` → 200，`POST /inventory/stock-source-links-delete` → 400（业务规则，路由可达），`POST /inventory/stock-source-links` 带 `priority` → 200。
+
+**值得注意**：`unassign` 与 `stock_source_unlink` 的单元测试断言的正是那个错误的 `DELETE` 路由——与下单用 `POST` 那次完全相同的失效模式：测试把错误的路由固化成了"预期"。
+
+### 8.2 configurable 域覆盖补齐
+
+原测试脚本有 4 处参数错误，导致整个域实际未被验证：
+
+- `create`：缺 `variant_attributes[].attribute_id`（契约要求）
+- `create_variations`：多传了 `name` 与 `quantity`（`additionalProperties: false`）
+- `set_options`：`values` 应是整数数组，传了对象数组
+- `add_child`：依赖上游创建成功
+
+修正后 `configurable.create`、`children`、`update`、`remove_child` **首次通过**，该域首次得到真实验证。
+
+### 8.3 修复后复验
+
+| 运行 | 通过 | 软失败 | 硬失败 | 跳过 |
+|---|---|---|---|---|
+| v0.11.2 已发布镜像 | 82 | 16 | 1 | 24 |
+| 地址 `region` 修复后 | 83 | 15 | 1 | 24 |
+| 库存路由 + configurable 脚本修复后 | **91** | **7** | 1 | 24 |
+
+**净增 9 个通过用例。**
+
+### 8.4 剩余 8 项的最终判定
+
+| 工具 | 判定 |
+|---|---|
+| `product.options.create` | **环境**：该店不暴露自定义选项路由（404 已验证） |
+| `inventory.stock_source_link` / `unlink` | **环境**：stock 1 是 Default Stock，Magento 拒绝非默认源链接（400 业务规则已验证） |
+| `inventory.transfer` | **正确拒绝**：用例刻意用同源 |
+| `import.cancel` | **正确拒绝**：任务已终态 |
+| `configurable.add_child` | **测试脚本**：路由与载荷已验证正确（404 表示子商品不存在，路由可达） |
+| `customer.addresses.update` | **测试脚本**：直连调用已验证成功（走 PUT 回退）；harness 的地址 id 与新建地址不同步 |
+| `order.create` | **已知限制** LIVE-8：订单实际已创建，网关拒绝猜测 |
+
+**结论：无未归因的失败项。**

@@ -135,7 +135,10 @@ func (s *Service) UnassignSourceItems(ctx context.Context, refs []SourceItemRef)
 	for _, ref := range refs {
 		body.SourceItems = append(body.SourceItems, sourceItemRefPayload(ref))
 	}
-	_, err := s.client.do(ctx, http.MethodDelete, "/inventory/source-items", nil, body)
+	// Magento's MSI delete endpoints are POSTs with a -delete suffix; the DELETE form
+	// is not a route at all and returned 404, so this tool never worked on a standard
+	// instance.
+	_, err := s.client.do(ctx, http.MethodPost, "/inventory/source-items-delete", nil, body)
 	return err
 }
 
@@ -626,7 +629,7 @@ func (s *Service) LinkStockSource(ctx context.Context, stockID int, sourceCode s
 	if position < 0 {
 		return invalidf("position must not be negative")
 	}
-	body := stockSourceLinkBody{Links: []stockSourceLink{{StockID: stockID, SourceCode: sourceCode, Position: position}}}
+	body := stockSourceLinkBody{Links: []stockSourceLink{{StockID: stockID, SourceCode: sourceCode, Priority: position}}}
 	_, err := s.client.do(ctx, http.MethodPost, "/inventory/stock-source-links", nil, body)
 	return err
 }
@@ -654,11 +657,14 @@ type stockSourceLinkBody struct {
 type stockSourceLink struct {
 	StockID    int    `json:"stock_id" jsonschema:"Inventory stock id; the default stock is 1."`
 	SourceCode string `json:"source_code" jsonschema:"Inventory source code, for example default."`
-	Position   int    `json:"position" jsonschema:"Sort position among siblings."`
+	// Magento's stock-source link endpoint takes `priority`, not `position`. Sending
+	// `position` is rejected with "%fieldName is not supported", which read as a bad
+	// store_code and hid the real cause.
+	Priority int `json:"priority" jsonschema:"Sort position among siblings."`
 }
 
 // UnlinkStockSource detaches a source from a stock with
-// DELETE /inventory/stock-source-links. Products keep their source items; the
+// POST /inventory/stock-source-links-delete. Products keep their source items; the
 // stock simply stops selling from that source.
 func (s *Service) UnlinkStockSource(ctx context.Context, stockID int, sourceCode string) error {
 	if s == nil || s.client == nil {
@@ -671,6 +677,7 @@ func (s *Service) UnlinkStockSource(ctx context.Context, stockID int, sourceCode
 		return invalidf("source_code must match %s", sourceCodeRE.String())
 	}
 	body := stockSourceLinkBody{Links: []stockSourceLink{{StockID: stockID, SourceCode: sourceCode}}}
-	_, err := s.client.do(ctx, http.MethodDelete, "/inventory/stock-source-links", nil, body)
+	// Same shape as the source-item delete: POST with a -delete suffix, not DELETE.
+	_, err := s.client.do(ctx, http.MethodPost, "/inventory/stock-source-links-delete", nil, body)
 	return err
 }

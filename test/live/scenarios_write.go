@@ -383,15 +383,18 @@ func writeCases() []Case {
 						"url_key": e.Get("cfgslug"),
 					},
 					"variant_attributes": []map[string]any{
-						{"code": "color", "values": []map[string]any{
-							{"value_index": 12},
+						// attribute_id is required by the contract; 93 is the `color`
+						// attribute of the Default set on this store.
+						{"attribute_id": 93, "code": "color", "values": []map[string]any{
+							{"value_index": 49, "label": "Black"},
+							{"value_index": 50, "label": "Blue"},
 						}},
 					},
 					"children": []map[string]any{
 						{"sku": e.Get("cfg") + "-A", "name": "MCPTEST Config A", "price": "29.99",
-							"attributes": map[string]string{"color": "12"}, "quantity": 3},
+							"attributes": map[string]string{"color": "49"}, "quantity": 3},
 						{"sku": e.Get("cfg") + "-B", "name": "MCPTEST Config B", "price": "31.99",
-							"attributes": map[string]string{"color": "12"}, "quantity": 3},
+							"attributes": map[string]string{"color": "50"}, "quantity": 3},
 					},
 				}, nil
 			},
@@ -428,9 +431,11 @@ func writeCases() []Case {
 			Args: func(e *Env) (map[string]any, error) {
 				return map[string]any{
 					"instance": instance(), "parent_sku": e.Get("cfg"),
+					// The contract allows only sku and attributes here; name and
+					// quantity belong to the parent or the stock call.
 					"variants": []map[string]any{
-						{"sku": e.Get("cfg") + "-C", "name": "MCPTEST Config C",
-							"attributes": map[string]string{"color": "12"}, "quantity": 2},
+						{"sku": e.Get("cfg") + "-C",
+							"attributes": map[string]string{"color": "49"}},
 					},
 				}, nil
 			}, Need: []string{"cfg"}, Soft: true,
@@ -440,8 +445,9 @@ func writeCases() []Case {
 			Args: func(e *Env) (map[string]any, error) {
 				return map[string]any{
 					"instance": instance(), "sku": e.Get("cfg"),
+					// values is an array of attribute option ids, not objects.
 					"options": []map[string]any{
-						{"attribute_code": "color", "values": []string{"12"}},
+						{"attribute_id": 93, "label": "Color", "values": []int{49, 50}},
 					},
 				}, nil
 			}, Need: []string{"cfg"}, Soft: true,
@@ -910,8 +916,10 @@ func writeCases() []Case {
 		{
 			Group: "import-write", Tool: "magento.import.batch", Case: "reads the batch",
 			Args: func(e *Env) (map[string]any, error) {
-				return map[string]any{"instance": instance(), "batch_id": e.Get("job_id")}, nil
-			}, Need: []string{"job_id"}, Soft: true,
+				// The batch id is the job id that produced it; import.start returns the
+				// job, so the batch list supplies the id.
+				return map[string]any{"instance": instance(), "batch_id": e.Get("batch_id")}, nil
+			}, Need: []string{"batch_id"}, Soft: true,
 		},
 		{
 			Group: "import-write", Tool: "magento.import.cancel", Case: "cancels a finished job is a typed error",

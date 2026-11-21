@@ -584,7 +584,8 @@ func TestCreateSourceAndLink(t *testing.T) {
 	if err := svc.LinkStockSource(context.Background(), 1, "warehouse", 2); err != nil {
 		t.Fatal(err)
 	}
-	if len(linkBody.Links) != 1 || linkBody.Links[0].StockID != 1 || linkBody.Links[0].Position != 2 {
+	// Magento's link endpoint takes `priority`; `position` is rejected outright.
+	if len(linkBody.Links) != 1 || linkBody.Links[0].StockID != 1 || linkBody.Links[0].Priority != 2 {
 		t.Fatalf("links = %+v", linkBody)
 	}
 }
@@ -630,7 +631,8 @@ func TestUnlinkStockSource(t *testing.T) {
 	if err := svc.UnlinkStockSource(context.Background(), 1, "warehouse"); err != nil {
 		t.Fatal(err)
 	}
-	if method != http.MethodDelete || path != "/rest/default/V1/inventory/stock-source-links" {
+	// MSI delete endpoints are POSTs with a -delete suffix; DELETE is not a route.
+	if method != http.MethodPost || path != "/rest/default/V1/inventory/stock-source-links-delete" {
 		t.Fatalf("request = %s %s", method, path)
 	}
 	if len(body.Links) != 1 || body.Links[0].StockID != 1 || body.Links[0].SourceCode != "warehouse" {
