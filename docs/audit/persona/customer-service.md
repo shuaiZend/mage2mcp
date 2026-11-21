@@ -139,9 +139,11 @@ order 8 同样：退 1 件 34.00 → creditmemo 17 实退 **54.00**（34 + 20 �
 ```bash
 ... -tool=magento.creditmemo.create -args='{"instance":"demo","order_id":15,"items":[{"order_item_id":18,"qty":1}],"adjustment_negative":10}'
 ```
+
 ```json
 {"creditmemo": {"entity_id": 20, "grand_total": 34, "subtotal": 34, "shipping_amount": 10, "adjustment": -10, "total_qty": 1}}
 ```
+
 （`grand_total` 34 正确；但响应里仍写着 `shipping_amount: 10`，只看这一个字段会以为运费退了。）
 
 **其余退款行为是对的**（逐条核过）：
@@ -159,6 +161,7 @@ order 8 同样：退 1 件 34.00 → creditmemo 17 实退 **54.00**（34 + 20 �
 ```bash
 ... -tool=magento.customer.addresses.update -args='{"instance":"demo","customer_id":1,"address_id":9,"street":["ul. Zmieniona 99"],"city":"Gdansk","postcode":"80-001"}'
 ```
+
 ```json
 {"address": {"id": 9, "country_id": "PL", "region_id": 997, "default_billing": false, "default_shipping": false}}
 ```
@@ -214,6 +217,7 @@ order 31 shipping: street ['ul. Nowa 12/3'] city Wroclaw postcode 00-001
 ... -tool=magento.order.create  ...            # 新建 order 27（pending，2 件 24-MB01，68.00）
 ... -tool=magento.order.cancel -args='{"instance":"demo","order_id":27}'
 ```
+
 ```json
 {"order_id": 27, "canceled": true, "operation_id": "5ea9203a-..."}
 ```
@@ -265,6 +269,7 @@ order 31 shipping: street ['ul. Nowa 12/3'] city Wroclaw postcode 00-001
 ```bash
 ... -tool=magento.creditmemo.create -args='{"instance":"demo","order_id":12,"items":[{"order_item_id":15,"qty":1}],"comment":"Customer returns 1x downolable","notify":false}'
 ```
+
 ```json
 {"code": "validation_failed",
  "details": {"store_code": "pl", "upstream_status": "400"},
@@ -275,6 +280,7 @@ order 31 shipping: street ['ul. Nowa 12/3'] city Wroclaw postcode 00-001
 ```bash
 ... -tool=magento.shipment.create -args='{"instance":"demo","order_id":10,"items":[{"order_item_id":12,"qty":2}],"comment":"Wysyłka kurierem DPD","tracks":[{"carrier_code":"custom","title":"DPD","track_number":"DPD-TEST-0001"}]}'
 ```
+
 ```json
 {"code": "validation_failed",
  "details": {"store_code": "pl", "upstream_status": "400"},
@@ -302,6 +308,7 @@ HTTP 200 "25"
   双引号的句子整段丢掉，而 Magento 恰好用双引号包住**字段名**。同一个过滤对不含引号的错误是放行的
   （例如 `invoice.create` 报的
   `Invoice Document Validation Error(s):The invoice can't be created without products...` 就带出来了）。
+
 - **我期望什么**: 备注能写进去（这是客服留痕的基本要求）；失败时给出「哪个字段、什么类型不对」。
   字段名不是机密，把它当敏感信息屏蔽，代价是我只能把 400 原样转给顾客或反复试错。
 - **影响**: 客服/运营只要写备注就办不了退款和发货；400 又不可定位，只能盲试。
@@ -329,6 +336,7 @@ HTTP 200 "25"
 
   摘要完全由入参拼出来（`internal/security/confirm/confirm.go: Summarize`），没有任何金额。
   而工具其实**已经算出了金额**（账本 `amount_minor: 1700`），只是没放进摘要。
+
 - **我期望什么**: 审批摘要带 `amount=22.00 PLN`（并说明含运费 5.00）。审批的核心就是核对金额，
   现在审批人对钱一无所知，等于走形式。
 - **影响**: 多退、错退在审批环节没有任何拦截能力；与 P-CS-01 叠加后，审批人批准的是「1 件」，
@@ -392,6 +400,7 @@ HTTP 200 "25"
   工具自己的描述是「`capture`: Capture the payment; false only records the invoice」，
   而实现（`internal/magento/invoice_write.go`）是 `Captured: invoice.State == invoiceStatePaid`
   —— 对线下付款方式，Magento 开票即 paid，与是否 capture 无关。
+
 - **我期望什么**: `captured` 只应在真的走了 capture 时才是 true；否则用
   `capture_attempted` / `invoice_state` 之类诚实的字段。
 - **影响**: 客服/财务会把「已开票」误读成「已收款」。
@@ -431,11 +440,13 @@ HTTP 200 "25"
 ```bash
 ... -tool=magento.creditmemo.email -args='{"instance":"demo","document_id":19}'
 ```
+
 ```json
 {"document_id": 19, "kind": "creditmemo", "sent": true}
 ```
 
   连续两次调用都是 `sent: true`，没有任何消息 id / 队列状态 / 失败原因可查。
+
 - **我期望什么**: `sent` 应说明它代表什么（Magento 接受请求 ≠ 已投递），或提供可查询的投递记录。
 - **影响**: 「我们发过邮件」无法举证，容易变成「你们根本没发」的争执。
 - **状态**: SUSPECTED（`sent: true` 的语义取决于 Magento 邮件队列，本店无法进一步验证投递）
@@ -463,6 +474,7 @@ HTTP 200 "25"
 （22.00 / 54.00 / 34.00 三笔全部一致）。
 
 **给修复阶段的提示（本轮不改代码）**：
+
 1. P-CS-02 是两行级别的类型修正（`IsVisibleOnFront` → `int`），但它挡住的是「退款+备注」整条主流程，
    建议优先。
 2. P-CS-01 需要产品决策（暴露 `shipping_amount` / 默认不退运费 / 至少在响应与审批摘要里显式列明），

@@ -18,7 +18,7 @@
 | 上游实例 | `magento: demo`（真实 demo 店铺，store `pl`）+ `cloudflare: zone-a`（占位凭据，只用于跨实例授权探测） |
 | 假上游实例 | `http://127.0.0.1:18121/mcp` → 本地 fake Magento `127.0.0.1:19091`（`0.4s` 延迟，`1 rps / burst 1 / max_concurrent 1`） |
 | 数据库 | 隔离库 `mage2mcp_sec_v0116`（PostgreSQL 127.0.0.1:55440），启动时自动迁移 |
-| 角色令牌 | RS256，`roles=[viewer|analyst|operator|admin|approver]`，另有 `norole`、`unknownrole`、`multirole`、`service`（`type=service`）、`expired`、`wrongaud`、`wrongiss` |
+| 角色令牌 | RS256，`roles=[viewer|analyst|operator|admin|approver]`，另有`norole`、`unknownrole`、`multirole`、`service`（`type=service`）、`expired`、`wrongaud`、`wrongiss` |
 | 审批 CLI | `/tmp/sec-v0116/mage2mcp-admin -config config.yaml -token-file token-<role> approve <id>` |
 | 生产端点 | `http://127.0.0.1:18110/mcp`（SSH 隧道 → `49.51.250.83:8080`），`auth.enabled=false` |
 | 代码修改 | **无**。本文件只记录；配置/令牌/探针全部在 `/tmp/sec-v0116/` |
@@ -447,6 +447,7 @@ select phase,state,decision,count(*) from audit_events group by 1,2,3 order by 1
      -- 142 | service | self  | allow     | succeeded |            <-- operator@test，人类
      -- 153 | service | self  | allow     | succeeded |            <-- operator@test，人类
      ```
+
   4. **失败记成 `decision=allow`**：seq 133 是一次失败的 capture（`state=failed`、
      `error_code=conflict`），但 `decision` 是 `allow`。SEM-SEC-03 修好了「Begin 之前失败」的
      路径（见 §7），但「Begin 之后失败」仍然写成 allow——审计里出现
@@ -688,7 +689,7 @@ python3 /tmp/sec-v0116/mcp.py '' magento.product.delete '{"instance":"demo","sku
 
 生产 `18110` 是 `auth.enabled=false` 且 `writes_enabled=true`：任何能连到该端口的人都可以
 （a）调用所有读工具；（b）发起写/破坏性调用并拿到 `confirmation_id`。审批仍需 `mage2mcp-admin`
-+ 数据库访问，所以不是「匿名可删库」，但**没有 RBAC、没有身份、审计里 subject 是 `anonymous`**。
+- 数据库访问，所以不是「匿名可删库」，但**没有 RBAC、没有身份、审计里 subject 是 `anonymous`**。
 这是部署配置问题（前一轮已记录），不是 v0.11.6 代码缺陷；本轮未在该端点执行任何写操作。
 
 ---
@@ -709,7 +710,7 @@ platform.info @ 18110 -> {"name":"mage2mcp","version":"v0.11.6","writes_enabled"
 |---|---|---|
 | SEM-SEC-01 跨实例授权 | **FIXED** | 两实例启动即失败：`rbac: magento has 2 instances (demo, demo-alt); ...`；未配置实例 `permission_denied` |
 | SEM-SEC-02 审批无审计行 | **FIXED** | `audit_events` 出现 `phase=approval, decision=approve`（11 行），CHECK 约束已含 `approve`（`000009_audit_approval_event`） |
-| SEM-SEC-03 资金工具失败记 allow/succeeded | **FIXED（部分）** | Begin 之前失败 → `outcome|failed|error|not_found`（demo invoice.capture, seq 79）。Begin 之后失败仍为 `failed|allow`，见 P-SEC-02 |
+| SEM-SEC-03 资金工具失败记 allow/succeeded | **FIXED（部分）** | Begin 之前失败 → `outcome/failed/error/not_found`（demo invoice.capture, seq 79）。Begin 之后失败仍为 `failed/allow`，见 P-SEC-02 |
 | SEM-SEC-04 限流被超时覆盖 | **FIXED** | 40 并发风暴返回 10×`rate_limited`，无 `upstream_timeout`（`internal/mcp/server/server.go` 的 `resultCode != CodeRateLimited` 分支） |
 | SEM-SEC-05 `_meta.subject` | 保留 | 见 P-SEC-07 |
 | SEM-SEC-06 注入面 | 复核通过 | 见 P-SEC-10 |

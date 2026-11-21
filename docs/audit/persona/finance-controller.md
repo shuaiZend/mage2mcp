@@ -789,7 +789,7 @@ ssh -o BatchMode=yes ubuntu@49.51.250.83 \
   而单据 `grand_total` 含运费与调整费。
 
 - **我期望什么**: 审计账本记的是"这次操作动了多少钱"，就必须等于单据的 `grand_total`；
-  否则财务用账本汇总退款额会比实际少 82.00（本例中占退款总额的 57%）。
+  否则财务用账本汇总会比实际少 82.00（占上表 7 张单据合计 292.16 的 28.1%）。
   至少要把 `shipping_amount` 与 `adjustment_*` 计入，或另设 `subtotal_minor` / `shipping_minor` 拆开记。
 - **状态**: CONFIRMED
 
@@ -914,7 +914,7 @@ cd /Users/shuaizeng/Documents/mage2mcp && go build -tags live -o /tmp/mcpraw ./t
 /tmp/mcpraw -mode=raw -tool=magento.tax.classes    -args='{"instance":"demo"}'
 
 # 建单 → 开票 → 部分退款
-/tmp/mcpraw -mode=raw -tool=magento.order.create -args=@/tmp/order_create2.json
+/tmp/mcpraw -mode=raw -tool=magento.order.create -args="$(cat /tmp/order_create2.json)"
 /tmp/mcpraw -mode=raw -tool=magento.invoice.create \
   -args='{"instance":"demo","order_id":25,"items":[{"order_item_id":28,"qty":1},{"order_item_id":29,"qty":3}],"capture":true}'
 /tmp/mcpraw -mode=raw -tool=magento.creditmemo.create \
