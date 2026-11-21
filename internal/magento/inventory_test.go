@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -772,5 +773,22 @@ func TestAssignSourceItemsUnknownOutcomeIsNotRetryable(t *testing.T) {
 	}
 	if e.Retryable {
 		t.Fatal("an unknown outcome is marked retryable; the ledger refuses the retry the envelope invites")
+	}
+}
+
+// SEM-INV-02: qty is the legacy stock-item quantity, not the MSI source total. On an MSI
+// store it reads 0 while the product is in stock, so a caller that treats it as physical
+// stock wrongly concludes the product is out. The description has to say so.
+func TestStockStatusQtyDescriptionSaysLegacy(t *testing.T) {
+	typ := reflect.TypeOf(StockStatus{})
+	field, ok := typ.FieldByName("Qty")
+	if !ok {
+		t.Fatal("StockStatus has no Qty field")
+	}
+	desc := field.Tag.Get("jsonschema")
+	for _, want := range []string{"Legacy", "source-item", "source_items"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("Qty description does not mention %q: %s", want, desc)
+		}
 	}
 }

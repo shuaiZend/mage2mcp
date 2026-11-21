@@ -21,8 +21,12 @@ const (
 
 // StockStatus is the legacy cataloginventory stock projection for one SKU.
 type StockStatus struct {
-	SKU                  string  `json:"sku" jsonschema:"Product SKU."`
-	Qty                  float64 `json:"qty" jsonschema:"Quantity at this source."`
+	SKU string `json:"sku" jsonschema:"Product SKU."`
+	// Qty is the legacy cataloginventory_stock_item quantity, not the sum of MSI source
+	// items. On an MSI store it can read 0 while the product is in stock from several
+	// sources, so a caller that treats it as physical stock will wrongly conclude the
+	// product is out. Read source_items for the per-source quantities.
+	Qty                  float64 `json:"qty" jsonschema:"Legacy stock-item quantity, not the MSI source-item total; on an MSI store it can be 0 while is_in_stock is true. Use inventory.source_items for per-source quantities."`
 	IsInStock            bool    `json:"is_in_stock" jsonschema:"True when the product is sellable at this source."`
 	ManageStock          bool    `json:"manage_stock" jsonschema:"True when Magento manages stock for this product."`
 	UseConfigManageStock bool    `json:"use_config_manage_stock" jsonschema:"True when the source uses the store-wide stock settings."`
