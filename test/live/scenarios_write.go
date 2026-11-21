@@ -235,7 +235,11 @@ func writeCases() []Case {
 				return map[string]any{
 					"instance": instance(), "sku": e.Get("p1"),
 					"prices": []map[string]any{
-						{"quantity": 5, "price": 18.0, "website_id": 0, "customer_group": "0"},
+						// customer_group must be the group *code*. Magento rejects a
+						// numeric id here ("no such customer group"), and the gateway
+						// now reports that rejection instead of reporting success on
+						// a write that stored nothing.
+						{"quantity": 5, "price": 18.0, "website_id": 0, "customer_group": "ALL GROUPS"},
 					},
 				}, nil
 			}, Need: []string{"p1"}, Soft: true,

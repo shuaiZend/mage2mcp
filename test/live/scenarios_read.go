@@ -28,8 +28,11 @@ func readCases() []Case {
 					return err
 				}
 				tools, _ := out["tools"].([]any)
-				if len(tools) != 102 {
-					return fmt.Errorf("tools = %d, want 102", len(tools))
+				// 105 = 102 + operation.get/list/dispose, which let a caller
+				// query and dispose of an operation_unknown instead of leaving it
+				// to sit forever.
+				if len(tools) != 105 {
+					return fmt.Errorf("tools = %d, want 105", len(tools))
 				}
 				if enabled, _ := out["writes_enabled"].(bool); !enabled {
 					return fmt.Errorf("writes_enabled = false, want true")
