@@ -291,3 +291,66 @@ t11 与 t13 都按 B 交付，各留下一处未闭环：
 
 这条原则值得带进后续任何多 agent 协作：**按文件划分工作，不按发现划分。** 按发现划分会让多个
 agent 落在同一个文件上，而缺陷报告是按发现组织的，所以这个诱惑很自然。
+
+## 独立核验：U-70 entity_id 语义 —— CONFIRMED，但位置与报告不同
+
+t13 报 U-70「`unknown` 的 order.create 行 `entity_id` 是客户 id 不是订单号」，并说位置在
+`server.go: entityFor`。我核对后确认缺陷存在，**但位置不对**。
+
+### 实际位置
+
+```text
+internal/magento/order_create.go:120
+  EntityType: storage.EntityOrder, EntityID: strconv.Itoa(in.CustomerID),
+```
+
+下单是**自记账工具**，它自己调用 `ops.Begin`，不走 `server.go` 的 `entityFor`。所以
+`server.go` 里那个通用的 entity 推导与这条无关——t13 指错了地方（它自己也说「不在我可改的文件里」，
+实际上在 `order_create.go`）。
+
+### 生产数据佐证
+
+```text
+entity_type | entity_id | count
+order       | 5         | 3
+order       | 3         | 2
+order       | 4         | 2
+order       | 2         | 2
+order       | 6         | 1
+order       | 7         | 1
+stock       | semtest   | 1
+```
+
+`entity_id` 是 2..7，正好是客户 id 的范围。
+
+### 为什么这条重要
+
+t13 的 dispose 工具让那 11 条「可查、可关、可重排」，但操作员拿到的 `entity_id=5` 指向的是
+**客户 5**，不是订单。他按这个号去 Magento 查，会看到别人的订单——然后据以判断「变更在」，
+做出错误处置。**这让处置工具的语义是错的，而不只是不方便。**
+
+### 修法方向（不唯一，需在任务里定）
+
+下单时订单还不存在，所以 Begin 阶段无法知道订单 id。两个诚实的选择：
+1. Begin 时记 `entity_type=customer` + `entity_id=customer_id`（记录当时已知的事实），
+   成功后把订单号写进 `upstream_ref` / result，处置时两者都能看到
+2. Begin 时 `entity_type=order` + 空 id，成功后回填
+
+**关键是不要在 Begin 阶段把客户 id 谎称成订单 id。** 这是本轮反复出现的同一类问题的又一例：
+**字段有值、类型正确、但语义是错的**——比空值更危险，因为空值会让人去查，错值会让人下结论。
+
+## 我自己的操作失误：`git add -A` 把 agent 的未完成改动一起提交了
+
+t13 指出：它工作期间我的 `git add -A` 把它的改动一起提交进了 `69fa64d`，提交信息写的是别人的交付。
+
+**这是我的问题。** 我在提交文档时用 `git add -A`，把所有 agent 的 in-flight 代码改动一并纳入。
+后果：
+- 提交信息与实际内容不符
+- 如果要按 commit 粒度审 diff，无法区分谁改了什么
+- 未完成的改动被标记为「已交付」
+
+**从本条起改为只提交明确指定的文件**（`git add <path>`），不再用 `-A`。工作树里 agent 的改动
+留在工作树，等它们各自完成后再按任务边界提交。
+
+这不算严重事故——内容是对的、门禁是绿的——但它让历史不可读，而**可读的历史是多 agent 协作的
+基本要求**：事后无法回答「这行是谁、为什么改的」。
