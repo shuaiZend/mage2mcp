@@ -18,7 +18,7 @@
 | 上游实例 | `magento: demo`（真实 demo 店铺，store `pl`）+ `cloudflare: zone-a`（占位凭据，只用于跨实例授权探测） |
 | 假上游实例 | `http://127.0.0.1:18121/mcp` → 本地 fake Magento `127.0.0.1:19091`（`0.4s` 延迟，`1 rps / burst 1 / max_concurrent 1`） |
 | 数据库 | 隔离库 `mage2mcp_sec_v0116`（PostgreSQL 127.0.0.1:55440），启动时自动迁移 |
-| 角色令牌 | RS256，`roles=[viewer|analyst|operator|admin|approver]`，另有`norole`、`unknownrole`、`multirole`、`service`（`type=service`）、`expired`、`wrongaud`、`wrongiss` |
+| 角色令牌 | RS256，`roles=[viewer, analyst, operator, admin, approver]`，另有`norole`、`unknownrole`、`multirole`、`service`（`type=service`）、`expired`、`wrongaud`、`wrongiss` |
 | 审批 CLI | `/tmp/sec-v0116/mage2mcp-admin -config config.yaml -token-file token-<role> approve <id>` |
 | 生产端点 | `http://127.0.0.1:18110/mcp`（SSH 隧道 → `49.51.250.83:8080`），`auth.enabled=false` |
 | 代码修改 | **无**。本文件只记录；配置/令牌/探针全部在 `/tmp/sec-v0116/` |
@@ -688,8 +688,7 @@ python3 /tmp/sec-v0116/mcp.py '' magento.product.delete '{"instance":"demo","sku
 ```
 
 生产 `18110` 是 `auth.enabled=false` 且 `writes_enabled=true`：任何能连到该端口的人都可以
-（a）调用所有读工具；（b）发起写/破坏性调用并拿到 `confirmation_id`。审批仍需 `mage2mcp-admin`
-- 数据库访问，所以不是「匿名可删库」，但**没有 RBAC、没有身份、审计里 subject 是 `anonymous`**。
+（a）调用所有读工具；（b）发起写/破坏性调用并拿到 `confirmation_id`。审批仍需 `mage2mcp-admin` 数据库访问，所以不是「匿名可删库」，但**没有 RBAC、没有身份、审计里 subject 是 `anonymous`**。
 这是部署配置问题（前一轮已记录），不是 v0.11.6 代码缺陷；本轮未在该端点执行任何写操作。
 
 ---
