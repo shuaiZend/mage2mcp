@@ -28,6 +28,29 @@ func invoiceFake(t *testing.T, capture func(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// requireRetryableFalse asserts the error envelope carries retryable=false.
+//
+// ADR-0010 (implemented as U-30) says every error carries Retryable, so the key
+// is always present: an absent key is itself a contract violation, and a present
+// key whose value is true is the regression these tests exist to catch. The
+// assertion is therefore on the VALUE, not on the key's presence — the earlier
+// form (`if _, retryable := res.Structured["retryable"]; retryable`) tested
+// presence and failed as soon as the field became mandatory.
+func requireRetryableFalse(t *testing.T, res toolResult, what string) {
+	t.Helper()
+	value, present := res.Structured["retryable"]
+	if !present {
+		t.Fatalf("qa: %s must carry retryable per ADR-0010; the key is absent: %v", what, res.Structured)
+	}
+	retryable, isBool := value.(bool)
+	if !isBool {
+		t.Fatalf("qa: %s carried retryable of type %T, want bool: %v", what, value, res.Structured)
+	}
+	if retryable {
+		t.Fatalf("qa: %s must not be marked retryable: %v", what, res.Structured)
+	}
+}
+
 // TestMoneyPathAmbiguityEndsUnknown guards REL-02 / MAG-01 / MAG-18: a network
 // drop and a Magento 500 on a money path are ambiguous, so the operation ends
 // UNKNOWN, is recorded as unknown in the ledger, is not retryable, and a second
@@ -69,9 +92,7 @@ func TestMoneyPathAmbiguityEndsUnknown(t *testing.T) {
 			f.approve(t, approval, "human-1")
 			res := f.call(t, agent, "magento.invoice.capture", withConfirmation(args, approval))
 			res.mustFail(t, "operation_unknown")
-			if _, retryable := res.Structured["retryable"]; retryable {
-				t.Fatal("qa: an ambiguous money outcome must not be marked retryable")
-			}
+			requireRetryableFalse(t, res, "an ambiguous money outcome")
 			opID := res.detail("operation_id")
 			if opID == "" {
 				t.Fatalf("qa: operation_unknown carried no operation_id: %s", res.Text)
@@ -120,9 +141,7 @@ func TestCaptureTimeoutEndsUnknownAndDoesNotDoubleCapture(t *testing.T) {
 	f.approve(t, approval, "human-1")
 	res := f.call(t, agent, "magento.invoice.capture", withConfirmation(args, approval))
 	res.mustFail(t, "operation_unknown")
-	if _, retryable := res.Structured["retryable"]; retryable {
-		t.Fatal("qa: a timed-out capture must not be retryable")
-	}
+	requireRetryableFalse(t, res, "a timed-out capture")
 	opID := res.detail("operation_id")
 	record, err := f.ledger.Get(context.Background(), opID)
 	if err != nil {
