@@ -283,6 +283,21 @@ func importCSV(tag string) string {
 		fmt.Sprintf("%sIMP-%s-%s,Import %s,simple,9.99,4\n", skuPrefix, tag, ts, tag)
 }
 
+// importCSVWithFailure adds one row that is structurally valid but cannot be created, so
+// the resulting batch always has failed rows. import.resume is only meaningful when
+// something failed: without this the case flipped between "resumed" and "correctly
+// refused" depending on whether the clean import happened to fail, which made the matrix
+// change between runs for a reason unrelated to the code.
+//
+// The row must survive structural validation — an invalid type_id makes import.start
+// refuse the whole payload ("import has invalid rows") rather than record a per-row
+// failure. A well-formed row pointing at an attribute set that does not exist passes
+// validation and fails at the Magento create, which is the failure the batch is for.
+func importCSVWithFailure(tag string) string {
+	return importCSV(tag) +
+		fmt.Sprintf("%sIMP-%s-%s-BAD,Import %s Bad,simple,9.99,9999\n", skuPrefix, tag, ts, tag)
+}
+
 // seedReadEnv records the seed SKUs the read cases depend on, by searching the
 // store once before the read matrix runs.
 func seedReadEnv(e *Env) error {

@@ -611,13 +611,38 @@ func writeCases() []Case {
 			}, Need: []string{"cust_id"}, Soft: true,
 		},
 		{
+			// Creates its own address instead of reusing the one from the earlier create
+			// case. Reusing it made this case fail whenever that address was gone — a
+			// demo-store reset between the two steps was enough — and the tool then
+			// reported "does not expose customer address update", which points at the
+			// wrong thing entirely.
 			Group: "customer-write", Tool: "magento.customer.addresses.update", Case: "updates the address",
 			Args: func(e *Env) (map[string]any, error) {
+				res, err := e.client.Call("magento.customer.addresses.create", map[string]any{
+					"instance": instance(), "customer_id": e.Int("cust_id"),
+					"firstname": "MCPTEST", "lastname": "Customer",
+					"street": []string{"2 MCPTEST Street"}, "city": "Wrocław",
+					"postcode": "50-001", "country_id": "PL", "region_id": 997,
+					"telephone":       "500600701",
+					"default_billing": false, "default_shipping": false,
+				})
+				if err != nil || res.IsError {
+					return nil, fmt.Errorf("seed address for update: %v %s", err, res.Text())
+				}
+				out, err := output(res)
+				if err != nil {
+					return nil, err
+				}
+				addr, _ := out["address"].(map[string]any)
+				id, ok := num(addr, "id")
+				if !ok || id <= 0 {
+					return nil, fmt.Errorf("seed address returned no id: %s", res.Text())
+				}
 				return map[string]any{
-					"instance": instance(), "customer_id": e.Int("cust_id"), "address_id": e.Int("addr_id"),
+					"instance": instance(), "customer_id": e.Int("cust_id"), "address_id": int(id),
 					"city": "Krakow",
 				}, nil
-			}, Need: []string{"cust_id", "addr_id"}, Soft: true,
+			}, Need: []string{"cust_id"}, Soft: true,
 		},
 		{
 			Group: "customer-write", Tool: "magento.customer.addresses.delete", Case: "deletes the address",
@@ -901,7 +926,7 @@ func writeCases() []Case {
 			Args: func(e *Env) (map[string]any, error) {
 				return map[string]any{
 					"instance": instance(), "format": "csv",
-					"data_base64":     b64(importCSV("ASYNC")),
+					"data_base64":     b64(importCSVWithFailure("ASYNC")),
 					"idempotency_key": e.Get("imp_idem"),
 				}, nil
 			},
@@ -937,7 +962,11 @@ func writeCases() []Case {
 			}, Need: []string{"job_id"}, Soft: true,
 		},
 		{
-			Group: "import-write", Tool: "magento.import.resume", Case: "resumes a job with no failures is rejected",
+			// The async import now always contains a row that cannot succeed, so the
+			// job deterministically has failed rows and resume has something to do.
+			// Without that fixture this case flipped between "resumed" and "correctly
+			// refused" from run to run.
+			Group: "import-write", Tool: "magento.import.resume", Case: "resumes a job with failed rows",
 			Args: func(e *Env) (map[string]any, error) {
 				return map[string]any{"instance": instance(), "job_id": e.Get("job_id")}, nil
 			}, Need: []string{"job_id"}, Soft: true,
