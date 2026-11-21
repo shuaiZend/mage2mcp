@@ -283,8 +283,13 @@ func buildUpdatePayload(sku string, in UpdateProductInput) (productPayload, erro
 		return productPayload{}, err
 	}
 	attributes = append(attributes, seo...)
+	// pricingAttributeOrder starts at special_price, so weight must not be part of
+	// this slice: weight is a static product field carried by payload.Weight below,
+	// not a custom attribute. Passing it here shifted every value one slot
+	// (weight -> special_price, special_price -> special_from_date, ...), which
+	// silently rewrote the selling price from a weight-only update (U-01).
 	pricing, err := pricingAttributesFromPointers([]*string{
-		in.Weight, in.SpecialPrice, in.SpecialFromDate, in.SpecialToDate, in.Cost,
+		in.SpecialPrice, in.SpecialFromDate, in.SpecialToDate, in.Cost,
 	}, in.TaxClassID)
 	if err != nil {
 		return productPayload{}, err

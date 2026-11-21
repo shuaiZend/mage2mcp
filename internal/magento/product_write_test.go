@@ -455,3 +455,60 @@ func TestDeleteProduct(t *testing.T) {
 		t.Fatalf("validation err = %v", err)
 	}
 }
+
+// U-01: buildUpdatePayload must not shift pricing attributes by one slot. A
+// weight-only update used to emit special_price=weight, special_from_date=
+// special_price, cost=special_to_date and tax_class_id=cost, silently
+// repricing the product. Reverting the fix makes this test fail.
+func TestBuildUpdatePayloadWeightDoesNotBecomeSpecialPrice(t *testing.T) {
+	weight := "2.5"
+	payload, err := buildUpdatePayload("SKU-1", UpdateProductInput{Weight: &weight})
+	if err != nil {
+		t.Fatalf("buildUpdatePayload: %v", err)
+	}
+	if payload.Weight != "2.5" {
+		t.Fatalf("payload.Weight = %q, want 2.5", payload.Weight)
+	}
+	if len(payload.CustomAttributes) != 0 {
+		t.Fatalf("weight-only update emitted pricing custom attributes: %#v", payload.CustomAttributes)
+	}
+	for _, attr := range payload.CustomAttributes {
+		switch attr.AttributeCode {
+		case "special_price", "special_from_date", "special_to_date", "cost", "tax_class_id":
+			t.Fatalf("weight-only update wrote %s=%q", attr.AttributeCode, attr.Value)
+		}
+	}
+}
+
+// U-01: each pricing field must land on its own attribute code.
+func TestBuildUpdatePayloadPricingFieldsKeepTheirCodes(t *testing.T) {
+	specialPrice := "40.00"
+	from := "2026-01-01"
+	to := "2026-02-01"
+	cost := "20.00"
+	taxClass := 2
+	payload, err := buildUpdatePayload("SKU-1", UpdateProductInput{
+		SpecialPrice: &specialPrice, SpecialFromDate: &from, SpecialToDate: &to,
+		Cost: &cost, TaxClassID: &taxClass,
+	})
+	if err != nil {
+		t.Fatalf("buildUpdatePayload: %v", err)
+	}
+	want := map[string]string{
+		"special_price":     "40.00",
+		"special_from_date": "2026-01-01",
+		"special_to_date":   "2026-02-01",
+		"cost":              "20.00",
+		"tax_class_id":      "2",
+	}
+	got := map[string]string{}
+	for _, attr := range payload.CustomAttributes {
+		got[attr.AttributeCode] = attr.Value
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("custom attributes = %#v, want %#v", got, want)
+	}
+	if payload.Weight != "" {
+		t.Fatalf("payload.Weight = %q, want empty", payload.Weight)
+	}
+}
