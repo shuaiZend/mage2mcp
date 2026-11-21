@@ -275,3 +275,81 @@ Release 工作流 `44878277648` 成功，发布 36 个资产。
 | **v0.11.3 已发布镜像** | **91** | **7** | 1 | 24 |
 
 **净增 9 个通过用例，无回归。**
+
+---
+
+## 十、资金链路探索性测试（v0.11.3 之后）
+
+此前 24 个跳过用例中有 21 个卡在 `order.create`。用真实订单打通后，**首次验证了整条资金链路**，并发现 **6 类真实缺陷**。
+
+### 10.1 根因：所有 Magento 文档创建路由都返回标量 id
+
+这是本轮最重要的发现，也是 `LIVE-8` 的真正根因。
+
+| 路由 | 实际返回 | 网关原假设 |
+|---|---|---|
+| `PUT /carts/{id}/order` | `"8"` | 订单对象 |
+| `POST /order/{id}/invoice` | `"4"` | 发票对象 |
+| `POST /order/{id}/ship` | `"3"` | 发货对象 |
+| `POST /order/{id}/refund` | `"2"` | 贷项通知单对象 |
+
+网关把标量按对象解析，解析失败后**记为 `operation_unknown` 并告诉调用方不要重试**——而订单/发票实际上已经创建成功。
+
+`order.create` 的响应里没有 `reconcile` 字段，证明走的是**解析失败分支**而非对账分支，这排除了「对账读不到订单」的旧假设。
+
+### 10.2 六类缺陷
+
+| # | 工具 | 缺陷 | 验证 |
+|---|---|---|---|
+| 1 | `order.create` | 响应解析为对象（实为标量 id） | `PUT /carts/14/order` → `"8"` |
+| 2 | `invoice.create` | 同上 | `POST /order/4/invoice` → `"5"` |
+| 3 | `creditmemo.create` | 同上，且路由 `/creditmemos` 不存在 | `POST /creditmemos` → 404；`POST /order/3/refund` → `"2"` |
+| 4 | `shipment.create` | 路由 `/shipments` 不存在 | `POST /shipments` → 404；`POST /order/6/ship` → `"3"` |
+| 5 | `shipment.get` / `creditmemo.get` | 读取用复数路由 | `GET /shipment/4` → 200；`GET /shipments/4` → 404 |
+| 6 | `shipment.email` / `creditmemo.email` | 邮件用复数路由 | `POST /shipment/1/emails` → 200；`POST /shipments/1/emails` → 404 |
+
+**Magento 路由单复数不一致**：发票是复数（`/invoices/{id}`），发货与贷项通知单是单数（`/shipment/{id}`、`/creditmemo/{id}`），而集合搜索一律是复数。
+
+### 10.3 修复
+
+新增 `decodeCreatedDocumentID`，接受三种形状（字符串标量、数字标量、带 `entity_id` 的对象），每次创建后**回读文档**，返回完整记录而非 id。
+
+### 10.4 全链路验证
+
+| 步骤 | 结果 |
+|---|---|
+| `order.create`（订单 8） | 成功，返回完整订单 |
+| 同一 `idempotency_key` 重放 | `replayed: true`，返回订单 8，**未产生重复** |
+| `order.hold` / `unhold` | 成功 |
+| `order.email` | 成功 |
+| `order.cancel` | 成功 |
+| `invoice.create`（订单 3） | 成功，`state: 2`（已支付） |
+| `shipment.create` | 成功 |
+| `creditmemo.create` | 成功，`grand_total: 29.5` |
+| `invoice.get/list`、`shipment.get/list`、`creditmemo.get/list` | 全部成功 |
+
+### 10.5 测试结果演进
+
+| 阶段 | 通过 | 软失败 | 硬失败 | 跳过 |
+|---|---|---|---|---|
+| v0.11.3 已发布镜像 | 91 | 7 | 1 | 24 |
+| 下单响应修复后 | 103 | 8 | 1 | 11 |
+| 票据脚本参数修复后 | 107 | 10 | 1 | 5 |
+| **邮件路由修复后** | **111** | **8** | 1 | **3** |
+
+**净增 20 个通过用例，跳过从 24 降到 3。**
+
+### 10.6 剩余 9 项的最终判定
+
+| 工具 | 判定 |
+|---|---|
+| `product.options.create` | 环境：该店无自定义选项路由 |
+| `stock_source_link` / `unlink` | 环境：stock 1 是 Default Stock，Magento 拒绝非默认源 |
+| `inventory.transfer` | 正确拒绝：用例刻意同源 |
+| `invoice.capture` | 正确拒绝：发票已支付（checkmo 自动捕获） |
+| `order.cancel` | 正确拒绝：订单已终态 |
+| `import.cancel` | 正确拒绝：任务已终态 |
+| `configurable.add_child` | 测试脚本：路由已直连验证 |
+| `customer.addresses.update` | 测试脚本：直连调用成功 |
+
+**无未归因失败。**

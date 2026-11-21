@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The money path was never verified against a real store.** Six defects, all the same
+  class as the order-placement `POST`/`PUT` bug — a route or a response shape assumed
+  rather than observed:
+  - `order.create`, `invoice.create` and `creditmemo.create` decoded their response as the
+    document object, but Magento answers with the new document's **id as a JSON scalar**.
+    The decode failed and a successful write was recorded `operation_unknown` with the
+    caller told not to retry. This is the root cause of LIVE-8.
+  - `shipment.create` used `POST /shipments` and `creditmemo.create` used
+    `POST /creditmemos`; neither is a route. They are `POST /order/{id}/ship` and
+    `POST /order/{id}/refund`.
+  - `shipment.get` and `creditmemo.get` used the plural read routes; Magento is
+    inconsistent — invoices are plural, shipments and credit memos singular.
+  - `shipment.email` and `creditmemo.email` had the same plural/singular split.
+
 ## [0.11.3] - 2026-11-21
 
 Four more defects the v0.11.2 live run exposed once the customer-address failure was out
