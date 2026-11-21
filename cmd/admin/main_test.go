@@ -277,3 +277,54 @@ func TestRecordApprovalPersistsUnderAuditConstraints(t *testing.T) {
 	}
 	t.Fatalf("no audit row with phase=approval was written; rows = %+v", rows)
 }
+
+// With authentication enabled, -as is not the identity source: a missing token
+// must be reported as a token problem, not as a missing -as flag. Before t80 the
+// run() pre-check returned "-as is required" before the config was even loaded.
+func TestAdminApproveAuthEnabledReportsTokenNotAS(t *testing.T) {
+	cfg := writeConfig(t, `auth:
+  enabled: true
+  issuer: "https://local.test"
+  audience: "mage2mcp"
+  jwks_url: "https://127.0.0.1:1/jwks"
+database:
+  url: ""
+`)
+	out, err := runCLI(t, "-config", cfg, "approve", "abc")
+	if err == nil {
+		t.Fatal("want an error when auth is enabled and no token is supplied")
+	}
+	if strings.Contains(err.Error(), "-as") {
+		t.Fatalf("err = %v, must not require -as when auth is enabled", err)
+	}
+	if !strings.Contains(err.Error(), "token") || !strings.Contains(err.Error(), "subject") {
+		t.Fatalf("err = %v, want it to say the identity comes from the token subject", err)
+	}
+	if strings.Contains(out, "approved") {
+		t.Fatalf("output = %q, must not claim an approval", out)
+	}
+}
+
+// The token's verified subject is the approver identity when -as is omitted.
+func TestAdminApproveTokenNoASUsesSubject(t *testing.T) {
+	verifier := &fakeVerifier{subject: "reviewer@example.com"}
+	approver, err := resolveApprover(context.Background(), verifier, "token-abc", "", io.Discard)
+	if err != nil {
+		t.Fatalf("resolveApprover: %v", err)
+	}
+	if approver != "reviewer@example.com" {
+		t.Fatalf("approver = %q, want token subject", approver)
+	}
+}
+
+// A contradicting -as is still refused even though it is optional.
+func TestAdminApproveTokenContradictingASIsRejected(t *testing.T) {
+	verifier := &fakeVerifier{subject: "reviewer@example.com"}
+	_, err := resolveApprover(context.Background(), verifier, "token-abc", "someone-else", io.Discard)
+	if err == nil {
+		t.Fatal("want a contradiction error")
+	}
+	if !strings.Contains(err.Error(), "verified subject") || !strings.Contains(err.Error(), "token") {
+		t.Fatalf("err = %v, want it to say the token is authoritative", err)
+	}
+}

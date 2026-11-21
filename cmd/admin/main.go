@@ -56,15 +56,30 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if flags.NArg() < 2 {
 			return fmt.Errorf("approve requires a confirmation id")
 		}
-		if as == "" {
-			return fmt.Errorf("-as <approver identity> is required")
-		}
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
+	}
+	// Resolve the approver before opening the store: with authentication enabled
+	// the identity comes from the verified token, so -as is optional and a
+	// missing token is reported as such (not as a missing -as flag).
+	var approver string
+	if command == "approve" {
+		verifier, err := adminVerifier(cfg)
+		if err != nil {
+			return err
+		}
+		token, err := readApproverToken(tokenFile)
+		if err != nil {
+			return err
+		}
+		approver, err = resolveApprover(context.Background(), verifier, token, as, stderr)
+		if err != nil {
+			return err
+		}
 	}
 	if cfg.Database.URL == "" {
 		return fmt.Errorf("database.url is required: approvals need the shared durable store")
@@ -99,22 +114,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return confirm.WritePending(stdout, requests)
 	case "approve":
 		id := flags.Arg(1)
-		// SEC-04: with authentication configured, the approver proves who they are
-		// with the same verifier the gateway uses, and the verified subject is what
-		// gets recorded. The -as flag is only a fallback for a deployment with no
-		// identity provider, where it is a self-assertion and is labelled as one.
-		verifier, err := adminVerifier(cfg)
-		if err != nil {
-			return err
-		}
-		token, err := readApproverToken(tokenFile)
-		if err != nil {
-			return err
-		}
-		approver, err := resolveApprover(ctx, verifier, token, as, stderr)
-		if err != nil {
-			return err
-		}
 		request, err := findPending(ctx, svc, id)
 		if err != nil {
 			return err
@@ -159,9 +158,10 @@ type approvalAuditor interface {
 
 // recordApproval writes the audit row for one approval.
 //
-// The approver identity is still whatever the operator typed (SEC-04 is only
-// partially closed: the identity is not authenticated), but the decision is now
-// recorded with the tool, instance and scope it applied to.
+// With authentication enabled the approver identity is the verified token subject;
+// with authentication disabled it is the operator-supplied -as value, labelled as
+// self-asserted by resolveApprover. The decision is recorded with the tool, instance
+// and scope it applied to.
 func recordApproval(ctx context.Context, auditor approvalAuditor, request *confirm.Request, approver string) error {
 	if auditor == nil || request == nil {
 		return nil
@@ -227,14 +227,14 @@ func readApproverToken(path string) (string, error) {
 func resolveApprover(ctx context.Context, verifier tokenVerifier, token, as string, warn io.Writer) (string, error) {
 	if verifier != nil {
 		if token == "" {
-			return "", fmt.Errorf("authentication is enabled, so an approval needs the approver's token: set MAGE2MCP_ADMIN_TOKEN or pass -token-file")
+			return "", fmt.Errorf("authentication is enabled, so an approval needs the approver's token: set MAGE2MCP_ADMIN_TOKEN or pass -token-file; the approver identity is taken from the verified token's subject")
 		}
 		identity, err := verifier.Verify(ctx, token)
 		if err != nil {
 			return "", fmt.Errorf("approver token rejected: %w", err)
 		}
 		if as != "" && as != identity.Subject {
-			return "", fmt.Errorf("-as %q does not match the verified subject %q", as, identity.Subject)
+			return "", fmt.Errorf("-as %q does not match the verified subject %q; the approver identity comes from the token", as, identity.Subject)
 		}
 		return identity.Subject, nil
 	}
