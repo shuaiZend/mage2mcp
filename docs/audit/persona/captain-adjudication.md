@@ -332,6 +332,7 @@ t13 的 dispose 工具让那 11 条「可查、可关、可重排」，但操作
 ### 修法方向（不唯一，需在任务里定）
 
 下单时订单还不存在，所以 Begin 阶段无法知道订单 id。两个诚实的选择：
+
 1. Begin 时记 `entity_type=customer` + `entity_id=customer_id`（记录当时已知的事实），
    成功后把订单号写进 `upstream_ref` / result，处置时两者都能看到
 2. Begin 时 `entity_type=order` + 空 id，成功后回填
@@ -345,6 +346,7 @@ t13 指出：它工作期间我的 `git add -A` 把它的改动一起提交进�
 
 **这是我的问题。** 我在提交文档时用 `git add -A`，把所有 agent 的 in-flight 代码改动一并纳入。
 后果：
+
 - 提交信息与实际内容不符
 - 如果要按 commit 粒度审 diff，无法区分谁改了什么
 - 未完成的改动被标记为「已交付」
