@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shuaiZend/mage2mcp/internal/core/config"
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
@@ -326,5 +327,42 @@ func TestAdminApproveTokenContradictingASIsRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "verified subject") || !strings.Contains(err.Error(), "token") {
 		t.Fatalf("err = %v, want it to say the token is authoritative", err)
+	}
+}
+
+// A run-level proof that a token alone (no -as) passes the identity stage: with
+// a verifier that returns a subject and no database URL, the next error is the
+// database one, not "-as is required".
+func TestAdminApproveTokenNoASPassesIdentityStage(t *testing.T) {
+	previous := adminVerifierForRun
+	adminVerifierForRun = func(config.Config) (tokenVerifier, error) {
+		return &fakeVerifier{subject: "reviewer@example.com"}, nil
+	}
+	t.Cleanup(func() { adminVerifierForRun = previous })
+
+	cfg := writeConfig(t, `auth:
+  enabled: true
+  issuer: "https://local.test"
+  audience: "mage2mcp"
+  jwks_url: "https://127.0.0.1:1/jwks"
+database:
+  url: ""
+`)
+	tokenPath := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenPath, []byte("token-abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLI(t, "-config", cfg, "-token-file", tokenPath, "approve", "abc")
+	if err == nil {
+		t.Fatal("want the database error after identity resolution")
+	}
+	if strings.Contains(err.Error(), "-as") {
+		t.Fatalf("err = %v, must not require -as with a token", err)
+	}
+	if !strings.Contains(err.Error(), "database.url") {
+		t.Fatalf("err = %v, want the next failure to be database.url", err)
+	}
+	if strings.Contains(out, "approved") {
+		t.Fatalf("output = %q, must not claim an approval", out)
 	}
 }

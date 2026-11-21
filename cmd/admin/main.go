@@ -68,7 +68,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	// missing token is reported as such (not as a missing -as flag).
 	var approver string
 	if command == "approve" {
-		verifier, err := adminVerifier(cfg)
+		verifier, err := adminVerifierForRun(cfg)
 		if err != nil {
 			return err
 		}
@@ -182,6 +182,10 @@ func recordApproval(ctx context.Context, auditor approvalAuditor, request *confi
 type tokenVerifier interface {
 	Verify(ctx context.Context, rawToken string) (*auth.Identity, error)
 }
+
+// adminVerifierForRun is adminVerifier, replaceable in tests so the run-level
+// identity path can be exercised without a live JWKS endpoint.
+var adminVerifierForRun = adminVerifier
 
 // adminVerifier builds the verifier the gateway uses, so an approval is checked
 // against the same identity provider. It returns nil when authentication is
