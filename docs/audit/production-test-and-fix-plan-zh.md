@@ -382,3 +382,76 @@ cd /opt/mage2mcp && cp compose.yaml.bak.20261121192136 compose.yaml && sudo dock
 | **v0.11.5** | **112** | **7** | **1** | **3** | 导入 status/visibility、MCP 复制规则 |
 
 **从 78 到 112，净增 34 个通过用例；跳过从 26 降到 3。**
+
+---
+
+## 十一、对照 Magento 2.4.9 API 规范的系统审计
+
+### 11.1 方法
+
+用店铺自身暴露的 REST schema 作为权威依据，而不是通用文档——它反映该实例真实可用的路由。
+
+| 步骤 | 内容 |
+|---|---|
+| 获取 schema | `GET /rest/pl/schema?services=all`，**407 条路由**，627 KB |
+| 提取网关路由 | 从工具描述中提取 77 条 `METHOD /rest/{store_code}/V1/...` |
+| 逐条比对 | 路由是否存在、方法是否匹配 |
+| 实测验证 | 对 52 条路由发真实请求，区分两种 404 |
+
+**关键区分**：Magento 有两种 404——
+- `Wniosek nie odpowiada żadnej ścieżce`（波兰语）= **路由不存在**
+- `The entity that was requested doesn't exist` = **路由存在，实体不存在**
+
+不区分这两者会得出完全错误的结论。
+
+### 11.2 审计结果
+
+| 检查项 | 结果 |
+|---|---|
+| 路由存在性（52 条实测） | **全部存在**，仅 `POST /products/{sku}/options` 缺失（已知环境限制） |
+| HTTP 方法 | 全部匹配 |
+| 搜索过滤字段（16 个） | **全部可过滤**，包括此前怀疑的 `quote_id` |
+| `fields` 投影（3 处） | **无字段被静默省略**，`total_count` 正常返回 |
+| 标量返回处理 | 属性选项、媒体上传、商品关联均已正确处理 |
+
+### 11.3 发现的缺陷：9 处工具描述与实际路由不符
+
+代码在之前的轮次已修正，但**工具描述仍记载着修复前的旧路由**：
+
+| 描述中的旧路由 | 实际路由 |
+|---|---|
+| `POST /V1/shipments` | `POST /V1/order/{orderId}/ship` |
+| `POST /V1/creditmemos` | `POST /V1/order/{orderId}/refund` |
+| `POST /V1/carts/{cartId}/order` | `PUT /V1/carts/{cartId}/order` |
+| `GET /V1/shipments/{id}` | `GET /V1/shipment/{id}` |
+| `GET /V1/creditmemos/{id}` | `GET /V1/creditmemo/{id}` |
+| `POST /V1/shipments/{id}/emails` | `POST /V1/shipment/{id}/emails` |
+| `POST /V1/creditmemos/{id}/emails` | `POST /V1/creditmemo/{id}/emails` |
+| `DELETE /V1/inventory/source-items` | `POST /V1/inventory/source-items-delete` |
+| `DELETE /V1/inventory/stock-source-links` | `POST /V1/inventory/stock-source-links-delete` |
+
+**为什么这是缺陷**：工具描述是 agent 唯一会读的东西。描述里的路由错误，与代码里的路由错误是同一类误导，只是高了一层——agent 会照着描述构造请求或向用户解释行为。
+
+已全部修正，并新增测试 `TestDocumentedRoutesMatchTheRoutesTheCodeCalls` 断言描述与代码一致。
+
+### 11.4 未发现缺陷的区域
+
+这些区域此前多次出问题，本轮系统检查后确认正确：
+
+- **路由存在性与方法**：52 条实测全部正确
+- **搜索过滤**：16 个过滤字段全部可用（含 `quote_id`、`price` gteq、`created_at` gteq）
+- **投影字段**：订单、客户、对账三处投影无静默省略
+- **标量返回**：属性选项（字符串/数字/对象三形态）、媒体上传（整数）、商品关联（布尔）均已处理
+
+### 11.5 环境观察：demo 站会周期性重置
+
+本轮测试期间店铺被重置过一次：
+
+| 时间点 | 观察 |
+|---|---|
+| 审计开始时 | 订单 8 条、分类 61 存在、测试商品齐全 |
+| 重置后 | 订单仅 2 条种子数据，所有测试数据消失 |
+
+这导致一次运行中 `shipment.get` 与 `shipment.email` 报 `not_found`——**不是产品缺陷**，是重置发生在测试中途，创建的发货单被删除。紧接着重跑同一版本，两项均通过。
+
+**影响**：测试结果存在一定的不确定性。建议后续用独立实例或关闭重置。
