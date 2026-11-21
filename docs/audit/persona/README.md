@@ -51,6 +51,11 @@ go run -tags live ./test/live -mode=raw -tool=<工具名> -args='{...}'
    `POST|PUT /customers/{id}/addresses`。
 4. **stock 1 是 Default Stock**：Magento 拒绝把非默认源链到它。
 5. 生产部署 `auth.enabled=false`；安全岗位需自建开启鉴权的实例。
+6. **数据会漂移**：多个岗位并发下单，同一时间窗口的订单数与金额持续变化（实测 20 分钟内
+   20 → 27 单），订单状态也会变（pending → processing）。因此：
+   - 每条涉及数字的结论必须**绑定快照时间**
+   - 回归阶段验证「可复现」应看**同一时刻 MCP 与 REST 直连是否对齐**，
+     而不是重跑得到同一个总额——否则会把数据漂移误判成回归失败
 
 ## 报告格式
 
