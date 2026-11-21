@@ -204,8 +204,9 @@ read, operator write, admin admin, each grant bound to a concrete instance. An
 empty instance is rejected by `rbac.New`; the literal `"*"` is the only wildcard,
 and `platform.info` alone is granted at `"*"` (gateway metadata, no store data).
 
-The default policy binds **one instance per module**. A module with more than one
-instance fails startup rather than silently granting every store:
+With authentication enabled the default policy binds **one instance per module**,
+and a module with more than one instance fails startup rather than silently
+granting every store:
 
 ```text
 rbac: magento has 2 instances (demo, demo-alt); the default policy binds one instance per module. Grant per-instance policies explicitly, or call DefaultPolicyAllInstances() to treat them as one trust domain
@@ -213,10 +214,10 @@ rbac: magento has 2 instances (demo, demo-alt); the default policy binds one ins
 
 `DefaultPolicyAllInstances()` is the explicit single-trust-domain opt-in; it
 binds every grant to `"*"` and removes cross-instance isolation, so it is only
-for deployments where all instances are one tenant. The policy is currently
-constructed before the `auth.enabled` branch, so a multi-instance module also
-fails with authentication disabled; that is a reported code issue, not a
-supported development mode.
+for deployments where all instances are one tenant. The policy is built only when
+authentication is enabled, because that is the only mode where an authorizer is
+consulted; a deployment with `auth.enabled: false` starts with no policy and every
+call is anonymous (that mode is refused on a non-loopback listener).
 
 **Not implemented:** capability-driven registration, runtime module disable,
 `notifications/tools/list_changed`, and a per-instance `/readyz` degraded state.
@@ -294,12 +295,14 @@ row missing.
   `ExpectContinueTimeout` 1 s. Redirects are refused. This is the only tuned
   transport; Cloudflare and GA4 use the standard client with per-request
   timeouts.
-- **Magento enforces a per-instance outbound budget.** Each instance has a token
-  bucket (default 50 requests/s, burst 100) and a concurrency cap (default 8),
-  configured by `datasources.magento.instances[].limits`; an exhausted budget
-  returns a retryable `rate_limited` without reaching Magento. Cloudflare and GA4
-  do not honour `limits`; inbound rate limiting and their quota accounting are
-  **PLANNED** (SEC-11).
+- **Magento enforces a per-instance outbound budget.** `cmd/server` only maps
+  `datasources.magento.instances[].limits` onto `magento.Limits` (an unset block
+  means the defaults); each instance's client builds the token bucket (default 50
+  requests/s, burst 100) and concurrency cap (default 8) in
+  `internal/magento/client.go` and takes a token before every upstream call. An
+  exhausted budget returns a retryable `rate_limited` without reaching Magento.
+  Cloudflare and GA4 do not honour `limits`; inbound rate limiting and their
+  quota accounting are **PLANNED** (SEC-11).
 - All upstream calls take `context.Context` and honour cancellation.
 - The worker's concurrency is bounded by the job queue; a task holds a lease and
   a fencing token.

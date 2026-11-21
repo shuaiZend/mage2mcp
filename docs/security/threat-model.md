@@ -211,8 +211,8 @@ instance to the role ladder (viewer/analyst read, operator write, admin admin).
   `rbac: grant 0 has no instance; name one, or use "*" for every instance`.
   `matchesInstance` matches only the exact id or the explicit
   `rbac.WildcardInstance` (`"*"`). An empty string matches no named instance.
-- **One instance per module is the default.** A module with more than one
-  instance fails startup:
+- **One instance per module is the default when authentication is enabled.** In
+  that mode a module with more than one instance fails startup:
   `rbac: magento has 2 instances (demo, demo-alt); the default policy binds one instance per module. Grant per-instance policies explicitly, or call DefaultPolicyAllInstances() to treat them as one trust domain`.
   Silently binding every store would recreate the SEM-02 cross-instance grant.
 - **Single-trust-domain opt-in is explicit.** `rbac.DefaultPolicyAllInstances()`
@@ -222,10 +222,12 @@ instance to the role ladder (viewer/analyst read, operator write, admin admin).
 - **`platform.info` is the one wildcard read.** It returns gateway metadata
   (version, protocol versions, tool names, instance ids, writes flag), never store
   data, so every role may read it.
-- **Current wiring note.** `cmd/server` builds the policy before the
-  `auth.enabled` branch, so a multi-instance module also fails startup with
-  authentication disabled. The intended behavior is auth-enabled only; this is a
-  reported wiring issue, not a documented dev mode.
+- **The rule applies only with authentication enabled.** `cmd/server` builds the
+  policy inside the `auth.enabled` branch (`defaultPolicy` returns nil when
+  authentication is off), so a multi-instance module starts normally with
+  `auth.enabled: false`. The gateway then has no authorizer and every call is
+  anonymous, a mode that is refused on a non-loopback listener and therefore
+  cannot be used to run a multi-store deployment in production.
 
 Evidence: `internal/security/rbac/rbac_test.go` (`TestDefaultPolicyBindsInstances`,
 `TestDefaultPolicyRefusesToGuessATrustDomain`, `TestDefaultPolicyAllInstancesIsOptIn`,
@@ -588,10 +590,10 @@ Default deny. The shipped policy is:
 
 Every grant names an instance; `rbac.New` rejects an empty instance. A grant on
 instance A never authorizes instance B. The wildcard `"*"` is explicit opt-in
-(`DefaultPolicyAllInstances`), and the default policy binds one instance per
-module; a multi-instance module fails startup. `platform.info` is the one
-wildcard read (gateway metadata only). An explicit deny beats every allow. An
-unregistered tool is denied.
+(`DefaultPolicyAllInstances`); with authentication enabled the default policy
+binds one instance per module, so a multi-instance module fails startup in that
+mode. `platform.info` is the one wildcard read (gateway metadata only). An
+explicit deny beats every allow. An unregistered tool is denied.
 
 ### 9.3 Confirmation
 

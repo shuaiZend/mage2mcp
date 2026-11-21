@@ -98,10 +98,11 @@ change.
 ## RBAC and instance isolation
 
 Authorization is compiled into the binary; there is no YAML policy file.
-`cmd/server` builds `rbac.DefaultPolicy(configuredInstances(cfg))` at startup
-(currently before the `auth.enabled` branch) from the same instance map the
-resolvers and `platform.info` use; when authentication is enabled, that policy is
-the authorizer.
+With authentication enabled, `cmd/server` builds
+`rbac.DefaultPolicy(configuredInstances(cfg))` at startup from the same instance
+map the resolvers and `platform.info` use, and that policy is the authorizer.
+With authentication disabled no policy is built at all: `authorizeFunc` returns no
+authorizer, so every call is anonymous and none of the rules below are consulted.
 
 - **One instance per module is the shipped default.** The policy binds each
   configured module instance to the role ladder: `viewer`/`analyst` read,
@@ -113,19 +114,19 @@ the authorizer.
 - **Wildcard is explicit.** `matchesInstance` accepts an exact id or the literal
   `rbac.WildcardInstance` (`"*"`). `platform.info` is granted at `"*"` for every
   role because it returns only gateway metadata, never store data.
-- **Multiple instances in one module fail startup.** The default ladder cannot
-  express "store A yes, store B no", so it refuses instead of silently granting
-  every store:
+- **With authentication enabled, multiple instances in one module fail startup.**
+  The default ladder cannot express "store A yes, store B no", so it refuses
+  instead of silently granting every store:
 
   ```text
   mage2mcp: rbac: magento has 2 instances (demo, demo-alt); the default policy binds one instance per module. Grant per-instance policies explicitly, or call DefaultPolicyAllInstances() to treat them as one trust domain
   ```
 
-  This is the SEM-02 security default, not a configuration fault. The same check
-  runs before the `auth.enabled` branch today, so it also rejects a multi-instance
-  module with authentication disabled; that is a known wiring issue: policy
-  construction should move inside the auth-enabled branch. Use one instance per
-  module until the wiring is changed.
+  This is the SEM-02 security default, not a configuration fault: silently
+  binding every store would recreate the cross-instance grant the policy exists to
+  prevent. The check runs only when authentication is enabled, because that is the
+  only mode where a policy is built and an authorizer consulted. With
+  `auth.enabled: false` the gateway starts and every call is anonymous.
 
 **How to resolve a multi-instance module.** Pick one:
 
@@ -139,9 +140,11 @@ the authorizer.
    cross-instance isolation is gone. Use it only when all configured instances
    belong to one tenant.
 
-Do not disable authentication to work around the startup error: `auth.enabled:
-false` makes every tool anonymous and is allowed only on a loopback development
-listener.
+Disabling authentication does avoid the startup error — no policy is built, so the
+multi-instance rule never runs — but it is not a supported way to run a
+multi-store deployment: `auth.enabled: false` makes every tool anonymous and is
+refused on a non-loopback listener. Treat it as a loopback-only development
+shortcut, not a configuration.
 
 ## `log`
 
