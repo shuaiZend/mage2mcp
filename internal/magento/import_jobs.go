@@ -218,7 +218,12 @@ const (
 
 	importStartToolDescription = "Queues a bounded CSV/JSON product import for the worker " +
 		"(at most 8 MiB decoded and 5000 rows, and small enough that its base64 form fits the server body limit, 16 MiB by default) after structural validation. Returns a job id; poll import.status for progress and the partial-success report. " +
-		"Write operation: requires confirmation and a configured database queue."
+		"Write operation: requires confirmation and a configured database queue. " +
+		// The detailed rule lives in the server instructions; the payload being flat is
+		// the fact that decides whether an import can express the source at all.
+		"COPYING FROM ANOTHER STORE: the payload is flat, so it can only express simple " +
+		"products; discover the source type and options first, and ask a human before " +
+		"creating any category, attribute or attribute set. See the server instructions. "
 	importStatusToolDescription = "Reads the state, attempts, error code, and result summary of an asynchronous import job on the named instance. Only the caller that started the job can read it. Read-only."
 	importCancelToolDescription = "Cancels a queued or running asynchronous import job on the named instance. Only the caller that started the job can cancel it. Requires confirmation."
 

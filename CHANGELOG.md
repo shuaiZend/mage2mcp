@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The server instructions now state the product-copy rule.** Before copying a product,
+  an agent must record the source's type, every configurable option and dropdown with its
+  values, its attribute set and its categories, then diff that against the target with
+  `magento.attribute.sets`, `magento.attributes`, `magento.attributes.options`,
+  `magento.category.tree` and `magento.product.media.types`. If a category, attribute,
+  option value or attribute set is missing, it must stop and ask a human, naming the exact
+  one needed: a new category or attribute changes the store for everyone and is not undone
+  by deleting the product. A copy is not done until it carries the same type, options and
+  attribute values as the source.
+
+  The rule exists because a product was copied as simple when its source was configurable
+  with two colour options, and the copy looked finished. `docs/mcp-tools.md` §1.1 carries
+  the reference form.
+
 ### Fixed
 
 - **An import that said "disabled, not visible" produced an enabled, visible product.**

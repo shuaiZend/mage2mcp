@@ -44,7 +44,12 @@ const (
 		"This is a write operation: it changes catalog data, is not idempotent, and a retry can create a duplicate SKU. " +
 		"When quantity is supplied the product is created first and its default-source inventory is assigned afterwards, " +
 		"so an inventory failure leaves the product created and the error carries the SKU and stage in its details. " +
-		"Changing url_key changes the storefront URL; Magento does not create a 301 redirect for API writes." +
+		"Changing url_key changes the storefront URL; Magento does not create a 301 redirect for API writes. " +
+		// The detailed rule lives in the server instructions, which have no length
+		// cap; this carries the pointer and the one fact that changes which tool to call.
+		"COPYING: discover the source type, options and attributes first; ask a human " +
+		"before creating any category, attribute or attribute set. Configurable sources " +
+		"need magento.configurable.create. See the server instructions. " +
 		instanceResolutionNote
 	productUpdateToolDescription = "Updates one product in the configured Magento 2 REST catalog " +
 		"Changing url_key changes the storefront URL; Magento does not create a 301 redirect for API writes. " +
@@ -58,7 +63,11 @@ const (
 		"outcome completed|partial, stages, completed_stages, failed_stage, orphan_skus. A partial run leaves completed writes in place and " +
 		"reports unlinked children as orphan_skus, which must be reconciled. Resume with the returned operation_id: existing children and " +
 		"parent are reused and missing links repaired, so a resumed run is idempotent and writes no duplicate SKU; a fresh run is not " +
-		"idempotent and refuses a pre-existing SKU. Requires human confirmation." +
+		"idempotent and refuses a pre-existing SKU. Requires human confirmation. " +
+		// The detailed rule lives in the server instructions; here is the part that
+		// changes which call to make.
+		"COPYING: discover the source type, options and attributes first, and ask a human " +
+		"before creating any category, attribute or attribute set. " +
 		instanceResolutionNote
 	configurableAddChildToolDescription = "Links an existing simple product to a configurable parent in the configured Magento 2 REST catalog " +
 		"(POST /rest/{store_code}/V1/configurable-products/{sku}/child) using the integration credential. " +

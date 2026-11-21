@@ -2079,3 +2079,39 @@ func TestToolResultsCarryCorrelationMeta(t *testing.T) {
 		t.Fatalf("_meta.subject = %v, want the verified identity", result.Meta["subject"])
 	}
 }
+
+// The copy rule has to reach an agent before it writes, so it lives in the initialize
+// instructions — the one place every client reads — rather than only in a tool
+// description, which is capped at 1024 characters.
+func TestServerInstructionsRequireDiscoveryBeforeCopying(t *testing.T) {
+	srv, err := NewMCP(Options{Version: "test", Registry: mustRegistry(t)})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ts := httptest.NewServer(Handler(srv, Options{Registry: mustRegistry(t)}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = session.Close() }()
+
+	instructions := session.InitializeResult().Instructions
+	for _, want := range []string{
+		"COPYING PRODUCTS FROM ANOTHER STORE",
+		"discover before you write",
+		"configurable option and dropdown",
+		"magento.attribute.sets",
+		"magento.category.tree",
+		"CREATE NOTHING NEW IN THE TAXONOMY WITHOUT A HUMAN",
+		"ask, naming the exact",
+	} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("instructions do not mention %q:\n%s", want, instructions)
+		}
+	}
+}

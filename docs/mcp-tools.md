@@ -25,6 +25,39 @@ nothing here is `INTEGRATION_TESTED`.
 7. **Every write is gated.** A write either uses the middleware operation gate or
    is explicitly declared self-ledgered (the five money tools).
 
+## 1.1 Copying products from another store
+
+An agent that copies a product from another storefront does the most damage by guessing.
+The server instructions state the rule, and this section is its reference form.
+
+**Discover before you write.** For every source product, record:
+
+| What | Why it changes the write |
+|---|---|
+| Product type — simple, configurable, grouped, bundle, downloadable, virtual | It decides which tool can create it at all. `magento.product.create` makes simple and virtual products; a configurable needs `magento.configurable.create`; the flat import payload can only express simple products |
+| Every configurable option and dropdown, with its values | A source that offers two colours is a configurable product with two children, not a simple product with a colour in its title. A dropdown that is a custom option is a third thing again, and Magento exposes it through a different route |
+| The full attribute set | A product whose attribute set does not exist on the target cannot carry its attributes |
+| The categories it belongs to | An uncategorised product is invisible on the storefront even when it is enabled and visible |
+
+**Compare against the target.** Read `magento.attribute.sets`, `magento.attributes`,
+`magento.attributes.options`, `magento.category.tree` and `magento.product.media.types`
+before writing, and diff the source's requirements against what already exists.
+
+**Create nothing new in the taxonomy without a human.** If the target has no matching
+category, attribute, option value or attribute set, stop and ask, naming the exact one
+needed and why. A new category or attribute changes the store for every seller and is not
+undone by deleting the product that prompted it. The approval gate on a write covers the
+product; it does not cover the decision to invent a taxonomy.
+
+**A copy is done when it matches.** Same type, same options with the same values, same
+attribute values, same category. If part of the source cannot be reproduced — because the
+target lacks the attribute set, or the route is not exposed — say so explicitly rather
+than shipping a simpler product that looks complete.
+
+The failure this rule exists to prevent was observed on a real store: a product copied as
+simple when the source was configurable with two colour options. The copy looked finished
+— name, price, image, category all present — and the options were simply gone.
+
 ## 2. Naming
 
 ```text
