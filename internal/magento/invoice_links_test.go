@@ -66,14 +66,20 @@ func (f *invoiceFake) handler(t *testing.T) http.HandlerFunc {
 		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/orders/42":
 			_, _ = io.WriteString(w, `{"entity_id":42,"order_currency_code":"USD","grand_total":129.98,`+
 				`"items":[{"item_id":1,"sku":"SKU-1","price":64.99,"qty_ordered":2,"qty_invoiced":0,"qty_refunded":0}]}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/order/42/invoice":
-			raw, _ := io.ReadAll(r.Body)
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/invoices/9":
+			// The read-back after the create route.
 			f.mu.Lock()
-			f.postBody = raw
 			state := f.state
 			f.mu.Unlock()
 			_, _ = fmt.Fprintf(w, `{"entity_id":9,"increment_id":"000000009","order_id":42,"state":%d,`+
 				`"grand_total":129.98,"total_qty":2,"order_currency_code":"USD"}`, state)
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/order/42/invoice":
+			raw, _ := io.ReadAll(r.Body)
+			f.mu.Lock()
+			f.postBody = raw
+			f.mu.Unlock()
+			// The create route answers with the new id as a JSON scalar.
+			_, _ = io.WriteString(w, `"9"`)
 		default:
 			http.NotFound(w, r)
 		}

@@ -49,6 +49,9 @@ func TestCreateOrderCartFlow(t *testing.T) {
 		case "/rest/default/V1/carts/42/shipping-information":
 			_, _ = w.Write([]byte(`{"payment_methods":[]}`))
 		case "/rest/default/V1/carts/42/order":
+			// The place-order route answers with the new order id as a JSON scalar.
+			_, _ = w.Write([]byte(`"99"`))
+		case "/rest/default/V1/orders/99":
 			_, _ = w.Write([]byte(`{"entity_id":99,"increment_id":"000000099","status":"pending","grand_total":19.98}`))
 		default:
 			http.NotFound(w, r)

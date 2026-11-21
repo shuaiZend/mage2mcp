@@ -153,7 +153,9 @@ func (s *Service) GetShipment(ctx context.Context, shipmentID int) (*Shipment, e
 	if shipmentID <= 0 {
 		return nil, invalidf("shipment_id must be a positive integer")
 	}
-	raw, err := s.client.do(ctx, http.MethodGet, "/shipments/"+strconv.Itoa(shipmentID), nil, nil)
+	// Magento's read-by-id routes are inconsistent: shipments and credit memos are
+	// singular, invoices are plural. /shipments/{id} is a 404 on a standard instance.
+	raw, err := s.client.do(ctx, http.MethodGet, "/shipment/"+strconv.Itoa(shipmentID), nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +210,8 @@ func (s *Service) GetCreditmemo(ctx context.Context, creditmemoID int) (*Creditm
 	if creditmemoID <= 0 {
 		return nil, invalidf("creditmemo_id must be a positive integer")
 	}
-	raw, err := s.client.do(ctx, http.MethodGet, "/creditmemos/"+strconv.Itoa(creditmemoID), nil, nil)
+	// Singular, like shipments; invoices are the plural exception.
+	raw, err := s.client.do(ctx, http.MethodGet, "/creditmemo/"+strconv.Itoa(creditmemoID), nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -221,9 +224,12 @@ func (s *Service) GetCreditmemo(ctx context.Context, creditmemoID int) (*Creditm
 
 // documentEmailPaths maps each sales document to its email endpoint.
 var documentEmailPaths = map[string]string{ // #nosec G101 -- document kinds, not credentials
+	// Same singular/plural split as the read routes: invoices are plural, shipments
+	// and credit memos singular. /shipments/{id}/emails and /creditmemos/{id}/emails
+	// are 404 on a standard instance.
 	"invoice":    "/invoices/%d/emails",
-	"shipment":   "/shipments/%d/emails",
-	"creditmemo": "/creditmemos/%d/emails",
+	"shipment":   "/shipment/%d/emails",
+	"creditmemo": "/creditmemo/%d/emails",
 }
 
 // SendDocumentEmail sends a sales document email (invoice, shipment, or credit

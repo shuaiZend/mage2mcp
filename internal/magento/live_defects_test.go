@@ -1129,3 +1129,30 @@ func TestUpdateCustomerAddressFallsBackToCustomerUpdate(t *testing.T) {
 		t.Fatalf("address = %v, want the requested fields applied", entry)
 	}
 }
+
+// Found by the v0.11.3 live run: the three document-create routes answer with the new
+// document's id as a JSON scalar, not the document. invoice and creditmemo decoded it
+// as an object, so a successful write was reported as operation_unknown and the caller
+// was told not to retry; shipment used /shipments, which is not a route at all.
+func TestDecodeCreatedDocumentIDAcceptsEveryShape(t *testing.T) {
+	cases := map[string]int{
+		`"4"`:              4, // the shape Magento actually returns
+		`4`:                4,
+		`{"entity_id":9}`:  9,
+		`{"invoice_id":7}`: 7,
+	}
+	for raw, want := range cases {
+		got, err := decodeCreatedDocumentID([]byte(raw))
+		if err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		if got != want {
+			t.Fatalf("%s decoded to %d, want %d", raw, got, want)
+		}
+	}
+	for _, raw := range []string{``, `"abc"`, `{}`} {
+		if _, err := decodeCreatedDocumentID([]byte(raw)); err == nil {
+			t.Fatalf("%q must be rejected", raw)
+		}
+	}
+}

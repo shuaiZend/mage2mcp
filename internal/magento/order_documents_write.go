@@ -3,6 +3,7 @@
 package magento
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"math"
@@ -73,7 +74,7 @@ type CreditmemoCreateResult struct {
 	Replayed    bool       `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so nothing new happened."`
 }
 
-// CreateShipment ships order items with POST /shipments.
+// CreateShipment ships order items with POST /order/{id}/ship.
 func (s *Service) CreateShipment(ctx context.Context, in ShipmentCreateInput) (*Shipment, error) {
 	if err := s.requireOrderService(); err != nil {
 		return nil, err
@@ -94,18 +95,21 @@ func (s *Service) CreateShipment(ctx context.Context, in ShipmentCreateInput) (*
 		Comment: documentComment{Comment: in.Comment, IsVisibleOnFront: false},
 		Notify:  in.Notify,
 	}}
-	raw, err := s.client.do(ctx, http.MethodPost, "/shipments", nil, body)
+	// The create route is /order/{id}/ship and it answers with the new shipment id;
+	// /shipments is not a route at all, and the id is not the shipment object.
+	raw, err := s.client.do(ctx, http.MethodPost,
+		"/order/"+strconv.Itoa(in.OrderID)+"/ship", nil, body)
 	if err != nil {
 		return nil, err
 	}
-	var shipment Shipment
-	if err := json.Unmarshal(raw, &shipment); err != nil {
-		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable shipment payload").WithCause(err)
+	shipmentID, err := decodeCreatedDocumentID(raw)
+	if err != nil {
+		return nil, err
 	}
-	return &shipment, nil
+	return s.GetShipment(ctx, shipmentID)
 }
 
-// CreateCreditmemo refunds order items with POST /creditmemos.
+// CreateCreditmemo refunds order items with POST /order/{id}/refund.
 //
 // Before the call it reads the order and its invoices and validates, locally:
 //   - the invoice linkage (an explicit invoice_id, or the order's single invoice;
@@ -184,7 +188,10 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 		Comment: documentComment{Comment: in.Comment, IsVisibleOnFront: false},
 		Notify:  in.Notify,
 	}}
-	raw, postErr := s.client.do(ctx, http.MethodPost, "/creditmemos", nil, body)
+	// The create route is /order/{id}/refund; /creditmemos is not a route, and the
+	// answer is the new credit memo id as a JSON scalar rather than the document.
+	raw, postErr := s.client.do(ctx, http.MethodPost,
+		"/order/"+strconv.Itoa(in.OrderID)+"/refund", nil, body)
 	switch classifyOperationError(postErr) {
 	case operationNotApplied:
 		_ = run.Fail(ctx, string(errs.CodeOf(postErr)))
@@ -193,11 +200,17 @@ func (s *Service) CreateCreditmemo(ctx context.Context, in CreditmemoCreateInput
 		_ = run.Unknown(ctx, string(errs.CodeOf(postErr)))
 		return nil, operationUnknownError(run.ID(), "credit memo creation", string(errs.CodeOf(postErr)))
 	}
-	var creditmemo Creditmemo
-	if err := json.Unmarshal(raw, &creditmemo); err != nil {
+	creditmemoID, idErr := decodeCreatedDocumentID(raw)
+	if idErr != nil {
 		_ = run.Unknown(ctx, string(errs.CodeUpstreamUnavailable))
 		return nil, operationUnknownError(run.ID(), "credit memo creation", string(errs.CodeUpstreamUnavailable))
 	}
+	created, readErr := s.GetCreditmemo(ctx, creditmemoID)
+	if readErr != nil {
+		_ = run.Unknown(ctx, string(errs.CodeOf(readErr)))
+		return nil, operationUnknownError(run.ID(), "credit memo creation", string(errs.CodeOf(readErr)))
+	}
+	creditmemo := *created
 	result := &CreditmemoCreateResult{Creditmemo: creditmemo, InvoiceID: invoiceID, OperationID: run.ID()}
 	ref := "creditmemo:" + creditmemo.IncrementID
 	if creditmemo.IncrementID == "" {
@@ -433,4 +446,58 @@ func validateCreditmemoCreate(in CreditmemoCreateInput) error {
 		return invalidf("adjustments must not be negative")
 	}
 	return nil
+}
+
+// decodeCreatedDocumentID reads the id a Magento document-create route returns.
+//
+// POST /order/{id}/invoice, /ship and /refund answer with the new document's id as a
+// JSON scalar — `"4"` or `4`, not the document object. Decoding that into the document
+// struct failed, and the failure was reported as an unreadable response, so a
+// successful invoice was recorded as operation_unknown and the caller was told not to
+// retry. An object carrying entity_id is also accepted, for builds that answer that way.
+func decodeCreatedDocumentID(raw []byte) (int, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return 0, errs.New(errs.CodeUpstreamUnavailable,
+			"Magento accepted the write but returned no document id")
+	}
+	switch trimmed[0] {
+	case '"':
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return 0, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable document id").WithCause(err)
+		}
+		id, err := strconv.Atoi(strings.TrimSpace(text))
+		if err != nil {
+			return 0, errs.New(errs.CodeUpstreamUnavailable, "Magento returned a non-numeric document id").
+				WithCause(err)
+		}
+		return id, nil
+	case '{':
+		var object struct {
+			EntityID     int `json:"entity_id"`
+			InvoiceID    int `json:"invoice_id"`
+			ShipmentID   int `json:"shipment_id"`
+			CreditmemoID int `json:"creditmemo_id"`
+		}
+		if err := json.Unmarshal(trimmed, &object); err != nil {
+			return 0, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable document payload").WithCause(err)
+		}
+		for _, candidate := range []int{object.EntityID, object.InvoiceID, object.ShipmentID, object.CreditmemoID} {
+			if candidate > 0 {
+				return candidate, nil
+			}
+		}
+		return 0, errs.New(errs.CodeUpstreamUnavailable, "Magento returned a document payload with no id")
+	default:
+		var number json.Number
+		if err := json.Unmarshal(trimmed, &number); err != nil {
+			return 0, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable document id").WithCause(err)
+		}
+		id, err := strconv.Atoi(number.String())
+		if err != nil {
+			return 0, errs.New(errs.CodeUpstreamUnavailable, "Magento returned a non-numeric document id").WithCause(err)
+		}
+		return id, nil
+	}
 }

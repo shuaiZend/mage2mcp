@@ -658,6 +658,15 @@ func writeCases() []Case {
 				if id, ok := num(order, "entity_id"); ok && id > 0 {
 					e.Set("order_id", fmt.Sprintf("%.0f", id))
 				}
+				// The invoice and shipment cases need the real order line id; the
+				// schema rejects 0, which is why those two never ran.
+				if items, ok := order["items"].([]any); ok && len(items) > 0 {
+					if line, ok := items[0].(map[string]any); ok {
+						if id, ok := num(line, "item_id"); ok && id > 0 {
+							e.Set("order_item_id", fmt.Sprintf("%.0f", id))
+						}
+					}
+				}
 				if op := str(out, "operation_id"); op != "" {
 					e.Set("order_operation", op)
 				}
@@ -740,11 +749,11 @@ func writeCases() []Case {
 			Args: func(e *Env) (map[string]any, error) {
 				return map[string]any{
 					"instance": instance(), "order_id": e.Int("order_id"),
-					"items":           []map[string]any{{"order_item_id": 0, "qty": 1}},
+					"items":           []map[string]any{{"order_item_id": e.Int("order_item_id"), "qty": 1}},
 					"capture":         false,
 					"idempotency_key": e.Get("inv_idem"),
 				}, nil
-			}, Need: []string{"order_id"}, Soft: true,
+			}, Need: []string{"order_id", "order_item_id"}, Soft: true,
 			Check: func(e *Env, res *ToolResult) error {
 				out, err := output(res)
 				if err != nil {
@@ -794,10 +803,10 @@ func writeCases() []Case {
 			Args: func(e *Env) (map[string]any, error) {
 				return map[string]any{
 					"instance": instance(), "order_id": e.Int("order_id"),
-					"items":  []map[string]any{{"order_item_id": 0, "qty": 1}},
+					"items":  []map[string]any{{"order_item_id": e.Int("order_item_id"), "qty": 1}},
 					"notify": false,
 				}, nil
-			}, Need: []string{"order_id"}, Soft: true,
+			}, Need: []string{"order_id", "order_item_id"}, Soft: true,
 			Check: func(e *Env, res *ToolResult) error {
 				out, err := output(res)
 				if err != nil {
@@ -839,7 +848,7 @@ func writeCases() []Case {
 				return map[string]any{
 					"instance": instance(), "order_id": e.Int("order_id"),
 					"invoice_id":      e.Int("invoice_id"),
-					"items":           []map[string]any{{"order_item_id": 0, "qty": 1}},
+					"items":           []map[string]any{{"order_item_id": e.Int("order_item_id"), "qty": 1}},
 					"notify":          false,
 					"idempotency_key": e.Get("cm_idem"),
 				}, nil

@@ -20,13 +20,20 @@ func TestCreateShipment(t *testing.T) {
 	var method, path string
 	var body shipmentCreateBody
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			// The read-back after the create route.
+			_, _ = w.Write([]byte(`{"entity_id":3,"increment_id":"000000003","order_id":42,"total_qty":2,` +
+				`"tracks":[{"title":"UPS","track_number":"1Z999","carrier_code":"ups"}]}`))
+			return
+		}
 		method, path = r.Method, r.URL.Path
 		raw, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(raw, &body); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"entity_id":3,"increment_id":"000000003","order_id":42,"total_qty":2,"tracks":[{"title":"UPS","track_number":"1Z999","carrier_code":"ups"}]}`))
+		// The create route answers with the new id as a JSON scalar.
+		_, _ = w.Write([]byte(`"3"`))
 	}))
 	defer ts.Close()
 	svc := testService(t, ts.URL)
@@ -39,7 +46,7 @@ func TestCreateShipment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if method != http.MethodPost || path != "/rest/default/V1/shipments" {
+	if method != http.MethodPost || path != "/rest/default/V1/order/42/ship" {
 		t.Fatalf("request = %s %s", method, path)
 	}
 	if body.Entity.OrderID != 42 || len(body.Entity.Items) != 1 || len(body.Entity.Tracks) != 1 {
@@ -81,7 +88,10 @@ func (f *creditmemoFake) handler(t *testing.T) http.HandlerFunc {
 			_, _ = io.WriteString(w, orderJSON)
 		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/invoices":
 			_, _ = io.WriteString(w, f.invoices)
-		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/creditmemos":
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/creditmemo/9":
+			_, _ = io.WriteString(w, `{"entity_id":9,"increment_id":"000000009","order_id":42,"invoice_id":7,`+
+				`"grand_total":25,"adjustment":-5,"order_currency_code":"USD"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/order/42/refund":
 			raw, _ := io.ReadAll(r.Body)
 			f.mu.Lock()
 			f.postBody = raw
@@ -95,8 +105,8 @@ func (f *creditmemoFake) handler(t *testing.T) http.HandlerFunc {
 			f.mu.Lock()
 			f.refunded++
 			f.mu.Unlock()
-			_, _ = io.WriteString(w, `{"entity_id":9,"increment_id":"000000009","order_id":42,"invoice_id":7,`+
-				`"grand_total":25,"adjustment":-5,"order_currency_code":"USD"}`)
+			// The create route answers with the new id as a JSON scalar.
+			_, _ = io.WriteString(w, `"9"`)
 		default:
 			http.NotFound(w, r)
 		}

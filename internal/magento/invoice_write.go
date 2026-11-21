@@ -4,7 +4,6 @@ package magento
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"net/http"
 	"strconv"
@@ -110,13 +109,21 @@ func (s *Service) CreateInvoice(ctx context.Context, in InvoiceCreateInput) (*In
 		_ = run.Unknown(ctx, string(errs.CodeOf(postErr)))
 		return nil, operationUnknownError(run.ID(), "invoice creation", string(errs.CodeOf(postErr)))
 	}
-	var invoice Invoice
-	if err := json.Unmarshal(raw, &invoice); err != nil {
-		// Magento accepted the call but the response is unreadable: the invoice
-		// exists, so the outcome is unknown rather than a failure.
+	// The route answers with the new invoice id as a JSON scalar ("4"), not the
+	// invoice object. Decoding it as an object failed, and the failure was reported as
+	// an unreadable response, so a successful invoice was recorded as unknown and the
+	// caller was told not to retry.
+	invoiceID, idErr := decodeCreatedDocumentID(raw)
+	if idErr != nil {
 		_ = run.Unknown(ctx, string(errs.CodeUpstreamUnavailable))
 		return nil, operationUnknownError(run.ID(), "invoice creation", string(errs.CodeUpstreamUnavailable))
 	}
+	created, readErr := s.GetInvoice(ctx, invoiceID)
+	if readErr != nil {
+		_ = run.Unknown(ctx, string(errs.CodeOf(readErr)))
+		return nil, operationUnknownError(run.ID(), "invoice creation", string(errs.CodeOf(readErr)))
+	}
+	invoice := *created
 	result := &InvoiceCreateResult{
 		Invoice:     invoice,
 		Captured:    invoice.State == invoiceStatePaid,

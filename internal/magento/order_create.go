@@ -189,11 +189,20 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Create
 		// The cart is deliberately kept: it is the only handle for reconciliation.
 		return s.reconcilePlacedOrder(ctx, run, in, cartID, placeErr)
 	}
-	var order Order
-	if err := json.Unmarshal(raw, &order); err != nil {
-		_ = run.Unknown(ctx, string(errs.CodeUpstreamUnavailable))
-		return nil, operationUnknownError(run.ID(), "order placement", string(errs.CodeUpstreamUnavailable))
+	// PUT /carts/{id}/order answers with the new order's id as a JSON scalar, not the
+	// order. Decoding it as an object failed, and that failure was reported as an
+	// unreadable response, so every successful placement was recorded as
+	// operation_unknown — the order existed and the caller was told not to retry.
+	orderID, idErr := decodeCreatedDocumentID(raw)
+	if idErr != nil {
+		// The id is unreadable, so the placement outcome is genuinely unknown.
+		return s.reconcilePlacedOrder(ctx, run, in, cartID, idErr)
 	}
+	placed, readErr := s.GetOrder(ctx, orderID)
+	if readErr != nil {
+		return s.reconcilePlacedOrder(ctx, run, in, cartID, readErr)
+	}
+	order := *placed
 	result := &CreateOrderResult{Order: order, OperationID: run.ID()}
 	if err := run.Succeed(ctx, orderRef(order), result); err != nil {
 		return nil, err

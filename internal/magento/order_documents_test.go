@@ -89,7 +89,7 @@ func TestOrderShipmentsAndGet(t *testing.T) {
 		switch r.URL.Path {
 		case "/rest/default/V1/shipments":
 			_, _ = w.Write([]byte(`{"items":[{"entity_id":3,"increment_id":"000000003","order_id":42,"total_qty":2,"tracks":[{"title":"UPS","track_number":"1Z999","carrier_code":"ups"}]}],"total_count":1}`))
-		case "/rest/default/V1/shipments/3":
+		case "/rest/default/V1/shipment/3":
 			_, _ = w.Write([]byte(`{"entity_id":3,"increment_id":"000000003","order_id":42,"total_qty":2}`))
 		default:
 			http.NotFound(w, r)
@@ -139,7 +139,7 @@ func TestOrderCreditmemosAndGet(t *testing.T) {
 		switch r.URL.Path {
 		case "/rest/default/V1/creditmemos":
 			_, _ = w.Write([]byte(`{"items":[{"entity_id":9,"increment_id":"000000009","order_id":42,"state":2,"grand_total":25,"total_qty":1,"order_currency_code":"USD"}],"total_count":1}`))
-		case "/rest/default/V1/creditmemos/9":
+		case "/rest/default/V1/creditmemo/9":
 			_, _ = w.Write([]byte(`{"entity_id":9,"increment_id":"000000009","order_id":42,"grand_total":25,"adjustment":-5,"order_currency_code":"USD"}`))
 		default:
 			http.NotFound(w, r)
@@ -186,8 +186,8 @@ func TestSendDocumentEmail(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct{ kind, path string }{
 		{"invoice", "POST /rest/default/V1/invoices/5/emails"},
-		{"shipment", "POST /rest/default/V1/shipments/6/emails"},
-		{"creditmemo", "POST /rest/default/V1/creditmemos/7/emails"},
+		{"shipment", "POST /rest/default/V1/shipment/6/emails"},
+		{"creditmemo", "POST /rest/default/V1/creditmemo/7/emails"},
 	} {
 		if err := svc.SendDocumentEmail(ctx, tc.kind, 5); err != nil {
 			t.Fatal(err)
@@ -195,7 +195,7 @@ func TestSendDocumentEmail(t *testing.T) {
 		_ = tc
 	}
 	if len(paths) != 3 || paths[0] != "POST /rest/default/V1/invoices/5/emails" ||
-		paths[1] != "POST /rest/default/V1/shipments/5/emails" || paths[2] != "POST /rest/default/V1/creditmemos/5/emails" {
+		paths[1] != "POST /rest/default/V1/shipment/5/emails" || paths[2] != "POST /rest/default/V1/creditmemo/5/emails" {
 		t.Fatalf("paths = %v", paths)
 	}
 	if err := svc.SendDocumentEmail(ctx, "bogus", 5); errs.CodeOf(err) != errs.CodeInvalidArgument {
