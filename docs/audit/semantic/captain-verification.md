@@ -49,3 +49,73 @@ DETAIL:  Failing row contains (..., 'approve', 'approval', 'approved', ...)
 - SEM-SEC-03 自记账工具在错误结果下审计记 allow
 - SEM-SEC-04 限流误报为超时
 - SEM-DOC-01..04 文档与代码状态不符
+
+## 已核验：部分退款被放大成全额（SEM-SALES-01，P0，CONFIRMED）
+
+**来源**：t54（security-auditor）。我独立复现，并**发现范围比报告更大**。
+
+### 代码与规范的对比
+
+Magento 规范（店铺自身 schema，`/rest/pl/schema?services=all`）：
+
+```text
+POST /V1/order/{orderId}/invoice  body props: capture, items, notify, appendComment, comment, arguments
+POST /V1/order/{orderId}/ship     body props: items, notify, appendComment, comment, tracks, packages, arguments
+POST /V1/order/{orderId}/refund   body props: items, notify, appendComment, comment, arguments
+```
+
+三个路由的参数都在**顶层**。
+
+网关实际发送：
+
+```text
+internal/magento/invoice_write.go:155      invoiceOrderBody{Capture, Items}            → 顶层，正确
+internal/magento/order_documents_write.go:348  shipmentCreateBody{Entity ...}  `json:"entity"`  → 错误
+internal/magento/order_documents_write.go:366  creditmemoCreateBody{Entity ...} `json:"entity"`  → 错误
+```
+
+**发票是对的，发货与退款都包错了。** Magento 忽略未知的 `entity` 字段，于是收到空 `items`，按默认行为处理整单。
+
+### 实测复现（生产 v0.11.5，demo 站）
+
+**退款**：订单 6，2 件，发票 78 PLN。请求退 1 件：
+
+```text
+请求: items=[{order_item_id:8, qty:1}]  （1 件 = 34 + 运费 10 = 应为 44）
+返回: grand_total=78, subtotal=68, shipping_amount=10, total_qty=0
+```
+
+**实际退了整张发票 78，多退 34 PLN。**
+
+**发货**：订单 7，2 件。请求只发 1 件：
+
+```text
+请求: items=[{order_item_id:9, qty:1}]
+返回: total_qty=2
+直连核对: shipment 3 total_qty=2, line qty=2
+```
+
+**实际发了整单 2 件。**
+
+### 结论
+
+**两条 P0，同一根因**：`/order/{id}/ship` 与 `/order/{id}/refund` 的请求体多包了一层 `entity`。
+
+- 退款：**多退钱**，且发票余额被一次耗尽，后续真实部分退款会因「0 refundable」被拒
+- 发货：**整单发出**，客户为未发出的商品拿到物流信息，剩余数量无法再发
+
+`total_qty: 0` 也是错的（实际 2 件），属同一缺陷的次生现象（SEM-SALES-08）。
+
+### 修复方向
+
+把两个 body 结构从 `{Entity: ...}` 改为顶层字段，与 `invoiceOrderBody` 一致。修复后必须用「订单 2 件、只退/只发 1 件」的用例验证，而不是只验证「能成功」。
+
+## 已核验：SEM-SALES-03 是误报（NOT-A-DEFECT）
+
+t54 报告称「order.create 在 PL 店铺必然失败，因为地址模型无 region_id」。
+
+代码事实：`internal/magento/order_create.go:53` 有 `RegionID int \`json:"region_id,omitempty"\``，下单地址**支持** region_id。
+
+我实测下单两次均成功（订单 6 与 7，PL 店铺，region_id=997）。**该发现不成立**——是测试时未传 region_id，不是模型缺失。
+
+真正的缺陷是：**不传 region_id 时错误信息只说「verify store_code and field values」**，不告诉调用方缺的是 region_id（这与 SEM-SALES-04 的「400 上游文本被丢弃」是同一个根因）。
