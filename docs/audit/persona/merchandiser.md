@@ -146,6 +146,7 @@ mage-messages: [{"type":"success","text":"You added Bluza MERCH z kapturem to yo
 ```bash
 ... -tool=magento.configurable.create -args="$(cat /tmp/args_conf2.json)"   # 父 89.00，两个子商品都不传 price
 ```
+
 ```json
 {"outcome":"completed","operation_id":"cfg_22155c0e5655e3f1",
  "children":[{"sku":"MERCH-CZAPKA-20261122-0326-GRA","price":89},{"sku":"MERCH-CZAPKA-20261122-0326-SND","price":89}]}
@@ -181,6 +182,7 @@ curl .../rest/V1/products/MERCH-MATA-20261122-0326  →  "tier_prices": []
 curl -X POST .../rest/V1/products/tier-prices \
   -d '{"prices":[{"price":119.0,"price_type":"fixed","website_id":0,"sku":"MERCH-MATA-20261122-0326","customer_group":"0","quantity":5}]}'
 ```
+
 ```json
 [{"message":"Brak takiego podmiotu z grupą klientów =%customerGroup. ...","parameters":["MERCH-MATA-20261122-0326","0","0","5"]}]
 http=200
@@ -193,6 +195,7 @@ curl -X POST .../rest/V1/products/tier-prices \
   -d '{"prices":[{"price":119.0,"price_type":"fixed","website_id":0,"sku":"MERCH-MATA-20261122-0326","customer_group":"ALL GROUPS","quantity":5},
                  {"price":109.0,"price_type":"fixed","website_id":0,"sku":"MERCH-MATA-20261122-0326","customer_group":"ALL GROUPS","quantity":10}]}'
 ```
+
 ```json
 "tier_prices": [{"customer_group_id":32000,"qty":5,"value":119},{"customer_group_id":32000,"qty":10,"value":109}, ...]
 ```
@@ -230,7 +233,7 @@ curl -X POST .../rest/V1/products/tier-prices \
 ```text
 product-item-link → "Mata do jogi MERCH Pro 6 mm" / "Bluza MERCH z kapturem" / "Czapka MERCH z daszkiem"
 data-price-amount → 139 / 229 / 89     （改价后的实际价）
-product-image-photo ×2 / toolbar-number = 3
+product-image-photo ×2（czapka 我没传图，走占位图）/ toolbar-number = 3
 ```
 
 后置归类的商品在 `Gear/Bags`（id 4）第 2 页出现：`/gear/bags.html?p=2` → `Czapka MERCH z daszkiem`。
@@ -250,6 +253,7 @@ product-image-photo ×2 / toolbar-number = 3
 # 想批量：直接拒绝
 ... -tool=magento.products.bulk_update -args='{"instance":"demo","skus":["MERCH-MATA-20261122-0326","MERCH-BLUZA-20261122-0326"],"price":"99.00"}'
 ```
+
 ```json
 {"code":"invalid_argument","details":{"validation":"validating root: unexpected additional properties [\"price\"]"},
  "message":"arguments do not match the tool schema"}
@@ -270,7 +274,7 @@ product-image-photo ×2 / toolbar-number = 3
 ... -tool=magento.product.update -args='{"instance":"demo","sku":"MERCH-BLUZA-20261122-0326-SND","price":"249.00"}' # → price 249
 ```
 
-前台立刻跟上（价格没有缓存延迟）：
+前台破缓存后立刻跟上（`?cb=` 破 FPC；不带破缓存参数的旧页面仍可能是旧价，这是 storefront 缓存行为）：
 
 ```text
 /mata-do-jogi-merch-pro-6-mm.html        → 139,00 zł（阶梯 119 / 109 保留）
@@ -283,6 +287,7 @@ product-image-photo ×2 / toolbar-number = 3
 ```bash
 ... -tool=magento.product.update -args='{"instance":"demo","sku":"MERCH-BLUZA-20261122-0326","price":"199.00"}'
 ```
+
 ```json
 {"product": {"sku": "MERCH-BLUZA-20261122-0326", "type_id": "configurable", "price": 0}}   # 工具说更新成功
 前台：<span class="price">239,00 zł</span>，optionPrices 仍为 239/259                        # 一点没变
@@ -301,24 +306,32 @@ product-image-photo ×2 / toolbar-number = 3
   ```bash
   ... -tool=magento.product.tier_prices.set -args='{"instance":"demo","sku":"MERCH-CZAPKA-20261122-0326-SND","prices":[{"price":79.00,"customer_group":"0","quantity":3}]}'
   ```
+
   ```json
   {"sku": "MERCH-CZAPKA-20261122-0326-SND", "prices": 1, "set": true}
   ```
+
   紧接着两种读法都证明**库里没有**：
+
   ```json
   ... -tool=magento.product.tier_prices ...   →  {"prices": []}
   curl .../rest/V1/products/MERCH-CZAPKA-20261122-0326-SND  →  "tier_prices": []
   ```
+
   同一个 payload 直连 Magento 的真实响应是 **HTTP 200 + 错误数组**：
+
   ```json
   [{"message":"Brak takiego podmiotu z grupą klientów =%customerGroup. ...","parameters":["MERCH-CZAPKA-20261122-0326-SND","0","0","3"]}]
   http=200
   ```
+
   换成组代码 `ALL GROUPS` 再走 MCP，同一个工具就能落库（说明通道本身是通的，只是失败没被判出来）：
+
   ```json
   ... -tool=magento.product.tier_prices.set -args='{"instance":"demo","sku":"MERCH-CZAPKA-20261122-0326-GRA","prices":[{"price":79.00,"customer_group":"ALL GROUPS","quantity":3},{"price":69.00,"customer_group":"ALL GROUPS","quantity":6}]}'
   → {"prices": 2, "set": true}；REST 直连："tier_prices": [{qty:3,value:79},{qty:6,value:69}]
   ```
+
 - **我期望什么**: `POST /V1/products/tier-prices` 是本店唯一「HTTP 200 也可能整体失败」的写接口，
   网关必须解析响应体里的错误数组，非空即报错（并且错误里要带 Magento 原文，否则我不知道
   「customer_group 要传组代码，不是 `customer.groups` 返回的 id」）。工具自己的 schema 只写
@@ -337,6 +350,7 @@ product-image-photo ×2 / toolbar-number = 3
     {"sku": "", "price": 0, "price_type": "", "website_id": 0, "customer_group": "32000", "quantity": 3},
     {"sku": "", "price": 0, "price_type": "", "website_id": 0, "customer_group": "32000", "quantity": 6}]}
   ```
+
   Magento 实际返回的每一项是 `{"customer_group_id":32000,"qty":3,"value":79,"extension_attributes":{"website_id":0}}`
   —— 工具把 `quantity`/`customer_group` 映射对了，但 `price` 取了一个 Magento 不返回的字段（应为 `value`），
   `sku`、`price_type` Magento 本来就不返回，工具却填了零值。
@@ -354,11 +368,13 @@ product-image-photo ×2 / toolbar-number = 3
   # 先设两档（3→79、6→69，已验证落库）
   ... -tool=magento.product.tier_prices.set -args='{"instance":"demo","sku":"MERCH-CZAPKA-20261122-0326-GRA","prices":[{"price":59.00,"customer_group":"ALL GROUPS","quantity":12}]}'
   ```
+
   ```json
   {"sku": "MERCH-CZAPKA-20261122-0326-GRA", "prices": 1, "set": true}
   # REST 直连复核：三档都在，旧的两档没被删
   "tier_prices": [{"qty":3,"value":79},{"qty":6,"value":69},{"qty":12,"value":59}]
   ```
+
   工具描述原文：「Magento's storage interface replaces the SKU's stored tiers, so omitted tiers are removed.」
 - **我期望什么**: 要么真的 replace（先删后写），要么在描述里说清「只追加，删档需要另外的接口」。
   现在工具既没有删除能力，又声称会删，我只能看到前台多出两档已经不该卖的价。
@@ -369,9 +385,11 @@ product-image-photo ×2 / toolbar-number = 3
 - **级别**: P2
 - **我的工作流**: 季末把 3 个（真实场景 20+ 个）SKU 统一改价
 - **发生了什么**: 带 `price` 直接被 schema 拒绝：
+
   ```json
   {"code":"invalid_argument","details":{"validation":"validating root: unexpected additional properties [\"price\"]"}}
   ```
+
   只能 `product.update` 逐个来，每个 SKU 一次 `confirmation_required` → `approve.sh` → 重发（实测 3 SKU = 3 次审批）。
   另外可配置商品的父商品价格必须改子商品才有前台效果，所以「一个商品」往往等于「N 个子商品 + N 次审批」。
 - **我期望什么**: 商品运营的批量动作里改价是最高频的（`bulk_update` 描述也承认「Name and price are not
@@ -388,23 +406,31 @@ product-image-photo ×2 / toolbar-number = 3
   ```bash
   ... -tool=magento.product.update -args='{"instance":"demo","sku":"MERCH-BLUZA-20261122-0326","price":"199.00"}'
   ```
+
   ```json
   {"product": {"sku": "MERCH-BLUZA-20261122-0326", "type_id": "configurable", "price": 0}}   # 成功，但 price 还是 0
   ```
+
   前台（破缓存重抓）价格仍是子商品最低价：
+
   ```text
   /bluza-merch-z-kapturem.html → <span class="price">239,00 zł</span>；optionPrices {"2142":239,"2143":259}
   ```
+
   直连 REST 复现同样的空转（说明根因在 Magento，不是网关的 REST 调用写错）：
+
   ```bash
   curl -X PUT .../rest/V1/products/MERCH-BLUZA-20261122-0326 -d '{"product":{"sku":"...","price":199}}'
   → http=200，返回 "price": 0，再 GET 仍是 0
   ```
+
   必须改子商品才有用（这条是通的）：
+
   ```bash
   ... -tool=magento.product.update -args='{"instance":"demo","sku":"MERCH-BLUZA-20261122-0326-GRA","price":"229.00"}'
   前台 → 229,00 zł；optionPrices {"2142":229,"2143":249}
   ```
+
 - **我期望什么**: `product.update` 明说「Updates one product ... price」，我传了价、它返回成功、前台没变。
   网关完全有能力在写后回读并判断「configurable 父商品的 price 由子商品决定，本次写入被 Magento 忽略」，
   至少应该给一个 warning（或在 schema 描述里写死这条规则）。
@@ -414,13 +440,15 @@ product-image-photo ×2 / toolbar-number = 3
 
 - **级别**: P2
 - **我的工作流**: 上一次调用超时/我不确定有没有成功，于是原样再发一次（真实的重复提交场景）
-- **发生了什么**: 同一份 `args` 连发 3 次，每次都返回**完全相同**的 payload（同一 `operation_id`、
-  同一 `created_at`、`stages` 仍写着 `children: "created 2, reused 0"`）：
+- **发生了什么**: 同一份 `args` 共发 3 次：第 1 次真建，第 2、3 次返回**完全相同**的 payload（同一
+  `operation_id`、同一 `created_at`、`stages` 仍写着 `children: "created 2, reused 0"`）：
+
   ```json
   {"outcome":"completed","operation_id":"cfg_a34b0e13915388ae",
    "parent":{"id":2144,"created_at":"2026-11-21 19:27:57"},
    "stages":[{"name":"precheck","detail":"0 of 2 children already present; parent absent"},{"name":"children","detail":"created 2, reused 0"}]}
   ```
+
   但目录里始终只有 2 个子商品（没有重复 SKU），说明第二次起是**回放**而不是真执行。
   工具描述说：「a fresh run is not idempotent and refuses a pre-existing SKU」。
 - **我期望什么**: 要么真的按文档拒绝（409/conflict，告诉我 SKU 已存在），要么回放时明确标记
@@ -433,10 +461,12 @@ product-image-photo ×2 / toolbar-number = 3
 - **级别**: P2
 - **我的工作流**: 上新后核对「这个分类里到底有哪些商品、价格对不对」
 - **发生了什么**:
+
   ```json
   {"products":[{"id":0,"sku":"MERCH-MATA-20261122-0326","name":"","type_id":"","status":0,"visibility":0,"price":0,...},
                {"id":0,"sku":"MERCH-BLUZA-20261122-0326","name":"","type_id":"","status":0,"visibility":0,"price":0,...}],"total":2}
   ```
+
   Magento 的 `GET /V1/categories/{id}/products` 只返回 `sku`（+ `position`），网关把缺的字段填了零值。
 - **我期望什么**: 缺失的字段应当省略（或标 `null`），而不是伪装成 `name: ""`、`price: 0`、`status: 0`。
   按当前输出，我会以为这两个商品没名字、被禁用、卖 0 元；如果拿这个结果去做批量改价/校验，会直接误判。
@@ -447,11 +477,13 @@ product-image-photo ×2 / toolbar-number = 3
 - **级别**: P3
 - **我的工作流**: 上新后只查一次父商品，确认「颜色选项和子商品都挂上了」
 - **发生了什么**:
+
   ```json
   ... -tool=magento.product.get -args='{"instance":"demo","sku":"MERCH-BLUZA-20261122-0326"}'
   {"product": {"sku":"MERCH-BLUZA-20261122-0326","type_id":"configurable","price":0,
                "options": null, "extension_attributes": null, ...}}
   ```
+
   Magento 原生响应里 `extension_attributes` 带 `configurable_product_options` / `configurable_product_links`，
   网关没有透出，只能改用 `configurable.children` + 抓前台 `jsonConfig` 才能确认选项没丢。
 - **我期望什么**: 「选项有没有丢」是上新验收的第一问。`product.get` 应该带出 variant 配置（或明确提示
@@ -465,13 +497,16 @@ product-image-photo ×2 / toolbar-number = 3
 - **我的工作流**: 第一次上手，按描述直接调工具（描述写着「The instance input is resolved by the server
   when only one Magento instance is configured」）
 - **发生了什么**:
+
   ```json
   ... -tool=magento.categories.flat -args='{}'
   {"code":"invalid_argument","details":{"validation":"validating root: required: missing properties: [\"instance\"]"},
    "message":"arguments do not match the tool schema"}
   ```
-  102 个工具的 `required` 里都带 `instance`（实测 `attribute.sets`/`categories.flat`/`inventory.sources`/
-  `inventory.stocks` 全部如此）。
+
+  102 个工具里 **101 个**的 `required` 带 `instance`（只有 `platform.info` 不用），而其中 **57 个**工具的
+  描述同时写着「resolved by the server when only one Magento instance is configured」。实测
+  `attribute.sets`/`categories.flat`/`inventory.sources`/`inventory.stocks` 全部如此。
 - **我期望什么**: 要么 schema 里 `instance` 可选（真的服务端解析），要么把描述改掉。现在描述和 schema
   互相打脸，新接手的运营第一次调用就撞墙。
 - **状态**: CONFIRMED（schema 与描述不一致；不影响老手，但影响上手成本）
