@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-11-21
+
+Six defects in the money path, found by exercising the part of the surface that had never
+run against a real store. Full notes: [docs/releases/v0.11.4.md](docs/releases/v0.11.4.md).
+
 ### Fixed
 
 - **The money path was never verified against a real store.** Six defects, all the same
