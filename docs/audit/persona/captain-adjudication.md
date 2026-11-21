@@ -77,3 +77,37 @@ internal/magento/order_documents_write.go:360-363
 **但它揭示了一个真实风险**：优雅关闭期间，调用方可能收到错误而操作已经生效。若调用方**没有**
 用 `idempotency_key` 就重试，会产生重复退款。这一点应在文档中说明：**写操作必须带
 idempotency_key 才能安全重试**。
+
+## 独立核验：P-MERCH-01 阶梯价静默失败 —— **CONFIRMED**
+
+商品运营报告称 `tier_prices.set` 把 Magento 的「HTTP 200 + 错误数组」当成功。
+
+**我实测复现**：
+
+```text
+调用: tier_prices.set sku=24-MB01 customer_group="0" quantity=3 price=30
+网关返回: {"sku":"24-MB01","prices":1,"set":true}     ← 报告成功
+
+直连同一路由，Magento 实际返回:
+[{"message":"Brak takiego podmiotu z grupą klientów =%customerGroup. ..."}]
+```
+
+Magento 用 **200 + 错误数组**表示失败，网关只检查 HTTP 状态码，于是「一行没写入」被报告成
+「set: true」。
+
+**这是同一类静默失败的第三次出现**（前两次是导入的 status/visibility、阶梯价的读取映射）。
+共同特征：**上游用 200 传递业务失败，而网关只看状态码**。
+
+## 独立核验：P-MERCH-02 阶梯价读取字段映射错 —— **CONFIRMED**
+
+Magento 的**读取**接口与**写入**接口字段名不同：
+
+| 接口 | 字段 |
+|---|---|
+| 读（`catalog-data-product-tier-price-interface`） | `customer_group_id`、`qty`、`value` |
+| 写（`catalog-data-tier-price-interface`） | `customer_group`、`quantity`、`price` |
+
+网关读取时用的是**写入**的字段名，所以 `price` 恒 0、`qty` 恒 0、客户组为空。
+
+**两条叠加 = 阶梯价对商品运营完全不可用**：设不进去，也读不出来。而前台能力本身正常
+（运营用 REST 直连设好后，产品页显示「Kup 5 po 119」、购物车单价正确）——**问题全在网关**。
