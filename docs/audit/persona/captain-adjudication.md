@@ -388,3 +388,48 @@ test/qa/money_faults_test.go:72-74
 
 这条值得记：**「测试红了」不等于「代码坏了」。** 如果一个测试断言的是「键必须缺席」，而契约
 改成「键必须存在」，测试会红而行为是对的。**不查实际值就回退代码，会把一个契约改进当成回归修掉。**
+
+## 裁决：U-70 的修法必须连带修对账器（t18）
+
+t18 按我给的「记当时已知的事实」方向改成了 `entity_type=customer`，然后用一个探针发现
+**次生问题比原缺陷更严重**：
+
+```text
+ObserveOperation(ctx, "magento.order.create", "customer", "7") -> applied
+```
+
+原因：`client.go:873-900` 的 `case "order"` 里有一句专为 U-70 写的守卫——order.create 记的是
+客户 id，所以读 `/orders/{id}` 会取到无关订单，返回 `ObservationInconclusive`。改成 customer 之后
+这句不再命中，落到 `case "customer"` → `GET /customers/7` 200 → **applied**。
+
+后果：任何一次其实没下成的 ambiguous 下单，会在 1 分钟后被对账器**自动判成 succeeded**。
+
+### 对比两个缺陷的性质
+
+| | 原缺陷（U-70） | 次生问题 |
+|---|---|---|
+| 谁做错判断 | 操作员 | **系统自己** |
+| 何时 | 人工去查上游时 | 1 分钟后自动 |
+| 后果 | 可能 disposition 错 | 未下单被标记为已下单 |
+
+**后者更严重**，因为它不需要人参与，而且结果是「确定成功」。
+
+### 裁决：批准 A
+
+允许在 `case "customer"` 开头加同一条守卫（4 行），并收敛 `case "order"` 里已成死代码的那段
+（保留注释说明原因）。
+
+**同时要求测试双向**：
+- `order.create` 的 customer 实体 → 必须 `ObservationInconclusive`
+- **其他** operation 的 customer 分支（如 customer.update）→ 必须仍能正常判定
+
+否则守卫可能被写成「customer 分支一律 inconclusive」，那是引入另一个 bug。
+
+### 历史 11 条的处置规则（采纳 t18 的建议）
+
+**不要 requeue。** 它们 `entity_type=order` 而 id 是客户 id，requeue 会让对账器走 order 分支读
+`/orders/5`——读到别人的订单。正确做法是人工逐条判定后 `dispose`，note 里写明依据
+（「该 customer 在 created_at 窗口内、quote_id=该 cart」）。
+
+**这条值得记**：修一个「记录语义错」的缺陷，可能让**依赖那个错误语义的守卫失效**。t18 没有
+改完就走，而是加探针验证了改动对下游的影响——这正是我们应该对所有「改数据语义」的修复做的。
