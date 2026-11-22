@@ -27,7 +27,10 @@ func main() {
 		_, _ = os.Stdout.Write(data)
 		return
 	}
-	if err := os.WriteFile(*path, data, 0o644); err != nil {
+	// The output is a documentation file committed to the repository: 0600 would
+	// make it unreadable to the other users and CI checkouts that read it. The
+	// content is generated from the tool registry, not a secret.
+	if err := os.WriteFile(*path, data, 0o644); err != nil { //nolint:gosec // G306: committed documentation, not a secret
 		fmt.Fprintln(os.Stderr, "gen-implemented-tools:", err)
 		os.Exit(1)
 	}

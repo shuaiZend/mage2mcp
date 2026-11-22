@@ -78,11 +78,11 @@ func Add[In, Out any](s *mcp.Server, t *mcp.Tool, h func(context.Context, *mcp.C
 // errs.WithDetail size cap. Without it a very large offending value makes
 // WithDetail drop the whole detail, so the agent gets no reason at all.
 func BoundedValidationDetail(msg string) string {
-	const max = 900 // 900 + len("validation") < errs' 1024 cap
-	if len(msg) <= max {
+	const maxDetail = 900 // 900 + len("validation") < errs' 1024 cap
+	if len(msg) <= maxDetail {
 		return msg
 	}
-	return msg[:max] + "... (truncated)"
+	return msg[:maxDetail] + "... (truncated)"
 }
 
 // ValidateSchema enforces the registration contract on a tool's input schema:

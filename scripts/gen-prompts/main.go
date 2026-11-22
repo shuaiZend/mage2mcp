@@ -106,7 +106,10 @@ func GenerateAt(root string) ([]byte, error) {
 
 	for _, source := range promptSources {
 		path := filepath.Join(root, referencesDir, source.File)
-		raw, err := os.ReadFile(path)
+		// G304: the path is filepath.Join(root, referencesDir, source.File) where
+		// source.File comes from the fixed promptSources table below and root is the
+		// repository root passed by the caller; no user-controlled path reaches it.
+		raw, err := os.ReadFile(path) //nolint:gosec // see above
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
@@ -167,7 +170,9 @@ func main() {
 		_, _ = os.Stdout.Write(data)
 		return
 	}
-	if err := os.WriteFile(*path, data, 0o644); err != nil {
+	// The output is a generated Go source file committed to the repository, so it
+	// must stay world-readable like the rest of the tree.
+	if err := os.WriteFile(*path, data, 0o644); err != nil { //nolint:gosec // G306: generated source, not a secret
 		fmt.Fprintln(os.Stderr, "gen-prompts:", err)
 		os.Exit(1)
 	}

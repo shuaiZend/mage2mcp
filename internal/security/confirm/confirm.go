@@ -325,7 +325,7 @@ func looksLikeCredential(value string) bool {
 // override can silently join two values into one that reads differently from
 // either input, which is exactly the confusion an approval surface must not
 // introduce.
-func boundText(value string, max int) string {
+func boundText(value string, limit int) string {
 	var b strings.Builder
 	b.Grow(len(value))
 	for _, r := range value {
@@ -340,10 +340,10 @@ func boundText(value string, max int) string {
 	}
 	clean := strings.TrimSpace(b.String())
 	runes := []rune(clean)
-	if len(runes) <= max {
+	if len(runes) <= limit {
 		return clean
 	}
-	return string(runes[:max]) + "\u2026"
+	return string(runes[:limit]) + "\u2026"
 }
 
 // WritePending writes the approval table: what is being approved, where, and

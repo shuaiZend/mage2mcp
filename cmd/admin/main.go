@@ -10,8 +10,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/shuaiZend/mage2mcp/internal/security/auth"
-	"github.com/shuaiZend/mage2mcp/internal/security/jwt"
 	"io"
 	"os"
 	"strings"
@@ -19,7 +17,9 @@ import (
 
 	"github.com/shuaiZend/mage2mcp/internal/core/config"
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
+	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
+	"github.com/shuaiZend/mage2mcp/internal/security/jwt"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
 )
 
@@ -106,7 +106,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		if len(requests) == 0 {
-			fmt.Fprintln(stdout, "no pending confirmations")
+			if _, err := fmt.Fprintln(stdout, "no pending confirmations"); err != nil {
+				return fmt.Errorf("write output: %w", err)
+			}
 			return nil
 		}
 		// The approver must see what is being approved, on which instance, and
@@ -128,7 +130,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err := recordApproval(ctx, storage.NewAuditRecorder(store), request, approver); err != nil {
 			return fmt.Errorf("approved, but the audit row could not be written: %w", err)
 		}
-		fmt.Fprintf(stdout, "approved %s by %s\n", id, approver)
+		if _, err := fmt.Fprintf(stdout, "approved %s by %s\n", id, approver); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", flags.Arg(0))
@@ -248,7 +252,9 @@ func resolveApprover(ctx context.Context, verifier tokenVerifier, token, as stri
 		return "", "", fmt.Errorf("-as <approver identity> is required")
 	}
 	if warn != nil {
-		fmt.Fprintf(warn, "warning: authentication is disabled, so %q is a self-asserted approver identity and is not verified\n", as)
+		// Best effort: the warning is informational and a failure to write it must
+		// not turn a valid approval into an error.
+		_, _ = fmt.Fprintf(warn, "warning: authentication is disabled, so %q is a self-asserted approver identity and is not verified\n", as)
 	}
 	// No verifier means no class to trust; the identity is self-asserted and the
 	// warning above says so.

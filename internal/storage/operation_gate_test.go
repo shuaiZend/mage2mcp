@@ -8,6 +8,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -266,7 +267,7 @@ func TestFinishCallRecordsUnknownWithAudit(t *testing.T) {
 	if err := store.pool.QueryRow(ctx,
 		`SELECT decision FROM audit_events WHERE tool = 'magento.gate.capture' AND state = 'outcome_unknown'`).
 		Scan(&decision); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			t.Fatal("no audit row for the unknown outcome")
 		}
 		t.Fatalf("read audit: %v", err)

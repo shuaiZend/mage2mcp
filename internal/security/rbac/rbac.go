@@ -207,10 +207,10 @@ func instanceIDs(instances []string) ([]string, error) {
 	out := make([]string, 0, len(instances))
 	for _, raw := range instances {
 		id := strings.TrimSpace(raw)
-		switch {
-		case id == "":
+		switch id {
+		case "":
 			return nil, fmt.Errorf("rbac: configured instance ids must not be empty")
-		case id == WildcardInstance:
+		case WildcardInstance:
 			return nil, fmt.Errorf("rbac: %q is the wildcard; use DefaultPolicyAllInstances to opt in to every instance",
 				WildcardInstance)
 		}

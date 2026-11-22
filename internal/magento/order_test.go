@@ -538,7 +538,7 @@ func TestGetOrderReturnsAddressesForSupport(t *testing.T) {
 	}
 	for name, payload := range cases {
 		t.Run(name, func(t *testing.T) {
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(payload))
 			}))
@@ -581,7 +581,7 @@ func TestGetOrderReturnsAddressesForSupport(t *testing.T) {
 // U-31 support answer was still impossible. Removing
 // fillShippingAddressFromAssignments makes this test fail.
 func TestGetOrderReadsShippingAddressFromAssignments(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"entity_id": 7, "increment_id": "000000007", "status": "processing", "state": "processing",
@@ -622,7 +622,7 @@ func TestGetOrderReadsShippingAddressFromAssignments(t *testing.T) {
 // F2: a top-level shipping_address is still honoured when a build sends one, so
 // the projection does not depend on a single Magento shape.
 func TestGetOrderPrefersTopLevelShippingAddress(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"entity_id": 8, "increment_id": "000000008",
@@ -645,7 +645,7 @@ func TestGetOrderPrefersTopLevelShippingAddress(t *testing.T) {
 // Breaking their mapping (or dropping the fields) makes this test fail; the
 // pre-repair TestGetOrderReturnsProjection only asserted sku and qty_ordered.
 func TestGetOrderReturnsFulfilmentCounters(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"entity_id": 9, "increment_id": "000000009",

@@ -271,7 +271,8 @@ func responseTooLargeError(method, path string, resp *http.Response, read int64)
 	if over < 0 {
 		over = 0
 	}
-	message := fmt.Sprintf("Magento response exceeded the %d-byte limit", int64(maxResponseBytes))
+	// Both branches below assign message; an initial value here was dead (ineffassign).
+	var message string
 	if exact {
 		message = fmt.Sprintf("Magento response exceeded the %d-byte limit by %d bytes", int64(maxResponseBytes), over)
 	} else {
@@ -552,6 +553,8 @@ func classifyUpstreamReason(text string) (reason string, conflict bool, retryabl
 // {"message": ...} objects when the operation did not happen; treating the status
 // code as the verdict made tier-price writes report set:true with zero writes
 // (U-07). A body that is not an error array is not an error.
+//
+//nolint:unparam // method feeds the error's op label; today every 200-with-error route is POST, but the helper is shared and a future one may be PUT (the refund route already is).
 func decodeUpstreamBusinessError(method, path string, raw []byte, storeCode string) error {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '[' {
@@ -837,12 +840,12 @@ func requestMayHaveBeenSent(err error) bool {
 type Observation string
 
 const (
-	// ObservationApplied: the upstream system proves the mutation happened.
+	// ObservationApplied means the upstream system proves the mutation happened.
 	ObservationApplied Observation = "applied"
-	// ObservationNotApplied: it proves the mutation did not happen.
+	// ObservationNotApplied means it proves the mutation did not happen.
 	ObservationNotApplied Observation = "not_applied"
-	// ObservationInconclusive: the read could not decide (or the entity is in a
-	// state that neither confirms nor denies the specific mutation).
+	// ObservationInconclusive means the read could not decide (or the entity is in
+	// a state that neither confirms nor denies the specific mutation).
 	ObservationInconclusive Observation = "inconclusive"
 )
 

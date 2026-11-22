@@ -3,6 +3,7 @@
 package testinventory
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -65,7 +66,9 @@ func (s *stringList) Set(value string) error {
 }
 
 // Run executes the check and returns the process exit code. It takes its
-// streams so tests can drive it without spawning a process.
+// streams so tests can drive it without spawning a process. Writing to those
+// streams is best-effort: the exit code is the contract, so a failed write to a
+// closed pipe must not change the verdict.
 func Run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check-test-inventory", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -79,29 +82,29 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fs.Usage = func() {}
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			// -h and --help print the usage to stdout and succeed: asking for
 			// help is not an error.
-			fmt.Fprint(stdout, usageText)
+			_, _ = fmt.Fprint(stdout, usageText)
 			return ExitOK
 		}
-		fmt.Fprintf(stderr, "check-test-inventory: %v\n\n%s", err, usageText)
+		_, _ = fmt.Fprintf(stderr, "check-test-inventory: %v\n\n%s", err, usageText)
 		return ExitUsage
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "check-test-inventory: unexpected argument %q\n\n%s", fs.Arg(0), usageText)
+		_, _ = fmt.Fprintf(stderr, "check-test-inventory: unexpected argument %q\n\n%s", fs.Arg(0), usageText)
 		return ExitUsage
 	}
 
 	baseInv, err := Load(*repo, *base)
 	if err != nil {
-		fmt.Fprintf(stderr, "check-test-inventory: %v\n", err)
-		fmt.Fprintf(stderr, "hint: fetch the base revision first (git fetch origin) or pass --base <ref>\n")
+		_, _ = fmt.Fprintf(stderr, "check-test-inventory: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "hint: fetch the base revision first (git fetch origin) or pass --base <ref>\n")
 		return ExitUsage
 	}
 	headInv, err := Load(*repo, *head)
 	if err != nil {
-		fmt.Fprintf(stderr, "check-test-inventory: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "check-test-inventory: %v\n", err)
 		return ExitUsage
 	}
 

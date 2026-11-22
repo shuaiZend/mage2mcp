@@ -78,7 +78,7 @@ func makeDue(t *testing.T, store *Store, id string) {
 }
 
 // mustProceed asserts Begin returned a fresh intent and claims it.
-func mustProceed(t *testing.T, ledger *OperationLedger, ctx context.Context, op Operation) (string, Execution) {
+func mustProceed(ctx context.Context, t *testing.T, ledger *OperationLedger, op Operation) (string, Execution) {
 	t.Helper()
 	res, err := ledger.Begin(ctx, op)
 	if err != nil {
@@ -99,7 +99,7 @@ func mustProceed(t *testing.T, ledger *OperationLedger, ctx context.Context, op 
 func TestLedgerStaleFenceIsRejected(t *testing.T) {
 	ledger, _, instance := ledgerFixture(t, "fence")
 	ctx := context.Background()
-	id, first := mustProceed(t, ledger, ctx, intent(t, instance, "key-fence", json.RawMessage(`{"amount":10}`)))
+	id, first := mustProceed(ctx, t, ledger, intent(t, instance, "key-fence", json.RawMessage(`{"amount":10}`)))
 
 	// Force the row back to pending so a second Execute can take ownership: this
 	// is the shape of an operator retry, and it regenerates the fence.
@@ -244,7 +244,7 @@ func TestLedgerReplaySemantics(t *testing.T) {
 	}
 
 	// failed -> retry permitted.
-	failedID, failedExec := mustProceed(t, ledger, ctx, intent(t, instance, "key-replay-failed", args))
+	failedID, failedExec := mustProceed(ctx, t, ledger, intent(t, instance, "key-replay-failed", args))
 	if applied, err := ledger.Fail(ctx, failedID, failedExec.Fence, "upstream_rejected"); err != nil || !applied {
 		t.Fatalf("Fail: applied=%v err=%v", applied, err)
 	}
@@ -265,7 +265,7 @@ func TestLedgerReplaySemantics(t *testing.T) {
 	// unknown and reconciling -> operation_unknown, never a retry.
 	for _, state := range []string{OpUnknown, OpReconciling} {
 		key := "key-replay-" + state
-		id, exec2 := mustProceed(t, ledger, ctx, intent(t, instance, key, args))
+		id, exec2 := mustProceed(ctx, t, ledger, intent(t, instance, key, args))
 		if applied, err := ledger.Unknown(ctx, id, exec2.Fence, "upstream_timeout", time.Minute); err != nil || !applied {
 			t.Fatalf("Unknown: applied=%v err=%v", applied, err)
 		}
@@ -310,7 +310,7 @@ func TestLedgerTerminalStatesAreFinal(t *testing.T) {
 	ledger, _, instance := ledgerFixture(t, "terminal")
 	ctx := context.Background()
 
-	id, exec := mustProceed(t, ledger, ctx, intent(t, instance, "key-terminal", json.RawMessage(`{"amount":1}`)))
+	id, exec := mustProceed(ctx, t, ledger, intent(t, instance, "key-terminal", json.RawMessage(`{"amount":1}`)))
 	if applied, err := ledger.Succeed(ctx, id, exec.Fence, "inv-1", nil); err != nil || !applied {
 		t.Fatalf("Succeed: applied=%v err=%v", applied, err)
 	}
@@ -338,7 +338,7 @@ func TestLedgerTerminalStatesAreFinal(t *testing.T) {
 	}
 
 	// A failed row can only leave through Retry.
-	failID, failExec := mustProceed(t, ledger, ctx, intent(t, instance, "key-terminal-failed", json.RawMessage(`{"amount":2}`)))
+	failID, failExec := mustProceed(ctx, t, ledger, intent(t, instance, "key-terminal-failed", json.RawMessage(`{"amount":2}`)))
 	if applied, err := ledger.Fail(ctx, failID, failExec.Fence, "upstream_rejected"); err != nil || !applied {
 		t.Fatalf("Fail: applied=%v err=%v", applied, err)
 	}
@@ -355,7 +355,7 @@ func TestLedgerTerminalStatesAreFinal(t *testing.T) {
 func TestLedgerUnknownThenReconcile(t *testing.T) {
 	ledger, store, instance := ledgerFixture(t, "reconcile")
 	ctx := context.Background()
-	id, exec := mustProceed(t, ledger, ctx, intent(t, instance, "key-reconcile", json.RawMessage(`{"amount":7}`)))
+	id, exec := mustProceed(ctx, t, ledger, intent(t, instance, "key-reconcile", json.RawMessage(`{"amount":7}`)))
 
 	// Nothing is reconcilable before an ambiguous outcome exists for this fixture.
 	if rec, applied, err := ledger.ClaimReconcilable(ctx, time.Minute); err != nil {
@@ -406,7 +406,7 @@ func TestLedgerUnknownThenReconcile(t *testing.T) {
 	}
 
 	// T8: a reconciling row the upstream proves was not applied ends failed.
-	failID, failExec := mustProceed(t, ledger, ctx, intent(t, instance, "key-reconcile-failed", json.RawMessage(`{"amount":8}`)))
+	failID, failExec := mustProceed(ctx, t, ledger, intent(t, instance, "key-reconcile-failed", json.RawMessage(`{"amount":8}`)))
 	if applied, err := ledger.Unknown(ctx, failID, failExec.Fence, "upstream_timeout", 0); err != nil || !applied {
 		t.Fatalf("Unknown: applied=%v err=%v", applied, err)
 	}
@@ -427,7 +427,7 @@ func TestLedgerUnknownThenReconcile(t *testing.T) {
 	}
 
 	// T9: an inconclusive read backs off and stays unknown.
-	unknownID, unknownExec := mustProceed(t, ledger, ctx, intent(t, instance, "key-reconcile-unknown", json.RawMessage(`{"amount":9}`)))
+	unknownID, unknownExec := mustProceed(ctx, t, ledger, intent(t, instance, "key-reconcile-unknown", json.RawMessage(`{"amount":9}`)))
 	if applied, err := ledger.Unknown(ctx, unknownID, unknownExec.Fence, "upstream_timeout", 0); err != nil || !applied {
 		t.Fatalf("Unknown: applied=%v err=%v", applied, err)
 	}
@@ -453,7 +453,7 @@ func TestLedgerUnknownThenReconcile(t *testing.T) {
 func TestLedgerTransitionHistory(t *testing.T) {
 	ledger, store, instance := ledgerFixture(t, "history")
 	ctx := context.Background()
-	id, exec := mustProceed(t, ledger, ctx, intent(t, instance, "key-history", json.RawMessage(`{"amount":3}`)))
+	id, exec := mustProceed(ctx, t, ledger, intent(t, instance, "key-history", json.RawMessage(`{"amount":3}`)))
 	if applied, err := ledger.Unknown(ctx, id, exec.Fence, "upstream_timeout", 0); err != nil || !applied {
 		t.Fatalf("Unknown: applied=%v err=%v", applied, err)
 	}
@@ -508,7 +508,7 @@ func TestLedgerClaimReconcilableIsExclusive(t *testing.T) {
 	ctx := context.Background()
 	const n = 5
 	for i := 0; i < n; i++ {
-		id, exec := mustProceed(t, ledger, ctx, intent(t, instance, fmt.Sprintf("key-claim-%d", i), json.RawMessage(`{"amount":1}`)))
+		id, exec := mustProceed(ctx, t, ledger, intent(t, instance, fmt.Sprintf("key-claim-%d", i), json.RawMessage(`{"amount":1}`)))
 		if applied, err := ledger.Unknown(ctx, id, exec.Fence, "upstream_timeout", 0); err != nil || !applied {
 			t.Fatalf("Unknown: applied=%v err=%v", applied, err)
 		}
@@ -554,7 +554,7 @@ func TestLedgerAbortAndRetry(t *testing.T) {
 	ledger, store, instance := ledgerFixture(t, "abort")
 	ctx := context.Background()
 
-	id, exec := mustProceed(t, ledger, ctx, intent(t, instance, "key-abort", json.RawMessage(`{"amount":1}`)))
+	id, exec := mustProceed(ctx, t, ledger, intent(t, instance, "key-abort", json.RawMessage(`{"amount":1}`)))
 	if applied, err := ledger.Abort(ctx, id, OpExecuting, "operator confirmed no charge"); err != nil || !applied {
 		t.Fatalf("Abort: applied=%v err=%v", applied, err)
 	}
@@ -580,7 +580,7 @@ func TestLedgerAbortAndRetry(t *testing.T) {
 
 	// An ambiguous outcome is not retryable: record it as failed with a reserved
 	// code only through the reconciler, and Retry must refuse it.
-	ambID, ambExec := mustProceed(t, ledger, ctx, intent(t, instance, "key-abort-amb", json.RawMessage(`{"amount":2}`)))
+	ambID, ambExec := mustProceed(ctx, t, ledger, intent(t, instance, "key-abort-amb", json.RawMessage(`{"amount":2}`)))
 	if _, err := ledger.Fail(ctx, ambID, ambExec.Fence, "upstream_timeout"); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("Fail with an ambiguous code: %v, want invalid_argument", err)
 	}
@@ -643,10 +643,11 @@ func TestLedgerRejectsInvalidOperations(t *testing.T) {
 // The schema keeps itself honest: a terminal row must have finished_at, a
 // non-terminal row must not, and money must be paired with a currency.
 func TestLedgerSchemaInvariants(t *testing.T) {
-	store := testStore(t)
+	// ledgerFixture opens the store and migrates it; a second testStore call here
+	// only shadowed it.
 	ledger, store, instance := ledgerFixture(t, "schema")
 	ctx := context.Background()
-	id, _ := mustProceed(t, ledger, ctx, intent(t, instance, "key-schema", json.RawMessage(`{"amount":1}`)))
+	id, _ := mustProceed(ctx, t, ledger, intent(t, instance, "key-schema", json.RawMessage(`{"amount":1}`)))
 
 	if _, err := store.pool.Exec(ctx,
 		`UPDATE operations SET state='succeeded' WHERE id=$1::uuid`, id); err == nil {
@@ -801,7 +802,7 @@ func TestDerivedKeyDeduplicatesOnlyInsideItsWindow(t *testing.T) {
 	args := json.RawMessage(`{"sku":"24-MB01","qty":1}`)
 	op := derivedIntent(t, instance, args)
 
-	id, exec := mustProceed(t, ledger, ctx, op)
+	id, exec := mustProceed(ctx, t, ledger, op)
 	if applied, err := ledger.Succeed(ctx, id, exec.Fence, "order:1", json.RawMessage(`{"order_id":1}`)); err != nil || !applied {
 		t.Fatalf("Succeed: applied=%v err=%v", applied, err)
 	}
@@ -844,7 +845,7 @@ func TestExplicitKeyIsNotWindowed(t *testing.T) {
 
 	args := json.RawMessage(`{"amount":5}`)
 	op := intent(t, instance, "caller-key-1", args)
-	id, exec := mustProceed(t, ledger, ctx, op)
+	id, exec := mustProceed(ctx, t, ledger, op)
 	if applied, err := ledger.Succeed(ctx, id, exec.Fence, "ref", nil); err != nil || !applied {
 		t.Fatalf("Succeed: applied=%v err=%v", applied, err)
 	}
@@ -867,7 +868,7 @@ func TestFailedAttemptReleasesDerivedKey(t *testing.T) {
 	swapLedgerClock(t, time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC))
 
 	args := json.RawMessage(`{"order_id":9}`)
-	id, exec := mustProceed(t, ledger, ctx, derivedIntent(t, instance, args))
+	id, exec := mustProceed(ctx, t, ledger, derivedIntent(t, instance, args))
 	if applied, err := ledger.Fail(ctx, id, exec.Fence, "validation_failed"); err != nil || !applied {
 		t.Fatalf("Fail: applied=%v err=%v", applied, err)
 	}
@@ -900,7 +901,7 @@ func TestExplicitKeyIsNotReleasedOnFailure(t *testing.T) {
 	ledger, _, instance := ledgerFixture(t, "explicit-release")
 	ctx := context.Background()
 	args := json.RawMessage(`{"order_id":9}`)
-	id, exec := mustProceed(t, ledger, ctx, intent(t, instance, "caller-key-2", args))
+	id, exec := mustProceed(ctx, t, ledger, intent(t, instance, "caller-key-2", args))
 	if applied, err := ledger.Fail(ctx, id, exec.Fence, "validation_failed"); err != nil || !applied {
 		t.Fatalf("Fail: applied=%v err=%v", applied, err)
 	}
@@ -927,7 +928,7 @@ func TestReplayResultCarriesTheReplayedMarker(t *testing.T) {
 	ledger, _, instance := ledgerFixture(t, "replay-marker")
 	ctx := context.Background()
 	args := json.RawMessage(`{"skus":["24-MB01"],"status":1}`)
-	id, exec := mustProceed(t, ledger, ctx, intent(t, instance, "key-marker", args))
+	id, exec := mustProceed(ctx, t, ledger, intent(t, instance, "key-marker", args))
 	// The tool's own result carries no replay marker: the ledger adds it.
 	if applied, err := ledger.Succeed(ctx, id, exec.Fence, "ref",
 		json.RawMessage(`{"total":1,"updated":1,"failed":0}`)); err != nil || !applied {
@@ -987,9 +988,9 @@ func TestReplayMarkerLeavesNonObjectResultsAlone(t *testing.T) {
 
 // escalateUnknown drives one operation to the state the reconciler leaves it in
 // after it gives up: unknown, escalated, never reconcilable again.
-func escalateUnknown(t *testing.T, ledger *OperationLedger, store *Store, ctx context.Context, instance, key string) string {
+func escalateUnknown(ctx context.Context, t *testing.T, ledger *OperationLedger, store *Store, instance, key string) string {
 	t.Helper()
-	id, exec := mustProceed(t, ledger, ctx, intent(t, instance, key, json.RawMessage(`{"amount":3}`)))
+	id, exec := mustProceed(ctx, t, ledger, intent(t, instance, key, json.RawMessage(`{"amount":3}`)))
 	if applied, err := ledger.Unknown(ctx, id, exec.Fence, "upstream_timeout", time.Minute); err != nil || !applied {
 		t.Fatalf("Unknown: applied=%v err=%v", applied, err)
 	}
@@ -1010,15 +1011,15 @@ func TestListFindsOperationsThatNeedAttention(t *testing.T) {
 	ledger, store, instance := ledgerFixture(t, "attention")
 	ctx := context.Background()
 
-	escalated := escalateUnknown(t, ledger, store, ctx, instance, "key-escalated")
+	escalated := escalateUnknown(ctx, t, ledger, store, instance, "key-escalated")
 
 	// A plain unknown row: the reconciler still owns it, so it is not attention.
-	unknown, exec := mustProceed(t, ledger, ctx, intent(t, instance, "key-unknown", json.RawMessage(`{"amount":4}`)))
+	unknown, exec := mustProceed(ctx, t, ledger, intent(t, instance, "key-unknown", json.RawMessage(`{"amount":4}`)))
 	if applied, err := ledger.Unknown(ctx, unknown, exec.Fence, "upstream_timeout", time.Hour); err != nil || !applied {
 		t.Fatalf("Unknown: applied=%v err=%v", applied, err)
 	}
 	// A succeeded row: nothing to do.
-	done, doneExec := mustProceed(t, ledger, ctx, intent(t, instance, "key-done", json.RawMessage(`{"amount":5}`)))
+	done, doneExec := mustProceed(ctx, t, ledger, intent(t, instance, "key-done", json.RawMessage(`{"amount":5}`)))
 	if applied, err := ledger.Succeed(ctx, done, doneExec.Fence, "ref", nil); err != nil || !applied {
 		t.Fatalf("Succeed: applied=%v err=%v", applied, err)
 	}
@@ -1090,7 +1091,7 @@ func TestDisposeRecordsTheJudgement(t *testing.T) {
 	t.Run("applied", func(t *testing.T) {
 		ledger, store, instance := ledgerFixture(t, "dispose-applied")
 		ctx := context.Background()
-		id := escalateUnknown(t, ledger, store, ctx, instance, "key-applied")
+		id := escalateUnknown(ctx, t, ledger, store, instance, "key-applied")
 		event := &audit.Event{Subject: "operator@test", IdentityClass: "human",
 			Tool: "magento.operation.dispose", Scope: "dispose", Phase: "outcome",
 			Decision: "allow", State: "succeeded"}
@@ -1121,7 +1122,7 @@ func TestDisposeRecordsTheJudgement(t *testing.T) {
 	t.Run("not_applied", func(t *testing.T) {
 		ledger, store, instance := ledgerFixture(t, "dispose-not-applied")
 		ctx := context.Background()
-		id := escalateUnknown(t, ledger, store, ctx, instance, "key-not-applied")
+		id := escalateUnknown(ctx, t, ledger, store, instance, "key-not-applied")
 		applied, err := ledger.Dispose(ctx, id, DisposedNotApplied, "read /V1/orders/1043: no such order", "", nil)
 		if err != nil || !applied {
 			t.Fatalf("Dispose: applied=%v err=%v", applied, err)
@@ -1138,7 +1139,7 @@ func TestDisposeRecordsTheJudgement(t *testing.T) {
 	t.Run("requeue", func(t *testing.T) {
 		ledger, store, instance := ledgerFixture(t, "dispose-requeue")
 		ctx := context.Background()
-		id := escalateUnknown(t, ledger, store, ctx, instance, "key-requeue")
+		id := escalateUnknown(ctx, t, ledger, store, instance, "key-requeue")
 		before, err := ledger.Get(ctx, id)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
@@ -1171,13 +1172,13 @@ func TestDisposeRefusesNonUnknownStates(t *testing.T) {
 	ledger, _, instance := ledgerFixture(t, "dispose-refuse")
 	ctx := context.Background()
 
-	running, exec := mustProceed(t, ledger, ctx, intent(t, instance, "key-running", json.RawMessage(`{"amount":1}`)))
+	running, exec := mustProceed(ctx, t, ledger, intent(t, instance, "key-running", json.RawMessage(`{"amount":1}`)))
 	_ = exec
 	if _, err := ledger.Dispose(ctx, running, DisposedApplied, "checked", "", nil); errs.CodeOf(err) != errs.CodeConflict {
 		t.Fatalf("dispose executing: err = %v, want conflict", err)
 	}
 
-	done, doneExec := mustProceed(t, ledger, ctx, intent(t, instance, "key-done-2", json.RawMessage(`{"amount":2}`)))
+	done, doneExec := mustProceed(ctx, t, ledger, intent(t, instance, "key-done-2", json.RawMessage(`{"amount":2}`)))
 	if applied, err := ledger.Succeed(ctx, done, doneExec.Fence, "ref", nil); err != nil || !applied {
 		t.Fatalf("Succeed: applied=%v err=%v", applied, err)
 	}
@@ -1191,7 +1192,7 @@ func TestDisposeRefusesNonUnknownStates(t *testing.T) {
 func TestDisposeRequiresJudgementAndNote(t *testing.T) {
 	ledger, store, instance := ledgerFixture(t, "dispose-validation")
 	ctx := context.Background()
-	id := escalateUnknown(t, ledger, store, ctx, instance, "key-validation")
+	id := escalateUnknown(ctx, t, ledger, store, instance, "key-validation")
 
 	if _, err := ledger.Dispose(ctx, id, "whatever", "note", "", nil); errs.CodeOf(err) != errs.CodeInvalidArgument {
 		t.Fatalf("bad judgement: err = %v, want invalid_argument", err)

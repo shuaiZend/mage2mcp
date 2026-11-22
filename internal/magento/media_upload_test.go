@@ -70,7 +70,7 @@ func TestUploadMedia(t *testing.T) {
 
 // TestUploadMediaObjectResponse keeps the full-entry response shape working.
 func TestUploadMediaObjectResponse(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":9,"media_type":"image","label":"Front","position":1,"file":"/w/i/front.jpg"}`))
 	}))
@@ -91,7 +91,7 @@ func TestUploadMediaObjectResponse(t *testing.T) {
 // cannot address a gallery entry is an upstream defect, not a success.
 func TestUploadMediaRejectsInvalidEntryID(t *testing.T) {
 	for _, body := range []string{`0`, `-5`, `"not-an-id"`} {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, body)
 		}))

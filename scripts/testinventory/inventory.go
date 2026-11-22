@@ -16,6 +16,7 @@ package testinventory
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -204,12 +205,17 @@ func sortTests(list []Test) {
 
 // WriteReport renders the diff. The report always names the file a lost test
 // lived in: a bare test name is not enough to find what was dropped.
+//
+// Report writes are best-effort on purpose: the verdict is the process exit
+// code, so a broken stdout (a closed pipe, a full disk behind a redirect) must
+// not turn a detected removal into a crash. The buffered writer's Flush error is
+// ignored for the same reason.
 func WriteReport(w io.Writer, base, head *Inventory, d Diff) {
 	bw := bufio.NewWriter(w)
 	defer func() { _ = bw.Flush() }()
-	fmt.Fprintf(bw, "test inventory: %s (%s) -> %s (%s)\n",
+	_, _ = fmt.Fprintf(bw, "test inventory: %s (%s) -> %s (%s)\n",
 		base.Ref, shortSHA(base.Commit), head.Ref, shortSHA(head.Commit))
-	fmt.Fprintf(bw, "tests: %d -> %d  (added %d, removed %d, moved %d, allowed %d)\n",
+	_, _ = fmt.Fprintf(bw, "tests: %d -> %d  (added %d, removed %d, moved %d, allowed %d)\n",
 		base.Count(), head.Count(), len(d.Added), len(d.Removed), len(d.Moved), len(d.Allowed))
 	writeSection(bw, "added", "+", d.Added)
 	writeSection(bw, "removed", "-", d.Removed)
@@ -217,24 +223,24 @@ func WriteReport(w io.Writer, base, head *Inventory, d Diff) {
 		writeSection(bw, "allowed removals", "-", d.Allowed)
 	}
 	if len(d.Moved) > 0 {
-		fmt.Fprintln(bw, "moved:")
+		_, _ = fmt.Fprintln(bw, "moved:")
 		for _, m := range d.Moved {
-			fmt.Fprintf(bw, "  ~ %s  %s -> %s\n", m.Name, m.From, m.To)
+			_, _ = fmt.Fprintf(bw, "  ~ %s  %s -> %s\n", m.Name, m.From, m.To)
 		}
 	}
 	if d.Failed() {
-		fmt.Fprintf(bw, "\nFAIL: %d test function(s) disappeared between %s and %s\n",
+		_, _ = fmt.Fprintf(bw, "\nFAIL: %d test function(s) disappeared between %s and %s\n",
 			len(d.Removed), base.Ref, head.Ref)
-		fmt.Fprintln(bw, "A test that no longer exists cannot fail, so the suite stays green while the")
-		fmt.Fprintln(bw, "coverage it provided is gone. Restore the test, or — if the deletion is")
-		fmt.Fprintln(bw, "deliberate — rerun with --allow-removed <TestName> for each one.")
+		_, _ = fmt.Fprintln(bw, "A test that no longer exists cannot fail, so the suite stays green while the")
+		_, _ = fmt.Fprintln(bw, "coverage it provided is gone. Restore the test, or — if the deletion is")
+		_, _ = fmt.Fprintln(bw, "deliberate — rerun with --allow-removed <TestName> for each one.")
 	}
 }
 
 func writeSection(w io.Writer, title, marker string, tests []Test) {
-	fmt.Fprintf(w, "%s: %d\n", title, len(tests))
+	_, _ = fmt.Fprintf(w, "%s: %d\n", title, len(tests))
 	for _, t := range tests {
-		fmt.Fprintf(w, "  %s %s\t%s\n", marker, t.File, t.Name)
+		_, _ = fmt.Fprintf(w, "  %s %s\t%s\n", marker, t.File, t.Name)
 	}
 }
 
@@ -248,16 +254,20 @@ func shortSHA(sha string) string {
 // git runs one git command and returns its stdout.
 func git(repoDir string, args ...string) (string, error) {
 	full := append([]string{"-C", repoDir, "-c", "core.quotepath=false"}, args...)
-	cmd := exec.Command("git", full...)
+	// G204: the executable is a fixed literal and the arguments are git
+	// subcommands plus revisions and repository-relative paths supplied by the
+	// operator on the command line. Nothing here is passed through a shell.
+	cmd := exec.Command("git", full...) //nolint:gosec,noctx // G204: see above; noctx: a local read-only git read finishes in milliseconds, so there is no long-running work to cancel.
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.Output()
 	if err != nil {
 		var stderr string
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			stderr = strings.TrimSpace(string(exitErr.Stderr))
 		}
 		if stderr != "" {
-			return "", fmt.Errorf("%v: %s", err, stderr)
+			return "", fmt.Errorf("%w: %s", err, stderr)
 		}
 		return "", err
 	}

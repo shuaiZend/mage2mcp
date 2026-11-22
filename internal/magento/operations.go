@@ -434,7 +434,7 @@ func (s *Service) operationInstanceID(instance string) string {
 // human, and record what the human found.
 // ---------------------------------------------------------------------------
 
-// Operations.Get returns one operation for polling.
+// Get returns one operation for polling.
 func (o *Operations) Get(ctx context.Context, id string) (*storage.OperationRecord, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, invalidf("operation_id is required")
@@ -442,7 +442,7 @@ func (o *Operations) Get(ctx context.Context, id string) (*storage.OperationReco
 	return o.ledger.Get(ctx, id)
 }
 
-// Operations.List returns a page of operations.
+// List returns a page of operations.
 func (o *Operations) List(ctx context.Context, f storage.OperationFilter) (*storage.OperationPage, error) {
 	if f.State != "" && !knownOperationState(f.State) {
 		return nil, invalidf("state must be one of pending, executing, succeeded, failed, unknown, reconciling")
@@ -450,7 +450,7 @@ func (o *Operations) List(ctx context.Context, f storage.OperationFilter) (*stor
 	return o.ledger.List(ctx, f)
 }
 
-// Operations.Dispose records an operator's finding about an unknown operation.
+// Dispose records an operator's finding about an unknown operation.
 //
 // The judgement is required, and so is the note: the whole point of an unknown
 // outcome is that nobody knows yet, so "close it" is only meaningful together with

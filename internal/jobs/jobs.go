@@ -41,12 +41,11 @@ const (
 // QueueImport is the queue name for asynchronous imports.
 const QueueImport = "import"
 
-// Sentinel errors returned by a Queue implementation.
-//
-// ErrLeaseLost means the attempt no longer owns the row: the lease expired and
-// another worker reclaimed the task, or a terminal transition already happened.
-// The worker must discard the result; it must never retry the write with the
-// same token, and it must never treat the loss as success.
+// ErrLeaseLost is a sentinel error returned by a Queue implementation. It means
+// the attempt no longer owns the row: the lease expired and another worker
+// reclaimed the task, or a terminal transition already happened. The worker must
+// discard the result; it must never retry the write with the same token, and it
+// must never treat the loss as success.
 var ErrLeaseLost = errors.New("jobs: lease lost")
 
 // Job states as reported to callers. "partial" is not a queue state (the queue

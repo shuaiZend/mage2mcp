@@ -599,8 +599,8 @@ func TestHTTPBodyCapRejectsOversizeRequest(t *testing.T) {
 	}
 	// Exercise the shipped default rather than a toy value: the raised cap must
 	// still be a hard ceiling at exactly 16 MiB.
-	cap := config.DefaultMaxBodyBytes
-	handler := mcpserver.Handler(srv, mcpserver.Options{Registry: reg, MaxBodyBytes: cap})
+	bodyCap := config.DefaultMaxBodyBytes
+	handler := mcpserver.Handler(srv, mcpserver.Options{Registry: reg, MaxBodyBytes: bodyCap})
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
 
@@ -620,7 +620,7 @@ func TestHTTPBodyCapRejectsOversizeRequest(t *testing.T) {
 		return resp
 	}
 
-	over := make([]byte, cap+1)
+	over := make([]byte, bodyCap+1)
 	for i := range over {
 		over[i] = 'x'
 	}
@@ -631,8 +631,8 @@ func TestHTTPBodyCapRejectsOversizeRequest(t *testing.T) {
 	}
 	var message bytes.Buffer
 	_, _ = message.ReadFrom(resp.Body)
-	if !strings.Contains(message.String(), strconv.FormatInt(cap, 10)) {
-		t.Fatalf("413 body %q does not name the limit %d", message.String(), cap)
+	if !strings.Contains(message.String(), strconv.FormatInt(bodyCap, 10)) {
+		t.Fatalf("413 body %q does not name the limit %d", message.String(), bodyCap)
 	}
 
 	under := post(t, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
@@ -643,7 +643,7 @@ func TestHTTPBodyCapRejectsOversizeRequest(t *testing.T) {
 }
 
 // F9: a decoded payload at the 8 MiB ceiling must fit through the shipped
-// 16 MiB HTTP cap, not just a realistic 5,000-row fixture.
+// 16 MiB HTTP body cap, not just a realistic 5,000-row fixture.
 func TestMaxImportPayloadPassesHTTPCap(t *testing.T) {
 	data := paddedCSV(maxImportBytes)
 	if len(data) != maxImportBytes {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package inventory derives the implemented-tool inventory from the tool
+// Package toolinventory derives the implemented-tool inventory from the tool
 // registry. It is the single source of truth for docs/implemented-tools.md:
 // the generator and the staleness test call the same Generate function.
 package toolinventory
@@ -311,7 +311,10 @@ func readPreamble() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	// G304: docPath returns a constant repository-relative path
+	// (docs/implemented-tools.md); nothing from the caller or the environment
+	// reaches it.
+	data, err := os.ReadFile(path) //nolint:gosec // see above
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []byte("# Implemented tools\n\n"), nil

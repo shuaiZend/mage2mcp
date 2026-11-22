@@ -89,20 +89,20 @@ const (
 type Decision string
 
 const (
-	// DecisionProceed: the operation is new (or was reset by a retry) and nobody
-	// owns it. Call Execute, perform the mutation, then Succeed/Fail/Unknown.
+	// DecisionProceed means the operation is new (or was reset by a retry) and
+	// nobody owns it. Call Execute, perform the mutation, then Succeed/Fail/Unknown.
 	DecisionProceed Decision = "proceed"
-	// DecisionRetry: a previous attempt failed definitively. Call Retry, then
-	// Execute.
+	// DecisionRetry means a previous attempt failed definitively. Call Retry,
+	// then Execute.
 	DecisionRetry Decision = "retry"
-	// DecisionInProgress: another attempt owns the operation. Poll by id; do not
-	// call the upstream system again.
+	// DecisionInProgress means another attempt owns the operation. Poll by id; do
+	// not call the upstream system again.
 	DecisionInProgress Decision = "in_progress"
-	// DecisionReplay: the operation already succeeded. Return Result as the
+	// DecisionReplay means the operation already succeeded. Return Result as the
 	// response with replayed=true; do not call the upstream system.
 	DecisionReplay Decision = "replay"
-	// DecisionUnknown: the outcome is ambiguous. Poll; never retry. Begin also
-	// returns an error with code operation_unknown.
+	// DecisionUnknown means the outcome is ambiguous. Poll; never retry. Begin
+	// also returns an error with code operation_unknown.
 	DecisionUnknown Decision = "unknown"
 )
 
@@ -187,11 +187,11 @@ type Reconcilable struct {
 type Resolution string
 
 const (
-	// ResolvedSucceeded: the upstream system proves the mutation was applied.
+	// ResolvedSucceeded means the upstream system proves the mutation was applied.
 	ResolvedSucceeded Resolution = "succeeded"
-	// ResolvedFailed: the upstream system proves it was not applied.
+	// ResolvedFailed means the upstream system proves it was not applied.
 	ResolvedFailed Resolution = "failed"
-	// ResolvedUnknown: the read was inconclusive; back off and try again.
+	// ResolvedUnknown means the read was inconclusive; back off and try again.
 	ResolvedUnknown Resolution = "unknown"
 )
 
@@ -1077,16 +1077,17 @@ func jsonArg(result json.RawMessage) any {
 type GateDecision string
 
 const (
-	// GateProceed: this caller owns the operation; run the tool, then FinishCall.
+	// GateProceed means this caller owns the operation; run the tool, then
+	// FinishCall.
 	GateProceed GateDecision = "proceed"
-	// GateRetry: the previous attempt failed definitively; call Retry then
+	// GateRetry means the previous attempt failed definitively; call Retry then
 	// BeginCall again (the middleware does this in one step).
 	GateRetry GateDecision = "retry"
-	// GateInProgress: another attempt owns it; do not call upstream.
+	// GateInProgress means another attempt owns it; do not call upstream.
 	GateInProgress GateDecision = "in_progress"
-	// GateReplay: it already succeeded; return the stored result.
+	// GateReplay means it already succeeded; return the stored result.
 	GateReplay GateDecision = "replay"
-	// GateUnknown: the outcome is ambiguous; never retry, only reconcile.
+	// GateUnknown means the outcome is ambiguous; never retry, only reconcile.
 	GateUnknown GateDecision = "unknown"
 )
 
@@ -1310,10 +1311,17 @@ func (l *OperationLedger) MakeReconcilable(ctx context.Context, id string) (bool
 // filter selects and what Dispose acts on: a human either records a finding
 // (applied / not_applied) or re-queues it, which restarts the attempt budget.
 // Before that exit existed, eleven production order.create rows had nowhere to go.
+//
+// reason is the caller's account of why it gave up (cmd/worker passes
+// "reconciliation attempts exhausted; manual review required"). It is deliberately
+// not recorded yet: operation_transitions.reason carries the fixed token
+// 'escalated', because cmd/worker's TestReconcileHandlerEscalates asserts that
+// exact string to prove escalation is terminal. Recording the free text instead
+// needs that assertion changed to a prefix match in the same change, which is a
+// cross-package edit this change does not make. Until then the operator-facing
+// "why" is error_code='needs_manual_reconciliation' plus reconcile_count.
 func (l *OperationLedger) Escalate(ctx context.Context, id, fence, reason string) (bool, error) {
-	if reason == "" {
-		reason = "escalated"
-	}
+	_ = reason
 	tag, err := l.store.pool.Exec(ctx, `
 		WITH updated AS (
 			UPDATE operations
@@ -1353,14 +1361,14 @@ func (l *OperationLedger) Escalate(ctx context.Context, id, fence, reason string
 type DisposeJudgment string
 
 const (
-	// DisposedApplied: the upstream was read and the mutation is there. The row
-	// becomes succeeded so a replay returns it instead of writing again.
+	// DisposedApplied means the upstream was read and the mutation is there. The
+	// row becomes succeeded so a replay returns it instead of writing again.
 	DisposedApplied DisposeJudgment = "applied"
-	// DisposedNotApplied: the upstream was read and the mutation is not there. The
-	// row becomes failed, which also frees a derived idempotency key.
+	// DisposedNotApplied means the upstream was read and the mutation is not
+	// there. The row becomes failed, which also frees a derived idempotency key.
 	DisposedNotApplied DisposeJudgment = "not_applied"
-	// DisposedRequeue: the finding is not in yet. The row stays unknown but its
-	// reconciliation budget restarts, so the reconciler reads upstream again
+	// DisposedRequeue means the finding is not in yet. The row stays unknown but
+	// its reconciliation budget restarts, so the reconciler reads upstream again
 	// instead of leaving the row at reconcile_after = infinity forever.
 	DisposedRequeue DisposeJudgment = "requeue"
 )

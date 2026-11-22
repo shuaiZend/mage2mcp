@@ -230,10 +230,7 @@ func (s *Service) CategoryProducts(ctx context.Context, categoryID, limit, offse
 	}
 	var products []Product
 	if err := json.Unmarshal(raw, &products); err == nil {
-		hydrated, err := s.hydrateCategoryProducts(ctx, products)
-		if err != nil {
-			return nil, 0, err
-		}
+		hydrated := s.hydrateCategoryProducts(ctx, products)
 		return hydrated, len(hydrated), nil
 	}
 	var payload struct {
@@ -246,10 +243,7 @@ func (s *Service) CategoryProducts(ctx context.Context, categoryID, limit, offse
 	if payload.Items == nil {
 		payload.Items = []Product{}
 	}
-	hydrated, err := s.hydrateCategoryProducts(ctx, payload.Items)
-	if err != nil {
-		return nil, 0, err
-	}
+	hydrated := s.hydrateCategoryProducts(ctx, payload.Items)
 	return hydrated, payload.TotalCount, nil
 }
 
@@ -265,9 +259,12 @@ const hydrationBatchSize = 100
 // to return name "", price 0 and status 0 for real products (U-36). One extra
 // search keyed on the page's SKUs costs a single request and returns the full
 // projection.
-func (s *Service) hydrateCategoryProducts(ctx context.Context, products []Product) ([]Product, error) {
+// It never fails the read: an enrichment request that errors or decodes badly leaves
+// the rows as the listing returned them, so the return is a plain slice (unparam
+// flagged the always-nil error).
+func (s *Service) hydrateCategoryProducts(ctx context.Context, products []Product) []Product {
 	if len(products) == 0 {
-		return products, nil
+		return products
 	}
 	missing := false
 	skus := make([]string, 0, len(products))
@@ -280,7 +277,7 @@ func (s *Service) hydrateCategoryProducts(ctx context.Context, products []Produc
 		}
 	}
 	if !missing || len(skus) == 0 {
-		return products, nil
+		return products
 	}
 	// The page size of the enrichment search is derived from the rows actually
 	// returned by the category listing, never from the caller's `limit`: this
@@ -320,7 +317,7 @@ func (s *Service) hydrateCategoryProducts(ctx context.Context, products []Produc
 			products[i] = full
 		}
 	}
-	return products, nil
+	return products
 }
 
 // CreateAttributeOption adds a value to a select/multiselect attribute with

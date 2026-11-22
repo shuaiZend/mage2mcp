@@ -137,9 +137,7 @@ func (s *Service) GetOrder(ctx context.Context, orderID int) (*Order, error) {
 	// Decoding the top-level field alone left ShippingAddress permanently nil, so the
 	// support answer "where was it sent?" was still impossible after U-31 (F2).
 	if order.ShippingAddress == nil {
-		if err := order.fillShippingAddressFromAssignments(raw); err != nil {
-			return nil, err
-		}
+		order.fillShippingAddressFromAssignments(raw)
 	}
 	return &order, nil
 }
@@ -148,7 +146,11 @@ func (s *Service) GetOrder(ctx context.Context, orderID int) (*Order, error) {
 // extension_attributes.shipping_assignments, which is where Magento actually
 // stores it. The first assignment that carries an address wins: an order can be
 // split across several shipments, and they all deliver to the same address.
-func (o *Order) fillShippingAddressFromAssignments(raw []byte) error {
+//
+// It never fails the read, so it returns nothing: a build that shapes the nested
+// address differently leaves the address absent rather than turning a readable
+// order into a failed one (the always-nil error is what unparam flagged).
+func (o *Order) fillShippingAddressFromAssignments(raw []byte) {
 	var payload struct {
 		ExtensionAttributes struct {
 			ShippingAssignments []struct {
@@ -162,15 +164,14 @@ func (o *Order) fillShippingAddressFromAssignments(raw []byte) error {
 	// that shapes the nested address differently must not turn a readable order
 	// into a failed read, so a decode failure leaves the address absent.
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil
+		return
 	}
 	for _, assignment := range payload.ExtensionAttributes.ShippingAssignments {
 		if assignment.Shipping.Address != nil {
 			o.ShippingAddress = assignment.Shipping.Address
-			return nil
+			return
 		}
 	}
-	return nil
 }
 
 // SearchOrders returns one page of orders and the total match count.

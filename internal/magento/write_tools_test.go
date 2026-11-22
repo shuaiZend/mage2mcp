@@ -731,7 +731,7 @@ func TestConfigurableCreateResumesThroughMCP(t *testing.T) {
 // callToolApproved is callTool plus the approval dance: when the call comes back
 // confirmation_required it approves as a different human and retries with the
 // confirmation id. Read tools and already-approved calls pass straight through.
-func callToolApproved(t *testing.T, ctx context.Context, session *mcp.ClientSession, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+func callToolApproved(t *testing.T, ctx context.Context, session *mcp.ClientSession, params *mcp.CallToolParams) (*mcp.CallToolResult, error) { //nolint:revive // test helper keeps t first by convention, like callWriteTool
 	t.Helper()
 	res, err := session.CallTool(ctx, params)
 	if err != nil || res == nil || !res.IsError {

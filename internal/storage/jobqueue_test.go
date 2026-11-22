@@ -63,7 +63,7 @@ func TestJobRetryBackoffGrowsWithAttempts(t *testing.T) {
 	if len(delays) != 3 {
 		t.Fatalf("delays = %v", delays)
 	}
-	if !(delays[0] < delays[1] && delays[1] < delays[2]) {
+	if delays[0] >= delays[1] || delays[1] >= delays[2] {
 		t.Fatalf("delays = %v, want each retry scheduled further out", delays)
 	}
 	// 5s, 10s, 20s with ±25% jitter; the third must be well beyond a constant 5s.

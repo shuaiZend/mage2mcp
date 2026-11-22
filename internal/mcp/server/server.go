@@ -245,7 +245,7 @@ func installPolicy(srv *mcp.Server, opts Options) {
 			if opts.Authorize != nil {
 				authErr := authorizeCall(ctx, opts, tool, instance)
 				if authErr != nil {
-					recordOutcome(opts, ctx, tool, instance, "denied", errs.CodeOf(authErr))
+					recordOutcome(ctx, opts, tool, instance, "denied", errs.CodeOf(authErr))
 					return withResultMeta(ctx, tool, instance, deniedResult(authErr)), nil
 				}
 			}
@@ -255,7 +255,7 @@ func installPolicy(srv *mcp.Server, opts Options) {
 			// call used to fall through to the SDK and surface as `internal`, which
 			// made a misspelled tool name indistinguishable from a crash (U-28).
 			if _, registered := opts.Registry.Lookup(tool); !registered {
-				recordOutcome(opts, ctx, tool, instance, "failed", errs.CodeNotFound)
+				recordOutcome(ctx, opts, tool, instance, "failed", errs.CodeNotFound)
 				return withResultMeta(ctx, tool, instance, toolErrorResult(
 					errs.New(errs.CodeNotFound, "no such tool is registered on this server").
 						WithDetail("tool", tool))), nil
@@ -266,7 +266,7 @@ func installPolicy(srv *mcp.Server, opts Options) {
 			// step (REL-02 / F7).
 			confirmationID, confErr := opts.prepareConfirmation(ctx, tool, instance, call.Params.Arguments)
 			if confErr != nil {
-				recordOutcome(opts, ctx, tool, instance, "denied", errs.CodeOf(confErr))
+				recordOutcome(ctx, opts, tool, instance, "denied", errs.CodeOf(confErr))
 				return withResultMeta(ctx, tool, instance, toolErrorResult(confErr)), nil
 			}
 
@@ -277,7 +277,7 @@ func installPolicy(srv *mcp.Server, opts Options) {
 			if gated {
 				opReq, buildErr := buildOperationRequest(ctx, tool, instance, confirmationID, call.Params.Arguments)
 				if buildErr != nil {
-					recordOutcome(opts, ctx, tool, instance, "failed", errs.CodeOf(buildErr))
+					recordOutcome(ctx, opts, tool, instance, "failed", errs.CodeOf(buildErr))
 					return withResultMeta(ctx, tool, instance, toolErrorResult(buildErr)), nil
 				}
 				began, beginErr := opts.BeginOperation(ctx, opReq)
@@ -288,7 +288,7 @@ func installPolicy(srv *mcp.Server, opts Options) {
 					if errs.CodeOf(beginErr) == errs.CodeOperationUnknown {
 						state = "outcome_unknown"
 					}
-					recordOutcome(opts, ctx, tool, instance, state, errs.CodeOf(beginErr))
+					recordOutcome(ctx, opts, tool, instance, state, errs.CodeOf(beginErr))
 					return withResultMeta(ctx, tool, instance, toolErrorResult(beginErr)), nil
 				}
 				// Only a decision that names this caller as the owner may run the
@@ -305,43 +305,42 @@ func installPolicy(srv *mcp.Server, opts Options) {
 						// approval, or a concurrent loser would reach the consume
 						// step after the winner (the post-t42 regression).
 						if err := opts.Confirm.Validate(ctx, confirmationID, requesterOf(ctx), tool, instance, call.Params.Arguments); err != nil {
-							recordOutcome(opts, ctx, tool, instance, "denied", errs.CodeOf(err))
+							recordOutcome(ctx, opts, tool, instance, "denied", errs.CodeOf(err))
 							return withResultMeta(ctx, tool, instance, toolErrorResult(err)), nil
 						}
 					}
 					// A replay is a completed call: write its outcome row too,
 					// otherwise the audit trail shows an intent that never ended.
-					recordOutcome(opts, ctx, tool, instance, "succeeded", "")
-					res, replayErr := replayResult(began)
-					return withMetaResult(ctx, tool, instance, res), replayErr
+					recordOutcome(ctx, opts, tool, instance, "succeeded", "")
+					return withMetaResult(ctx, tool, instance, replayResult(began)), nil
 				case DecisionProceed:
 					ticket = began
 				case DecisionRetry:
-					recordOutcome(opts, ctx, tool, instance, "failed", errs.CodeConflict)
+					recordOutcome(ctx, opts, tool, instance, "failed", errs.CodeConflict)
 					return withResultMetaError(ctx, tool, instance, errs.New(errs.CodeConflict,
 						"the operation is retryable but this call did not claim it").
 						WithDetail("operation_id", began.OperationID)), nil
 				case DecisionInProgress:
-					recordOutcome(opts, ctx, tool, instance, "failed", errs.CodeConflict)
+					recordOutcome(ctx, opts, tool, instance, "failed", errs.CodeConflict)
 					return withResultMetaError(ctx, tool, instance, errs.New(errs.CodeConflict,
 						"another attempt owns this operation; poll it instead of retrying").
 						WithDetail("operation_id", began.OperationID).
 						WithDetail("reason", "operation_in_progress")), nil
 				case DecisionUnknown:
-					recordOutcome(opts, ctx, tool, instance, "outcome_unknown", errs.CodeOperationUnknown)
+					recordOutcome(ctx, opts, tool, instance, "outcome_unknown", errs.CodeOperationUnknown)
 					return withResultMetaError(ctx, tool, instance, errs.New(errs.CodeOperationUnknown,
 						"operation outcome is unknown; poll for reconciliation and do not retry").
 						WithDetail("operation_id", began.OperationID)), nil
 				default:
 					// Fail closed: an unrecognised decision must never run the tool.
-					recordOutcome(opts, ctx, tool, instance, "failed", errs.CodeInternal)
+					recordOutcome(ctx, opts, tool, instance, "failed", errs.CodeInternal)
 					return withResultMetaError(ctx, tool, instance, errs.New(errs.CodeInternal,
 						"operation gate returned an unrecognised decision").
 						WithDetail("operation_id", began.OperationID)), nil
 				}
 			} else if confirmationID != "" && opts.Confirm != nil {
 				if err := opts.Confirm.Consume(ctx, confirmationID, requesterOf(ctx), tool, instance, call.Params.Arguments); err != nil {
-					recordOutcome(opts, ctx, tool, instance, "denied", errs.CodeOf(err))
+					recordOutcome(ctx, opts, tool, instance, "denied", errs.CodeOf(err))
 					return withResultMeta(ctx, tool, instance, toolErrorResult(err)), nil
 				}
 			}
@@ -414,7 +413,7 @@ func installPolicy(srv *mcp.Server, opts Options) {
 			// duplicate it, and skipping it unconditionally would leave a call that
 			// failed before `Begin` unaudited — which is why the tool marks the call.
 			if !callState.OperationOwned() {
-				recordOutcome(opts, ctx, tool, instance, state, code)
+				recordOutcome(ctx, opts, tool, instance, state, code)
 			}
 			if err != nil {
 				return withResultMeta(ctx, tool, instance, toolErrorResult(err)), nil
@@ -424,7 +423,7 @@ func installPolicy(srv *mcp.Server, opts Options) {
 	})
 }
 
-func recordOutcome(opts Options, ctx context.Context, tool, instance, state string, code errs.Code) {
+func recordOutcome(ctx context.Context, opts Options, tool, instance, state string, code errs.Code) {
 	if opts.Audit == nil {
 		return
 	}
@@ -651,7 +650,7 @@ func joinInstructionSections(sections []instructionSection) string {
 // Putting them in the payload would change all 106 output schemas; _meta is the field
 // the protocol reserves for exactly this, so the correlation is available without
 // touching a single result shape.
-func attachResultMeta(result *mcp.CallToolResult, ctx context.Context, tool, instance, requestID string) {
+func attachResultMeta(ctx context.Context, result *mcp.CallToolResult, tool, instance, requestID string) {
 	if result == nil {
 		return
 	}
@@ -678,7 +677,7 @@ func RequestID(ctx context.Context) string { return requestID(ctx) }
 
 // withResultMeta attaches the correlation metadata to a tool error result.
 func withResultMeta(ctx context.Context, tool, instance string, result *mcp.CallToolResult) *mcp.CallToolResult {
-	attachResultMeta(result, ctx, tool, instance, requestID(ctx))
+	attachResultMeta(ctx, result, tool, instance, requestID(ctx))
 	return result
 }
 
@@ -690,7 +689,7 @@ func withResultMetaError(ctx context.Context, tool, instance string, err error) 
 // withMetaResult attaches the correlation metadata to any MCP result.
 func withMetaResult(ctx context.Context, tool, instance string, result mcp.Result) mcp.Result {
 	if callResult, ok := result.(*mcp.CallToolResult); ok {
-		attachResultMeta(callResult, ctx, tool, instance, requestID(ctx))
+		attachResultMeta(ctx, callResult, tool, instance, requestID(ctx))
 	}
 	return result
 }
@@ -802,7 +801,7 @@ func Handler(srv *mcp.Server, opts Options) http.Handler {
 	// The session binding sits inside the auth middleware: the identity has to be
 	// on the context before a session can be tied to it. utf8SSE wraps the
 	// transport itself so every event-stream response carries the charset.
-	mcpHandler := http.Handler(sessionBinding(newSessionOwners())(utf8SSE(streamable)))
+	mcpHandler := sessionBinding(newSessionOwners())(utf8SSE(streamable))
 	if opts.AuthMiddleware != nil {
 		mcpHandler = opts.AuthMiddleware(mcpHandler)
 	}
@@ -1249,8 +1248,10 @@ func auditEventFor(ctx context.Context, tool, instance, scope string, out Operat
 }
 
 // replayResult returns the recorded result of an operation that already
-// succeeded, without touching the upstream system.
-func replayResult(ticket OperationTicket) (mcp.Result, error) {
+// succeeded, without touching the upstream system. It cannot fail: an unreadable
+// record degrades to the operation id plus replayed:true, which is still a true
+// answer to "did this already happen?".
+func replayResult(ticket OperationTicket) mcp.Result {
 	var decoded any
 	if len(ticket.ReplayResult) > 0 {
 		_ = json.Unmarshal(ticket.ReplayResult, &decoded)
@@ -1263,5 +1264,5 @@ func replayResult(ticket OperationTicket) (mcp.Result, error) {
 			Text: "replayed: this operation already succeeded (operation " + ticket.OperationID + ")",
 		}},
 		StructuredContent: decoded,
-	}, nil
+	}
 }

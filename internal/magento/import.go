@@ -112,8 +112,9 @@ type ImportPreview struct {
 }
 
 // ValidateImport parses and validates a CSV or JSON product import.
-// It is read-only: it never contacts Magento.
-func (s *Service) ValidateImport(ctx context.Context, format string, data []byte) (*ImportPreview, error) {
+// It is read-only: it never contacts Magento, so the context is accepted for
+// signature symmetry with the other Service methods and never read.
+func (s *Service) ValidateImport(_ context.Context, format string, data []byte) (*ImportPreview, error) {
 	preview, _, err := s.parseAndValidate(format, data)
 	return preview, err
 }

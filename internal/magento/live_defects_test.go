@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
+
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 )
 
 // Regression tests for the defects found by the live run against a real Magento
@@ -69,10 +70,10 @@ func TestCreateSourceAcceptsEmptyArrayResponse(t *testing.T) {
 func TestCreateSourceReportsUnconfirmedWhenReadBackMisses(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodPost:
+		switch r.Method {
+		case http.MethodPost:
 			_, _ = io.WriteString(w, `[]`)
-		case r.Method == http.MethodGet:
+		case http.MethodGet:
 			_, _ = io.WriteString(w, `{"items":[]}`)
 		default:
 			http.NotFound(w, r)
@@ -175,7 +176,7 @@ func TestOrderSearchProjectsTotalCount(t *testing.T) {
 // LIVE-5: a scan that stops at the cap has been truncated even when the store did
 // not report a total. Claiming completeness in that case is the defect.
 func TestSalesSummaryReportsTruncationWhenCapReached(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// A full page of `maxOrderLimit` orders, and no total_count at all.
 		items := make([]string, 0, maxOrderLimit)
@@ -204,7 +205,7 @@ func TestSalesSummaryReportsTruncationWhenCapReached(t *testing.T) {
 // LIVE-5 control: a short page proves the window is exhausted, so the scan is
 // complete and must not claim truncation.
 func TestSalesSummaryCompleteWhenPageIsShort(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"items":[{"entity_id":1,"created_at":"2026-01-02 03:04:05","grand_total":10,"total_qty_ordered":1,"order_currency_code":"PLN"}]}`)
 	}))
@@ -304,7 +305,7 @@ func TestObserveOperationDoesNotReadOrderForOrderCreate(t *testing.T) {
 // creating one used to produce an enabled, visible, unsellable product that was
 // reported as created. It must be refused with a reason.
 func TestCreateProductRejectsBundleAndDownloadable(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected upstream call %s %s: the request must be refused before it is sent", r.Method, r.URL.Path)
 	}))
 	defer ts.Close()
@@ -450,7 +451,7 @@ const onePixelPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ
 // a caller that only receives the slice cannot tell a complete answer from a
 // capped one. The tool now reports the store's total and whether it truncated.
 func TestInventorySourcesReportsTruncation(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// One source returned, but the store says it holds 250.
 		_, _ = io.WriteString(w, `{"items":[{"source_code":"default","name":"Default"}],"total_count":250}`)
@@ -473,7 +474,7 @@ func TestInventorySourcesReportsTruncation(t *testing.T) {
 // A store that omits total_count must not report a total smaller than what it
 // returned.
 func TestInventorySourcesTotalNeverBelowReturned(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"items":[{"source_code":"a"},{"source_code":"b"}]}`)
 	}))
@@ -495,7 +496,7 @@ func TestInventorySourcesTotalNeverBelowReturned(t *testing.T) {
 // either.
 func TestUpstreamDiagnosticsStayServerSide(t *testing.T) {
 	const secretSKU = "SECRET-SKU-42"
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = io.WriteString(w, `{"message":"The SKU `+secretSKU+` is not assigned to the ACL resource Magento_Catalog::products."}`)
@@ -730,7 +731,7 @@ func TestCreateAttributeOptionAcceptsEveryIDShape(t *testing.T) {
 		`{"label":"Blue","value":"123"}`: "123",
 	}
 	for body, want := range cases {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, body)
 		}))
@@ -771,7 +772,7 @@ func TestReadToolsDeriveTheirCapabilityFromTheNamespace(t *testing.T) {
 func TestAdminTokenRefreshIsSingleFlight(t *testing.T) {
 	var fetches int
 	var mu sync.Mutex
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		fetches++
 		mu.Unlock()
@@ -976,7 +977,7 @@ func TestStockStatusBatchIsBoundedAndKeepsPerSKUErrors(t *testing.T) {
 func TestBulkWritesFanOutUnderABound(t *testing.T) {
 	var mu sync.Mutex
 	inFlight, peak := 0, 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		inFlight++
 		if inFlight > peak {
@@ -1041,7 +1042,7 @@ func TestOperationRunWritesItsOwnAuditRow(t *testing.T) {
 
 // A call with no installed state (a unit test calling the service directly) must not
 // panic when the operation helper marks it.
-func TestMarkOperationOwnedToleratesNoState(t *testing.T) {
+func TestMarkOperationOwnedToleratesNoState(_ *testing.T) {
 	audit.MarkOperationOwned(context.Background())
 }
 

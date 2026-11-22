@@ -101,7 +101,7 @@ func TestWriteToolDescriptionsDiscloseSideEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 	list, err := session.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatal(err)

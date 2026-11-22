@@ -163,7 +163,7 @@ func TestTierPricesReadsProductResourceFieldNames(t *testing.T) {
 // write failed, carrying the reason in a JSON array. Reporting set:true with zero
 // rows written is the defect; reverting the decode makes this test fail.
 func TestSetTierPricesRejectsBusinessErrorIn200(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"message":"The product that was requested doesn't exist. Verify the product and try again."}]`))
 	}))
@@ -185,7 +185,7 @@ func TestSetTierPricesRejectsBusinessErrorIn200(t *testing.T) {
 
 // A successful write (Magento answers true) must still succeed.
 func TestSetTierPricesAcceptsBooleanSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`true`))
 	}))

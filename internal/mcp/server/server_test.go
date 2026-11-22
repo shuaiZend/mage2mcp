@@ -954,7 +954,9 @@ func listServerTools(t *testing.T, srv *mcp.Server) []*mcp.Tool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	// Cleanup only: the assertions below already ran, so a failed close cannot
+	// change the result and must not mask it.
+	defer func() { _ = session.Close() }()
 	list, err := session.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1259,26 +1261,6 @@ func (g *fakeGate) finish(_ context.Context, _ OperationTicket, out OperationOut
 	g.finishes = append(g.finishes, out)
 	g.mu.Unlock()
 	return nil
-}
-
-// gateServer builds a server whose registry contains one tool per (name,
-// permission, handler) and whose gate is the fake.
-func gateServer(t *testing.T, gate *fakeGate, tools []registry.Tool) (*mcp.Server, *registry.Registry) {
-	t.Helper()
-	reg := registry.New()
-	for _, tool := range tools {
-		if err := reg.Register(tool); err != nil {
-			t.Fatalf("register %s: %v", tool.Name, err)
-		}
-	}
-	srv, err := NewMCP(Options{
-		Version: "test", Registry: reg,
-		BeginOperation: gate.begin, FinishOperation: gate.finish,
-	})
-	if err != nil {
-		t.Fatalf("NewMCP: %v", err)
-	}
-	return srv, reg
 }
 
 // gatedTool builds a registry tool whose handler returns err (nil = success).
@@ -1863,8 +1845,8 @@ func toolResultText(res *mcp.CallToolResult) string {
 // On a listener reachable off-host it must sit behind the same middleware as
 // /mcp; health probes stay open so orchestrators can still use them.
 func TestMetricsRequireAuthOnPublicListener(t *testing.T) {
-	denied := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	denied := func(_ http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 		})
 	}
@@ -3121,35 +3103,6 @@ func outputPropertyDescription(t *testing.T, tool guideTool, path string) string
 	}
 	description, _ := current["description"].(string)
 	return description
-}
-
-// withoutField drops one property name from a missing list.
-func withoutField(missing []string, field string) []string {
-	out := missing[:0]
-	for _, name := range missing {
-		if name != field {
-			out = append(out, name)
-		}
-	}
-	return out
-}
-
-// outputDescriptionContaining reports whether any output property description
-// (recursively, including array items) contains the phrase.
-func outputDescriptionContaining(schema map[string]any, phrase string) bool {
-	properties, _ := schema["properties"].(map[string]any)
-	for _, raw := range properties {
-		prop, _ := raw.(map[string]any)
-		if description, _ := prop["description"].(string); strings.Contains(description, phrase) {
-			return true
-		}
-		if items, ok := prop["items"].(map[string]any); ok {
-			if outputDescriptionContaining(items, phrase) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func undocumentedProperties(properties map[string]any) []string {

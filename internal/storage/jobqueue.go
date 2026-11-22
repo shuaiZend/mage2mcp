@@ -374,10 +374,6 @@ func (q *JobQueue) Extend(ctx context.Context, id, leaseToken string, lease time
 	return status, nil
 }
 
-// Cancel asks a queued task to stop immediately and a running task to stop at its
-// next heartbeat. It reports a typed error when nothing transitioned.
-// Cancel stops a job only when it belongs to the given instance and subject. A
-// job owned by another tenant or another caller is reported as not_found.
 // PruneJobs deletes terminal jobs that finished before olderThan and returns
 // the number removed.
 //
@@ -398,6 +394,12 @@ func (s *Store) PruneJobs(ctx context.Context, olderThan time.Time) (int64, erro
 	return tag.RowsAffected(), nil
 }
 
+// Cancel asks a queued task to stop immediately and a running task to stop at its
+// next heartbeat. It reports a typed error when nothing transitioned.
+//
+// It stops a job only when the job belongs to the given instance and subject: a
+// job owned by another tenant or another caller is reported as not_found, so one
+// tenant cannot cancel another's work by guessing an id.
 func (q *JobQueue) Cancel(ctx context.Context, id, instanceID, subject string) error {
 	tag, err := q.store.pool.Exec(ctx, cancelScopedSQL, id, instanceID, subjectHash(subject))
 	if err != nil {
