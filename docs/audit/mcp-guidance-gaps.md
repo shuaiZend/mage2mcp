@@ -65,7 +65,7 @@
 | **错误码的分类学** | 30+ 个 code，agent 需要知道哪些可重试、哪些是终局 | 完全没提（ADR-0010 只在文档里） |
 | **反直觉输出语义** | `qty` 是 legacy、`captured` 不等于已收款、`revenue` 含 canceled 不扣退款 | 完全没有（见 GG-06/07/08） |
 | **读工具的分页/截断约定** | 各工具都有 limit/cursor 但语义不同（cursor 必须为 limit 的倍数） | 只在各工具 schema 里 |
-| **能力缺口** | 该店不暴露的路由（`POST /products/{sku}/options`、`POST|PUT /customers/{id}/addresses`、`GET /taxRates`）、没有「改已下单订单地址」的工具 | 完全没有（agent 只能撞 unsupported_capability / not_found） |
+| **能力缺口** | 该店不暴露的路由（`POST /products/{sku}/options`、`POST / PUT /customers/{id}/addresses`、`GET /taxRates`）、没有「改已下单订单地址」的工具 | 完全没有（agent 只能撞 unsupported_capability / not_found） |
 
 **建议落点（只给建议）**：段落 A/B/C 保留不动（它们写得具体、可执行）。新增一段「WRITE CONTRACT」讲两步审批 + 幂等键 + unknown 只能 poll + 错误码可重试性，再新增一段「READ SEMANTICS」讲 qty/captured/revenue 三个反直觉字段。是否合并进 instructions 还是拆成第二个 prompt（例如 `write_contract`），留给设计任务决定。
 
