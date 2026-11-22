@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.8] - 2026-11-22
+
+The guidance pass: what the server tells an agent, where it says it, and a skill so the rules
+reach clients that cannot load prompts. Full notes:
+[docs/releases/v0.11.8.md](docs/releases/v0.11.8.md).
+
+### Added
+
+- **A skill and six MCP prompts.** `skills/mage2mcp/` carries recipes for writes, refunds,
+  reports, imports and product copy; `scripts/gen-prompts` renders them into the server's prompt
+  surface, so a client that loads prompts and one that reads the repository see the same words.
+  A test fails if the generated file diverges from its source.
+- **A registration-time schema check.** Every hand-written input schema is compared against its
+  Go input struct at startup. It immediately found `magento.product.links.remove` sharing a
+  struct with a `position` field its schema deliberately lacks.
+- **`scripts/check-test-inventory.sh`**, wired into CI and `local-ci.sh`: a test that disappears
+  between two refs fails the build. A green gate cannot prove the right tests still exist.
+- `docs/guidance.md`: which layer of guidance reaches which client, and what needs installing.
+
+### Fixed
+
+- **`shipping_amount` was unreachable.** The field went into the Go struct but not the hand-written
+  input schema, the tool input struct or the handler, so the parameter was rejected before it
+  could be silently dropped. All three links are connected and the field reference documents it.
+- **`shipping_address` was always nil.** Magento returns it under
+  `extension_attributes.shipping_assignments`, not at the top level, and nothing read that path.
+  Support could not confirm a delivery address after the fix that was supposed to enable it.
+- **The privacy claim was false.** Order reads return shipping and billing addresses; the tool
+  description, the struct comment and the README all said they did not.
+- **Category product listing ignored `pageSize`.** Asking for 3 returned 182 while hydration
+  capped at `limit`, leaving 132 of 182 rows with an empty name.
+- **Upstream reasons were discarded.** Named placeholders with array parameters leaked
+  `%customerGroup`, and the SKU heuristic treated a plain number as a SKU, so a refund rejection
+  naming an amount arrived as a bare status code.
+- **The refundable ceiling ignored earlier adjustments**, so an over-refund reached Magento
+  instead of being refused locally.
+- **`invoice_linked` was never projected** into the response at all, not merely omitted when false.
+- Four fixes had no revert-failing test; all four now fail when reverted.
+- `import.start` now states the required columns and that one bad row rejects the payload.
+- `Product.Price` now says it is the global base price, not what a shopper pays.
+
+### Changed
+
+- **Server instructions: 3,157 → 2,474 characters**, now five budgeted sections. They gained the
+  write contract and read semantics they previously lacked entirely, while the product-copy
+  recipe moved to a prompt. Its resident form is a checklist naming what to discover, not a
+  slogan: a test asserts each item so it cannot be compressed back.
+- **The skip gate in `local-ci.sh` no longer counts packages.** It counted the package-level
+  record `go test -json` emits for every package with no test files, so the gate failed on every
+  run since it landed. Package-level records are now information; only a named test fails.
+- **The failing-test extractor now names tests.** It matched a field order `go test -json` never
+  produces, so a real failure printed only an exit code.
+- The cross-reference check asks `prompts/list` what the server publishes instead of trusting a
+  hard-coded list, which is how a dangling prompt reference passed unnoticed.
+
 ## [0.11.7] - 2026-11-22
 
 The persona pass: seven agents with different jobs tested the gateway the way their work

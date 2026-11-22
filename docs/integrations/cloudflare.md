@@ -1,6 +1,6 @@
 # Cloudflare integration
 
-**Status:** as-built for v0.11.7
+**Status:** as-built for v0.11.8
 (2026-11-20). The shipped module is a read-only Cloudflare GraphQL Analytics
 client with three registered tools. Raw-log ingestion is **PLANNED** and is not
 in the tree.

@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** as-built for v0.11.7 (working tree `v0.11.7-4`; post-tag changes are
+**Status:** as-built for v0.11.8 (working tree `v0.11.8-4`; post-tag changes are
 limited to tool descriptions and tests). This document describes the code that
 ships. Components that are designed but not implemented are marked **PLANNED**
 and are not drawn as present.
