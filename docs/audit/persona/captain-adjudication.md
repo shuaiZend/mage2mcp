@@ -920,6 +920,7 @@ prompt 在**数量校验**那条写了 "per invoice"，**运费那条写的是 "
 ### 待办（等 t52 链清空后建任务）
 
 `refunds.md` 需补四条：
+
 1. 运费作用域是**发票**（与数量校验一致）
 2. 正数 `shipping_amount` = 退指定金额
 3. `shipping_amount` 有上限（超退 → `validation_failed` + `refundable_shipping`）
