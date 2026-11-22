@@ -138,7 +138,7 @@ func NewMCP(opts Options) (*mcp.Server, error) {
 			}
 		}
 	}
-	registerWriteSafetyPrompt(srv)
+	registerSkillPrompts(srv)
 	for _, tool := range opts.Registry.List() {
 		if err := registerTool(srv, tool); err != nil {
 			return nil, err
@@ -892,52 +892,35 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// writeSafetyPromptName is the prompt that carries the catalog-structure checklist.
+// It is one of the prompts generated from skills/mage2mcp/references (see
+// scripts/gen-prompts); the name is pinned here because clients reference it.
 const writeSafetyPromptName = "write_safety"
 
-// registerWriteSafetyPrompt exposes the catalog-structure warning as an MCP
-// prompt so agents can load it before planning a write.
-func registerWriteSafetyPrompt(srv *mcp.Server) {
-	srv.AddPrompt(&mcp.Prompt{
-		Name:  writeSafetyPromptName,
-		Title: "Write safety and URL structure",
-		Description: "Checklist before Magento writes that can change catalog structure, product URLs, or " +
-			"attribute semantics. Load this before creating categories, attributes/options, or changing url_key.",
-	}, func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-		return &mcp.GetPromptResult{
-			Description: "Catalog-structure write checklist",
-			Messages: []*mcp.PromptMessage{{
-				Role:    "user",
-				Content: &mcp.TextContent{Text: writeSafetyText},
-			}},
-		}, nil
-	})
+// registerSkillPrompts exposes the skill references as MCP prompts.
+//
+// The bodies are generated from skills/mage2mcp/references into prompts_gen.go:
+// the server-side prompt and the repository skill are one text, so an agent that
+// can only load prompts and one that can only read the repository see the same
+// rules. Never hand-edit the generated file.
+func registerSkillPrompts(srv *mcp.Server) {
+	for _, prompt := range generatedPrompts {
+		prompt := prompt
+		srv.AddPrompt(&mcp.Prompt{
+			Name:        prompt.Name,
+			Title:       prompt.Title,
+			Description: prompt.Description,
+		}, func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{
+				Description: prompt.Title,
+				Messages: []*mcp.PromptMessage{{
+					Role:    "user",
+					Content: &mcp.TextContent{Text: prompt.Body},
+				}},
+			}, nil
+		})
+	}
 }
-
-const writeSafetyText = `Before any Magento write, confirm the intent and the blast radius with the operator.
-
-Catalog structure (requires explicit confirmation):
-- Creating, moving, renaming, or deleting a category can change product URL keys and
-  URL rewrites. Existing links, search rankings, and feeds may break. Prefer adding a
-  category under an existing branch; never delete a category that still has products
-  or child categories without a redirect and reindex plan.
-- Creating an attribute or attribute option is a schema change: it affects attribute
-  sets, filters, and layered navigation. Deleting an option that products reference
-  (especially a configurable variant) breaks those products; check usage first.
-- Changing a product url_key changes its storefront URL. Magento does not create a
-  301 redirect for API writes; plan the redirect and reindex before announcing it.
-- Changing product type, visibility, website assignment, or status changes what
-  storefronts and feeds see.
-
-Inventory and configurables:
-- Assigning MSI source items to children does not make a configurable parent salable;
-  verify the parent stock status and the storefront option selector afterwards.
-- The configurable parent price is derived from its children; a requested parent
-  price may read back as 0.
-
-Approval:
-- Every write is two-step: inspect the preview/confirmation, then approve as a
-  different identity. Do not approve destructive or URL-affecting changes without
-  the operator's explicit go-ahead.`
 
 // ---------------------------------------------------------------------------
 // Operation ledger gate (REL-02 / REL-06 / ARCH-02)
