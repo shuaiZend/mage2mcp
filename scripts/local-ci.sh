@@ -48,8 +48,12 @@ set -e
 # Anything that is not a per-test JSON record is a build error or a panic.
 grep -v '^{' "$test_log" || true
 extract_tests() {
-  grep -o "\"Test\":\"[^\"]*\",\"Action\":\"$1\"" "$test_log" |
-    sed 's/.*"Test":"\([^"]*\)".*/  \1/' | sort -u
+  # `go test -json` writes "Action" before "Test", so matching
+  # "Test":...,"Action":... never fires: a failing run printed only the exit code
+  # and no test names. Match the action first, then pull the name out on its own
+  # (the same shape the skip check below uses).
+  grep "\"Action\":\"$1\"" "$test_log" | grep -o '"Test":"[^"]*"' |
+    sed -e 's/^"Test":"//' -e 's/"$//' | sort -u | sed 's/^/  /'
 }
 if [ "$test_status" -ne 0 ]; then
   echo "" >&2
@@ -57,13 +61,49 @@ if [ "$test_status" -ne 0 ]; then
   extract_tests fail >&2 || true
   exit "$test_status"
 fi
-skipped="$(grep -c '\"Action\":\"skip\"' "$test_log" || true)"
-if [ "${skipped:-0}" -gt 0 ]; then
+# `go test -json` emits a package-level skip record for every package with no
+# test files, and a test-level record only when a test actually skipped.
+# Counting both made this gate fail on every run since b0bb42c (the package-level
+# records are normal, not skipped tests). Package-level records are reported as
+# information; only a record carrying "Test" is a skipped test.
+package_skips="$(grep '"Action":"skip"' "$test_log" | grep -vc '"Test":' || true)"
+if [ "${package_skips:-0}" -gt 0 ]; then
+  echo "note: ${package_skips} package(s) have no test files (not a failure):"
+  grep '"Action":"skip"' "$test_log" | grep -v '"Test":' |
+    sed -E 's/.*"Package":"([^"]*)".*/  \1/' | sort -u
+fi
+
+# Tests whose skip is correct under the default build tag. The list is explicit
+# on purpose: a blanket "a skip is fine" would remove this gate's meaning.
+#   TestHarnessRequiresProbeTag — docs/audit/perf-probe runs only with
+#     `-tags probe`; the package documents the harness as historical evidence,
+#     so skipping under the default build is correct.
+exempt_skips=(TestHarnessRequiresProbeTag)
+# `go test -json` writes "Action" before "Test", so pull the name out on its own.
+skipped_tests="$(grep '"Action":"skip"' "$test_log" | grep -o '"Test":"[^"]*"' |
+  sed -e 's/^"Test":"//' -e 's/"$//' | sort -u || true)"
+unexpected=""
+while IFS= read -r name; do
+  if [ -z "$name" ]; then
+    continue
+  fi
+  exempt=false
+  for allowed in "${exempt_skips[@]}"; do
+    if [ "$name" = "$allowed" ]; then
+      exempt=true
+      break
+    fi
+  done
+  if [ "$exempt" = false ]; then
+    unexpected="${unexpected}  ${name}"$'\n'
+  fi
+done <<< "$skipped_tests"
+if [ -n "$unexpected" ]; then
   echo "" >&2
-  echo "local CI failed: $skipped test(s) were skipped, so this gate did not cover them." >&2
+  echo "local CI failed: these tests were skipped, so this gate did not cover them:" >&2
+  printf '%s' "$unexpected" >&2
   echo "Set MAGE2MCP_TEST_DATABASE_URL to a reachable PostgreSQL, for example:" >&2
   echo "  export MAGE2MCP_TEST_DATABASE_URL='postgres://user:pass@127.0.0.1:5432/mage2mcp?sslmode=disable'" >&2
-  extract_tests skip >&2 || true
   exit 1
 fi
 echo "go test: no failures, no skips"
