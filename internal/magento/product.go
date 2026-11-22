@@ -31,13 +31,16 @@ var (
 
 // Product is the explicit product projection this slice exposes.
 type Product struct {
-	ID             int     `json:"id" jsonschema:"Magento entity id. Stable within the store, not globally unique."`
-	SKU            string  `json:"sku" jsonschema:"Stock keeping unit. The identifier every other product tool takes."`
-	Name           string  `json:"name" jsonschema:"Display name as shown in the storefront."`
-	TypeID         string  `json:"type_id" jsonschema:"simple, virtual, configurable, bundle, downloadable or grouped."`
-	Status         int     `json:"status" jsonschema:"1 enabled, 2 disabled."`
-	Visibility     int     `json:"visibility" jsonschema:"1 not visible, 2 catalog, 3 search, 4 catalog and search."`
-	Price          float64 `json:"price" jsonschema:"Base price in the store currency, as a number, not a string."`
+	ID         int    `json:"id" jsonschema:"Magento entity id. Stable within the store, not globally unique."`
+	SKU        string `json:"sku" jsonschema:"Stock keeping unit. The identifier every other product tool takes."`
+	Name       string `json:"name" jsonschema:"Display name as shown in the storefront."`
+	TypeID     string `json:"type_id" jsonschema:"simple, virtual, configurable, bundle, downloadable or grouped."`
+	Status     int    `json:"status" jsonschema:"1 enabled, 2 disabled."`
+	Visibility int    `json:"visibility" jsonschema:"1 not visible, 2 catalog, 3 search, 4 catalog and search."`
+	// Price is the global base price, not the amount a shopper pays: a store-scope
+	// price or special_price overrides it, and the order line is the only place
+	// that records what was actually charged (GG-20).
+	Price          float64 `json:"price" jsonschema:"Global base price in the store currency, as a number not a string. It is the catalog-wide value, not what a shopper pays: a store-scope price or special_price overrides it, so read the order line for the amount actually charged."`
 	AttributeSetID int     `json:"attribute_set_id" jsonschema:"Attribute set the product belongs to; it decides which custom attributes exist."`
 	CreatedAt      string  `json:"created_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`
 	UpdatedAt      string  `json:"updated_at" jsonschema:"Store time, format YYYY-MM-DD HH:MM:SS, no timezone suffix."`

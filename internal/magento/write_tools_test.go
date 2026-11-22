@@ -1055,3 +1055,66 @@ func TestInvoiceCreateDescriptionDoesNotClaimStateProvesCapture(t *testing.T) {
 		}
 	}
 }
+
+// O1 (review): the partial-refund case cannot tell "omitted" from "0" — both send
+// 0. A refund that consumes the last refundable unit is the only case where the
+// two differ: omitting shipping_amount must return the remaining shipping, and an
+// explicit 0 must return none. Driving the tool end to end also proves the value
+// reaches the upstream body rather than being dropped by the struct.
+func TestCreditmemoFullRefundShipsRemainingShippingUnlessZero(t *testing.T) {
+	// One unit, invoiced and not refunded; 10.00 of shipping still refundable.
+	const fullRefundOrder = `{"entity_id":42,"order_currency_code":"USD","grand_total":35,` +
+		`"shipping_amount":10,"shipping_refunded":0,` +
+		`"items":[{"item_id":1,"sku":"SKU-1","price":25,"qty_invoiced":1,"qty_refunded":0}]}`
+
+	t.Run("omitted returns the remaining shipping", func(t *testing.T) {
+		fake := &creditmemoFake{orderJSON: fullRefundOrder, invoices: singleInvoice}
+		ts := httptest.NewServer(fake.handler(t))
+		defer ts.Close()
+		useLedger(t, newFakeLedger())
+
+		res := callWriteTool(t, context.Background(), newWriteToolSession(t, ts.URL), creditmemoCreateToolName, map[string]any{
+			"instance": "default", "order_id": 42,
+			"items": []any{map[string]any{"order_item_id": 1, "qty": 1}},
+		})
+		if res.IsError {
+			t.Fatalf("creditmemo.create failed: %+v", res.Content)
+		}
+		var body refundOrderBody
+		if err := json.Unmarshal(fake.postBody, &body); err != nil {
+			t.Fatalf("refund body: %v", err)
+		}
+		if body.Arguments == nil || body.Arguments.ShippingAmount == nil {
+			t.Fatalf("upstream arguments = %+v, want shipping_amount present", body.Arguments)
+		}
+		if got := *body.Arguments.ShippingAmount; got != 10 {
+			t.Fatalf("shipping_amount = %v, want the remaining shipping 10 on a full refund", got)
+		}
+	})
+
+	t.Run("explicit zero returns no shipping", func(t *testing.T) {
+		fake := &creditmemoFake{orderJSON: fullRefundOrder, invoices: singleInvoice}
+		ts := httptest.NewServer(fake.handler(t))
+		defer ts.Close()
+		useLedger(t, newFakeLedger())
+
+		res := callWriteTool(t, context.Background(), newWriteToolSession(t, ts.URL), creditmemoCreateToolName, map[string]any{
+			"instance": "default", "order_id": 42,
+			"items":           []any{map[string]any{"order_item_id": 1, "qty": 1}},
+			"shipping_amount": 0,
+		})
+		if res.IsError {
+			t.Fatalf("creditmemo.create failed: %+v", res.Content)
+		}
+		var body refundOrderBody
+		if err := json.Unmarshal(fake.postBody, &body); err != nil {
+			t.Fatalf("refund body: %v", err)
+		}
+		if body.Arguments == nil || body.Arguments.ShippingAmount == nil {
+			t.Fatalf("upstream arguments = %+v, want an explicit shipping_amount", body.Arguments)
+		}
+		if got := *body.Arguments.ShippingAmount; got != 0 {
+			t.Fatalf("shipping_amount = %v, want 0 when the caller passed 0", got)
+		}
+	})
+}

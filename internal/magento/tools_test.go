@@ -5,6 +5,9 @@ package magento
 import (
 	"context"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -399,11 +402,10 @@ func TestSalesSummaryDescriptionStatesTheWindowCap(t *testing.T) {
 // promise or stops naming what is returned.
 func TestOrderGetAddressDisclosureIsConsistent(t *testing.T) {
 	sources := map[string]string{"tools.go order.get description": orderGetToolDescription}
-	orderSource, err := os.ReadFile("order.go")
-	if err != nil {
-		t.Fatalf("read order.go: %v", err)
-	}
-	sources["order.go Order doc comment"] = string(orderSource)
+	// The claim lives in the doc comment of the Order type, not in every line of
+	// order.go: parsing the file for that one node keeps the assertion about the
+	// promise instead of about whatever else the file happens to contain.
+	sources["order.go Order doc comment"] = orderTypeDocComment(t)
 	readme, err := os.ReadFile("../../README.md")
 	if err != nil {
 		t.Fatalf("read README.md: %v", err)
@@ -430,4 +432,32 @@ func TestOrderGetAddressDisclosureIsConsistent(t *testing.T) {
 			}
 		}
 	}
+}
+
+// orderTypeDocComment returns the doc comment attached to the Order type in
+// order.go, read through the AST rather than by scanning the whole file.
+func orderTypeDocComment(t *testing.T) string {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "order.go", nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse order.go: %v", err)
+	}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != "Order" {
+				continue
+			}
+			if gen.Doc == nil {
+				t.Fatal("the Order type has no doc comment")
+			}
+			return gen.Doc.Text()
+		}
+	}
+	t.Fatal("order.go declares no Order type")
+	return ""
 }

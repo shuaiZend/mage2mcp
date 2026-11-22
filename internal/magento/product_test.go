@@ -8,9 +8,16 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
+	mcpserver "github.com/shuaiZend/mage2mcp/internal/mcp/server"
 )
 
 func TestProductOptions(t *testing.T) {
@@ -168,5 +175,59 @@ func TestProductUnmarshalDetailFields(t *testing.T) {
 	}
 	if product.Attributes["color"] != "49" || product.Attributes["special_price"] != "7.99" {
 		t.Fatalf("attributes = %+v", product.Attributes)
+	}
+}
+
+// instructionsForTest returns the server instructions as a client receives them at
+// initialize, so a description can be checked against the same text an agent reads.
+func instructionsForTest(t *testing.T) string {
+	t.Helper()
+	reg := registry.New()
+	if err := Register(reg, testService(t, "https://shop.example.com")); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg, Confirm: magentoConfirmService(t)})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return session.InitializeResult().Instructions
+}
+
+// GG-20: Product.Price is the global base price. Reporting it as "what the
+// shopper pays" made an agent quote a price the storefront never showed, because a
+// store-scope price or special_price overrides it. The field description has to
+// say so, and it has to match the reads section of the server instructions.
+func TestProductPriceDescriptionStatesItIsTheBasePrice(t *testing.T) {
+	field, ok := reflect.TypeOf(Product{}).FieldByName("Price")
+	if !ok {
+		t.Fatal("Product has no Price field")
+	}
+	description := field.Tag.Get("jsonschema")
+	for _, want := range []string{"Global base price", "not what a shopper pays", "store-scope price", "special_price", "order line"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Product.Price description does not mention %q: %q", want, description)
+		}
+	}
+	// The instructions say the same thing; drift between the two is how an agent
+	// ends up trusting one and quoting the other.
+	instructions := instructionsForTest(t)
+	for _, want := range []string{"product price is the global base price", "read the order line"} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("server instructions no longer say %q", want)
+		}
 	}
 }

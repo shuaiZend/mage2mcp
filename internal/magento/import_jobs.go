@@ -306,14 +306,19 @@ const (
 	importCancelToolName  = "magento.import.cancel"
 	importCancelToolTitle = "Cancel an asynchronous import"
 
+	// GG-10: an agent that does not know which columns are required, or what one bad
+	// row does, sends a payload it cannot repair. Both facts belong here because they
+	// decide the shape of the file, not the semantics of a single field.
 	importStartToolDescription = "Queues a bounded CSV/JSON product import for the worker " +
-		"(at most 8 MiB decoded and 5000 rows, and small enough that its base64 form fits the server body limit, 16 MiB by default) after structural validation. Returns a job id; poll import.status for progress and the partial-success report. " +
+		"(8 MiB decoded, 5000 rows, and its base64 form must fit the 16 MiB body limit) after structural validation. Returns a job id; poll import.status for progress and the partial-success report. " +
+		"REQUIRED COLUMNS: sku on every row; name and attribute_set_id on a row that creates a product (an update row may omit name). Other columns become custom attributes. " +
+		"ONE INVALID ROW REJECTS THE PAYLOAD before a job exists: validation_failed with details.invalid_rows and details.rows naming every bad row. Execution failures are per-row, not retried. " +
 		"Write operation: requires confirmation and a configured database queue. " +
 		// The detailed rule lives in the server instructions; the payload being flat is
 		// the fact that decides whether an import can express the source at all.
-		"COPYING FROM ANOTHER STORE: the payload is flat, so it can only express simple " +
-		"products; discover the source type and options first, and ask a human before " +
-		"creating any category, attribute or attribute set. See the server instructions. "
+		"COPYING FROM ANOTHER STORE: the payload is flat, so it only expresses simple " +
+		"products; discover the source first and ask a human before creating taxonomy. " +
+		"See the server instructions. "
 	importStatusToolDescription = "Reads the state, attempts, error code, and result summary of an asynchronous import job on the named instance. Only the caller that started the job can read it. Read-only."
 	importCancelToolDescription = "Cancels a queued or running asynchronous import job on the named instance. Only the caller that started the job can cancel it. Requires confirmation."
 
@@ -322,13 +327,14 @@ const (
 	// importStartSchema bounds data_base64 to base64.EncodedLen(maxImportBytes)
 	// (11184812 = 4*ceil(8 MiB/3)) so the schema, the decoder, and the HTTP body
 	// cap agree; TestImportLimitsAgreeAcrossPackages fails if they drift.
-	importStartSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id the import runs against."},
+	// instance, idempotency_key and confirmation_id reuse the shared write-tool
+	// properties: a second wording for the same field is how "resolved by the
+	// server" survived in one corner of the surface (GG-12/15). update_existing
+	// carries the rule that decides whether an existing SKU is written or skipped.
+	importStartSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + idempotencyKeyProp + `, ` + confirmationProp + `,
 		"format": {"type": "string", "enum": ["csv", "json"], "description": "Payload encoding: csv with a header row, or a json array of objects."},
 		"data_base64": {"type": "string", "maxLength": 11184812, "description": "The import payload, base64 encoded. At most 8 MiB decoded."},
-		"update_existing": {"type": "boolean", "default": false},
-		"idempotency_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$", "description": "Optional deduplication key; a repeated key returns the original job id."},
-		"confirmation_id": {"type": "string", "maxLength": 128}
+		"update_existing": {"type": "boolean", "default": false, "description": "Update the products whose SKU already exists instead of skipping them. Default false: an existing SKU is skipped and reported as skipped, and only new SKUs are created."}
 	}, "required": ["instance", "format", "data_base64"], "additionalProperties": false}`
 
 	importStatusSchema = `{"type": "object", "properties": {
@@ -339,7 +345,7 @@ const (
 	importCancelSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import job id returned by import.start or import.execute."},
-		"confirmation_id": {"type": "string", "maxLength": 128}
+		` + confirmationProp + `
 	}, "required": ["instance", "job_id"], "additionalProperties": false}`
 )
 
@@ -352,7 +358,7 @@ const (
 	importResumeSchema = `{"type": "object", "properties": {
 		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"job_id": {"type": "string", "pattern": "` + jobIDPattern + `", "description": "Import job id returned by import.start or import.execute."},
-		"confirmation_id": {"type": "string", "maxLength": 128}
+		` + confirmationProp + `
 	}, "required": ["instance", "job_id"], "additionalProperties": false}`
 )
 

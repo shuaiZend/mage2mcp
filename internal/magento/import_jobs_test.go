@@ -1015,3 +1015,77 @@ func TestImportStartReportsQueuedForFreshJob(t *testing.T) {
 		}
 	}
 }
+
+// GG-10: an agent has to know which columns are required and what one bad row
+// does before it can build a file. Both are stated on the tool, not just in the
+// prompt a client may never load.
+func TestImportStartDescriptionStatesColumnsAndRowRejection(t *testing.T) {
+	for _, want := range []string{
+		"REQUIRED COLUMNS",
+		"sku on every row",
+		"name and attribute_set_id on a row that creates a product",
+		"an update row may omit name",
+		"ONE INVALID ROW REJECTS THE PAYLOAD",
+		"details.invalid_rows",
+		"details.rows naming every bad row",
+		"not retried",
+	} {
+		if !strings.Contains(importStartToolDescription, want) {
+			t.Fatalf("import.start description does not mention %q:\n%s", want, importStartToolDescription)
+		}
+	}
+	// The claim has to match the code: one invalid row really does reject the whole
+	// payload before a job exists.
+	if _, err := ValidateImportShape("csv", []byte("sku,name\n,missing\nA-1,Ok\n")); errs.CodeOf(err) != errs.CodeValidationFailed {
+		t.Fatalf("ValidateImportShape err = %v, want validation_failed", err)
+	}
+}
+
+// GG-12/15: import.start used a second wording for instance and idempotency_key,
+// which is how one corner of the surface kept a different contract. The schema now
+// reuses the shared properties, so the wording cannot drift again.
+func TestImportStartReusesSharedPropertyWording(t *testing.T) {
+	for name, shared := range map[string]string{
+		"instance":        instanceProp,
+		"idempotency_key": idempotencyKeyProp,
+		"confirmation_id": confirmationProp,
+	} {
+		if !strings.Contains(importStartSchema, shared) {
+			t.Fatalf("import.start schema does not reuse the shared %s property:\n%s", name, importStartSchema)
+		}
+	}
+	if strings.Contains(importStartSchema, "resolved by the server") {
+		t.Fatal("import.start schema still claims instance is resolved by the server")
+	}
+	// The sibling import tools share the same confirmation property.
+	for name, schema := range map[string]string{"import.cancel": importCancelSchema, "import.resume": importResumeSchema} {
+		if !strings.Contains(schema, confirmationProp) {
+			t.Fatalf("%s schema does not reuse the shared confirmation_id property:\n%s", name, schema)
+		}
+	}
+}
+
+// GG-16: every input property of import.start is documented, including the two
+// that used to be bare (update_existing, confirmation_id). This is what let the
+// guidance exemption for the import tools be removed.
+func TestImportStartDocumentsEveryInputProperty(t *testing.T) {
+	var doc struct {
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(importStartSchema), &doc); err != nil {
+		t.Fatalf("import.start schema is not valid JSON: %v", err)
+	}
+	if len(doc.Properties) == 0 {
+		t.Fatal("import.start schema declares no properties")
+	}
+	for name, prop := range doc.Properties {
+		if strings.TrimSpace(prop.Description) == "" {
+			t.Fatalf("import.start property %q has no description", name)
+		}
+	}
+	if !strings.Contains(doc.Properties["update_existing"].Description, "skipped") {
+		t.Fatalf("update_existing description does not say what false does: %q", doc.Properties["update_existing"].Description)
+	}
+}
