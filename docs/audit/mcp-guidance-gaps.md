@@ -110,6 +110,7 @@
 | 31 | `product.media.upload` | 387 | 5 MiB、mime 校验、非幂等 | 无 |
 
 **抽样结论**：
+
 - 「什么时候该用别的工具」——31 个里只有 `inventory.status` 一处（"use source_items"）。全量 105 个工具里 0 处 `use magento.X`。
 - 「反直觉输出语义」——只有 `inventory.status`（aggregated）和 `sales.summary`（非 GA4）两处，`qty`/`captured`/`revenue`/`refunded_amount` 四个真正会让人算错钱的字段都没说。
 - 空话/错位——未发现 "Requested page size." 类错位；但发现 **2 处描述与实现相反**（GG-01、GG-02），比空话更危险。
@@ -138,6 +139,7 @@
 **覆盖**：目录结构（类目/属性/url_key 的爆炸半径）、可配置品与 MSI（子商品有库存不等于父商品可售、父商品价格由子商品派生）、审批（两步、不同身份）。
 
 **没覆盖**（与本轮岗位测试直接相关）：
+
 - 退款：部分退款默认不退运费、`shipping_amount` 可控（U-11）
 - 开票：`captured` 不等于已收款（U-14）
 - 库存：`inventory.status.qty` 是 legacy 值（U-34）、改库存没有单一入口（U-35）
@@ -176,7 +178,6 @@
 | GG-19 | P2 | `order.search` 的 cursor 约束与分页元数据 | 工具描述 |
 | GG-20 | P2 | `product.price` 是全局价，成交价另有来源 | 输出字段描述 |
 
-
 ---
 
 ### P0
@@ -187,10 +188,12 @@
 - **agent 会怎么错**：想让部分退款不退运费（或想显式退 4.00 运费）→ 传 `shipping_amount` → 直接被 schema 拒，agent 会以为「不支持控制运费」，退回「让 Magento 自己决定」的老路；或者反过来，以为默认会退运费而不敢做部分退款。
 - **证据**：
   - 实测（只触发 schema 校验，未产生写入）：
+
     ```bash
     magento.creditmemo.create {"instance":"demo","order_id":1,"items":[{"order_item_id":1,"qty":1}],"shipping_amount":0}
     # → {"code":"invalid_argument","details":{"validation":"validating root: unexpected additional properties [\"shipping_amount\"]"}}
     ```
+
   - 源码：`internal/magento/write_tools.go:1085` 的 `creditmemoCreateSchema` 手写，未含该字段；`order_documents_write.go` 的 `CreditmemoCreateInput.ShippingAmount` 已存在。
   - 关联：U-11 / U-69；测试 `TestCreateCreditmemoPartialRefundReturnsNoShipping` 等（走 Go 层，绕过了 schema，所以没暴露）。
 - **建议落点**：**工具描述 + schema**（同时改）。schema 加 `shipping_amount` 并写清默认规则；描述补一句「omit = 全额退时才退剩余运费，partial 退 0」。
