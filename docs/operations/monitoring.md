@@ -61,6 +61,22 @@ WHERE state = 'pending' AND created_at < now() - interval '5 minutes';
 - `operations` rows in `unknown`/`reconciling`, and `operation_transitions` for
   escalations ("reconciliation attempts exhausted"). A growing unknown set is
   the signal to inspect Magento and the reconciler.
+- A **stable** unknown count can be a known baseline rather than an alarm: rows
+  whose upstream has since been reset or deleted are permanently undecidable,
+  and they stay `unknown` on purpose. Record the baseline (count and ids) so a
+  *rise* above it is what pages someone. Do not dispose of them as
+  `not_applied` to make the view empty: that writes a human judgement the
+  evidence cannot support, and `not_applied` also releases the derived
+  idempotency key, which allows a retry of an operation nobody can prove was
+  never applied. When the upstream is gone, look for proof inside the ledger's
+  own timeline (did the precondition exist at the time of the attempt?) instead
+  of concluding "not applied" because a current read finds nothing.
+- Pending confirmations: the query above finds the abandoned ones. Expired and
+  unconsumed `pending` rows are real records, not garbage — review them and let
+  them expire, or delete them as a deliberate, recorded cleanup. Never approve
+  them to shorten the list: approving a stale request records a decision nobody
+  made. On a long-lived or demo environment the count can reach hundreds; treat
+  growth as a hygiene signal and clean up on a schedule.
 - PostgreSQL connection saturation and audit table growth (no retention job or
   partitions; plan an export/retention procedure).
 - Certificate and JWKS reachability for Cloudflare Access.

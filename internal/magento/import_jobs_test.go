@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -1019,15 +1020,26 @@ func TestImportStartReportsQueuedForFreshJob(t *testing.T) {
 // GG-10: an agent has to know which columns are required and what one bad row
 // does before it can build a file. Both are stated on the tool, not just in the
 // prompt a client may never load.
+//
+// t49 measured the old wording against the real importer and found two claims
+// that were wrong or incomplete: `type_id` was missing from the required columns
+// (a create row without it fails every time), and "ONE INVALID ROW REJECTS THE
+// PAYLOAD" only holds for `sku` — a create row missing name, attribute_set_id or
+// type_id is accepted and fails per row at execution. The description now states
+// which column is checked when, because that decides whether the caller has to
+// reconcile a partial job.
 func TestImportStartDescriptionStatesColumnsAndRowRejection(t *testing.T) {
 	for _, want := range []string{
 		"REQUIRED COLUMNS",
 		"sku on every row",
-		"name and attribute_set_id on a row that creates a product",
-		"an update row may omit name",
-		"ONE INVALID ROW REJECTS THE PAYLOAD",
-		"details.invalid_rows",
+		"name, attribute_set_id and type_id",
+		"simple|virtual",
+		"An update row may omit them",
+		"sku,price file is a valid bulk reprice",
+		"ONLY sku IS CHECKED BEFORE THE JOB EXISTS",
 		"details.rows naming every bad row",
+		"still returns a job id",
+		"partial:true and failures[]",
 		"not retried",
 	} {
 		if !strings.Contains(importStartToolDescription, want) {
@@ -1087,5 +1099,59 @@ func TestImportStartDocumentsEveryInputProperty(t *testing.T) {
 	}
 	if !strings.Contains(doc.Properties["update_existing"].Description, "skipped") {
 		t.Fatalf("update_existing description does not say what false does: %q", doc.Properties["update_existing"].Description)
+	}
+}
+
+// t49/t53: the imports prompt and the import.start description are two copies of
+// one set of facts, and they drifted — the prompt said every row needs `name`
+// (false: an update row may omit it), listed `complete` as a terminal job state
+// (the real one is `succeeded`), and neither copy mentioned that only `sku` is
+// checked before the job exists. This test reads both and requires the same
+// facts in each, so editing one without the other fails.
+func TestImportsPromptAndDescriptionAgree(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "skills", "mage2mcp", "references", "imports.md"))
+	if err != nil {
+		t.Fatalf("read the imports reference: %v", err)
+	}
+	prompt := string(raw)
+	// Compare prose, not markdown: the prompt bolds its rules and the description
+	// shouts them, so case and emphasis are normalised away.
+	lower := strings.ToLower(strings.NewReplacer("**", "", "`", "").Replace(prompt))
+
+	// Facts that must appear in both documents.
+	shared := map[string]string{
+		"type_id is a required create column": "type_id",
+		"only sku is checked up front":        "only sku is checked before the job exists",
+		"partial jobs need reconciliation":    "partial",
+	}
+	for what, needle := range shared {
+		if !strings.Contains(lower, needle) {
+			t.Fatalf("the imports prompt no longer states that %s (looked for %q)", what, needle)
+		}
+	}
+	for _, needle := range []string{"type_id", "ONLY sku IS CHECKED", "partial:true"} {
+		if !strings.Contains(importStartToolDescription, needle) {
+			t.Fatalf("the import.start description no longer states %q", needle)
+		}
+	}
+
+	// The terminal state the prompt lists must be the one the code emits. A prompt
+	// that says "complete" sends an agent into a poll loop that never ends (t49).
+	if !strings.Contains(lower, "succeeded") {
+		t.Fatal("the imports prompt does not list succeeded as a terminal job state")
+	}
+	if strings.Contains(lower, "complete") {
+		t.Fatal("the imports prompt still says a job can be complete; the state is succeeded")
+	}
+	if got := jobs.StateSucceeded; got != "succeeded" {
+		t.Fatalf("jobs.StateSucceeded = %q; the prompt and the tests assume succeeded", got)
+	}
+
+	// A price-only file is legal for updates. The prompt used to say the opposite.
+	if !strings.Contains(lower, "sku,price") {
+		t.Fatal("the imports prompt does not say a sku,price file is a valid bulk reprice")
+	}
+	if strings.Contains(lower, "every csv row needs") {
+		t.Fatal("the imports prompt still says every CSV row needs name")
 	}
 }

@@ -309,16 +309,12 @@ const (
 	// GG-10: an agent that does not know which columns are required, or what one bad
 	// row does, sends a payload it cannot repair. Both facts belong here because they
 	// decide the shape of the file, not the semantics of a single field.
-	importStartToolDescription = "Queues a bounded CSV/JSON product import for the worker " +
-		"(8 MiB decoded, 5000 rows, and its base64 form must fit the 16 MiB body limit) after structural validation. Returns a job id; poll import.status for progress and the partial-success report. " +
-		"REQUIRED COLUMNS: sku on every row; name and attribute_set_id on a row that creates a product (an update row may omit name). Other columns become custom attributes. " +
-		"ONE INVALID ROW REJECTS THE PAYLOAD before a job exists: validation_failed with details.invalid_rows and details.rows naming every bad row. Execution failures are per-row, not retried. " +
+	importStartToolDescription = "Queues a bounded CSV/JSON product import (8 MiB, 5000 rows, base64 within the 16 MiB body limit) after structural validation. " +
+		"Returns a job id; poll import.status for the report. " +
+		"REQUIRED COLUMNS: sku on every row; a row that creates a product also needs name, attribute_set_id and type_id (simple|virtual). An update row may omit them: a sku,price file is a valid bulk reprice. Other columns become attributes. " +
+		"ONLY sku IS CHECKED BEFORE THE JOB EXISTS: a bad sku rejects the whole payload (validation_failed, details.rows naming every bad row). A create row missing one of them still returns a job id and fails per row at execution: reconcile with partial:true and failures[]. Execution failures are per-row, not retried. " +
 		"Write operation: requires confirmation and a configured database queue. " +
-		// The detailed rule lives in the server instructions; the payload being flat is
-		// the fact that decides whether an import can express the source at all.
-		"COPYING FROM ANOTHER STORE: the payload is flat, so it only expresses simple " +
-		"products; discover the source first and ask a human before creating taxonomy. " +
-		"See the server instructions. "
+		"COPYING: the payload is flat, so it only expresses simple products; see the product_copy prompt. "
 	importStatusToolDescription = "Reads the state, attempts, error code, and result summary of an asynchronous import job on the named instance. Only the caller that started the job can read it. Read-only."
 	importCancelToolDescription = "Cancels a queued or running asynchronous import job on the named instance. Only the caller that started the job can cancel it. Requires confirmation."
 

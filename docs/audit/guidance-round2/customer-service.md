@@ -180,16 +180,19 @@ agent 若按业务口头要求填一个大数，会拿到一个它没预料到�
 |---|---|---|
 | 数量超过 `qty_invoiced - qty_refunded` 会被拒 | 订单 11 未开票的第 2 件 → `invalid_argument: order item 15 has 0 refundable units, cannot refund 1`（details 带 `refundable_units: 0` / `requested_units: 1`） | 一致 |
 | 多张发票必须传 `invoice_id` | 订单 11 有 2 张发票时不传 → `invalid_argument: order 11 has 2 invoices; pass invoice_id to choose the one to refund` | 一致 |
-| `captured` 不是 `state` | 4 次 `invoice.create` 全部返回 `captured: false`（checkmo，invoice state 2） | 一致 |
+| `captured` 不是 `state` | 我观察到的 3 次 `invoice.create`（订单 4、6、11 的第二张）都返回 `captured: false`，而 invoice 的 `state` 是 2（paid）——离线 checkmo 下两者确实不同 | 一致 |
 | `invoice_linked: false` = 没有存储链接 | 8 张 memo 的 REST `invoice_id` 全是 `None`，MCP 每次都返回 `invoice_linked: false` | 一致 |
 | `replayed: true` = 同参数已退过 | 我重复调用一次相同参数的 `invoice.create`，第二次直接回放同一张发票（invoice 8） | 一致 |
 
 ## 7. 一条环境异常（不是本任务的缺陷，但会影响共享店铺的测试）
 
 我第一次 `order.create`（24-MB01 ×1 + 24-MB04 ×1）返回的订单 **3** 里，除了我这两件，
-还多了一组我从未请求的商品（`WT09-S-Yellow` configurable + 其子件），而当时店铺正在被
-其他 agent 并发下单（同一时刻有 `product.create` / `import.start` / `configurable.create` 在跑，
-且所有 agent 都用同一个 demo 客户 `customer_id 1`）。
+还多了一组我从未请求的商品（`WT09-S-Yellow` configurable + 其子件）。
+
+当时的并发事实（都有证据）：同一秒前后有 `product.create` / `import.start` /
+`configurable.create` 在跑（生产库 `operations` 表 18:57:07–18:58:17Z）；而且**店铺里所有订单的
+`customer_id` 都是 1**——REST 复核订单 3（别人的）和订单 5（别人的 `G2-SO-1001` ×2）也是
+`customer_id: 1`，因为 demo 店只有一个可用客户。
 
 随后我用**完全相同的参数**再下一次单，网关正确地回放了同一笔操作
 （`operation_id 0b1d4a63-…`，即第一次那笔），没有新建订单——幂等行为本身是对的，
