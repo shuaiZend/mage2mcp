@@ -3,7 +3,7 @@ GO ?= go
 VERSION ?= dev
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: help build test test-race lint fmt vet cover docker docs-check
+.PHONY: help build test test-race lint fmt vet cover docker docs-check check-test-inventory
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -43,6 +43,13 @@ docs-check: ## Lint documentation and design contracts
 	npm run lint:md
 	npm run lint:links
 	npm run test:contracts
+
+check-test-inventory: ## Fail when a test function disappeared since origin/main
+	@# A deleted test cannot fail, so the suite stays green without it. This gate
+	@# compares test names between origin/main and HEAD and fails on a removal;
+	@# a deliberate deletion is recorded with scripts/check-test-inventory.sh
+	@# --allow-removed <TestName>.
+	bash scripts/check-test-inventory.sh
 
 .PHONY: e2e
 e2e: ## Run the end-to-end Magento smoke test (needs Docker and Go)
