@@ -28,14 +28,14 @@ func gateFixture(t *testing.T, name string) (*OperationLedger, *ConfirmStore, *S
 	instance := "store-gate-" + name
 	clean := func() {
 		ctx := context.Background()
-		if _, err := store.pool.Exec(ctx, `DELETE FROM operation_transitions`); err != nil {
-			t.Fatalf("cleanup transitions: %v", err)
-		}
-		if _, err := store.pool.Exec(ctx, `DELETE FROM operations`); err != nil {
-			t.Fatalf("cleanup operations: %v", err)
-		}
-		if _, err := store.pool.Exec(ctx, `DELETE FROM confirmation_tokens`); err != nil {
-			t.Fatalf("cleanup confirmations: %v", err)
+		// One atomic statement for the related tables: deleting transitions and
+		// operations separately leaves a window where a concurrent writer can
+		// insert a transition for a row the second DELETE removes, which fails on
+		// operation_transitions_operation_id_fkey. CASCADE also clears anything
+		// that references them.
+		if _, err := store.pool.Exec(ctx,
+			`TRUNCATE operation_transitions, operations, confirmation_tokens CASCADE`); err != nil {
+			t.Fatalf("cleanup ledger tables: %v", err)
 		}
 		if _, err := store.pool.Exec(ctx, `DELETE FROM audit_events WHERE tool LIKE 'magento.gate.%'`); err != nil {
 			t.Fatalf("cleanup audit: %v", err)

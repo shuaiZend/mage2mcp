@@ -30,15 +30,19 @@ func ledgerFixture(t *testing.T, name string) (*OperationLedger, *Store, string)
 	ledger := NewOperationLedger(store)
 	instance := "store-ledger-" + name
 	// The reconciler claims "any due unknown row", so these tests must own the
-	// whole table. They run sequentially in this package, and the ledger is not
-	// used by any other test yet.
+	// whole table.
+	//
+	// The cleanup is one TRUNCATE, not "DELETE transitions" followed by "DELETE
+	// operations": those two statements left a window in which any other writer
+	// (a leaked goroutine, or a second `go test` process sharing this schema)
+	// could insert a transition for a row the second DELETE then removed, which
+	// fails on operation_transitions_operation_id_fkey. TRUNCATE ... CASCADE is
+	// atomic and drops both tables' rows in one statement, so that window is gone.
 	clean := func() {
 		ctx := context.Background()
-		if _, err := store.pool.Exec(ctx, `DELETE FROM operation_transitions`); err != nil {
-			t.Fatalf("cleanup transitions: %v", err)
-		}
-		if _, err := store.pool.Exec(ctx, `DELETE FROM operations`); err != nil {
-			t.Fatalf("cleanup operations: %v", err)
+		if _, err := store.pool.Exec(ctx,
+			`TRUNCATE operation_transitions, operations CASCADE`); err != nil {
+			t.Fatalf("cleanup ledger tables: %v", err)
 		}
 	}
 	clean()
@@ -1211,4 +1215,68 @@ func TestDisposeRequiresJudgementAndNote(t *testing.T) {
 	if rec.State != OpUnknown || !rec.NeedsAttention {
 		t.Fatalf("record = %+v, want it untouched and still needing attention", rec)
 	}
+}
+
+// The escalation reason is evidence, not decoration: an operator looking at
+// needs_attention rows must be able to read why the reconciler gave up. Until this
+// was fixed the reason was accepted and dropped, and every row said only
+// "escalated".
+func TestEscalateRecordsTheReason(t *testing.T) {
+	ledger, store, instance := ledgerFixture(t, "escalate-reason")
+	ctx := context.Background()
+
+	// claimEscalatable drives one operation to the point where Escalate applies
+	// and returns the fencing token the transition needs.
+	claimEscalatable := func(key string) (string, string) {
+		t.Helper()
+		id, exec := mustProceed(ctx, t, ledger, intent(t, instance, key, json.RawMessage(`{"amount":9}`)))
+		if applied, err := ledger.Unknown(ctx, id, exec.Fence, "upstream_timeout", time.Minute); err != nil || !applied {
+			t.Fatalf("Unknown: applied=%v err=%v", applied, err)
+		}
+		makeDue(t, store, id)
+		rec, applied, err := ledger.ClaimReconcilable(ctx, time.Minute)
+		if err != nil || !applied || rec == nil || rec.OperationID != id {
+			t.Fatalf("ClaimReconcilable: rec=%v applied=%v err=%v", rec, applied, err)
+		}
+		return id, rec.Fence
+	}
+	escalationReason := func(id string) string {
+		t.Helper()
+		history, err := ledger.Transitions(ctx, id)
+		if err != nil {
+			t.Fatalf("Transitions: %v", err)
+		}
+		for _, entry := range history {
+			if strings.HasPrefix(entry.Reason, "escalated") {
+				return entry.Reason
+			}
+		}
+		t.Fatalf("no escalation transition in %+v", history)
+		return ""
+	}
+
+	t.Run("the caller's text is stored", func(t *testing.T) {
+		id, fence := claimEscalatable("key-escalate-reason")
+		const why = "reconciliation attempts exhausted; manual review required"
+		if applied, err := ledger.Escalate(ctx, id, fence, why); err != nil || !applied {
+			t.Fatalf("Escalate: applied=%v err=%v", applied, err)
+		}
+		got := escalationReason(id)
+		if !strings.Contains(got, why) {
+			t.Fatalf("transition reason = %q, want it to carry %q", got, why)
+		}
+		if !strings.HasPrefix(got, "escalated") {
+			t.Fatalf("transition reason = %q, want the stable 'escalated' prefix kept", got)
+		}
+	})
+
+	t.Run("an empty reason still lands as the bare token", func(t *testing.T) {
+		id, fence := claimEscalatable("key-escalate-empty")
+		if applied, err := ledger.Escalate(ctx, id, fence, ""); err != nil || !applied {
+			t.Fatalf("Escalate: applied=%v err=%v", applied, err)
+		}
+		if got := escalationReason(id); got != "escalated" {
+			t.Fatalf("transition reason = %q, want exactly %q", got, "escalated")
+		}
+	})
 }

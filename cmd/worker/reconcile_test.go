@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,14 +236,21 @@ func TestReconcileHandlerEscalates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Transitions: %v", err)
 	}
-	escalated := false
+	// The escalation carries the handler's own account of why it gave up, so the
+	// transition is evidence an operator can act on. The 'escalated' token is the
+	// stable prefix; the text after it is the new part.
+	const escalationWhy = "reconciliation attempts exhausted; manual review required"
+	escalated := ""
 	for _, entry := range history {
-		if entry.Reason == "escalated" {
-			escalated = true
+		if strings.HasPrefix(entry.Reason, "escalated") {
+			escalated = entry.Reason
 		}
 	}
-	if !escalated {
+	if escalated == "" {
 		t.Fatalf("no escalation transition recorded: %+v", history)
+	}
+	if !strings.Contains(escalated, escalationWhy) {
+		t.Fatalf("escalation reason = %q, want it to carry the handler's account %q", escalated, escalationWhy)
 	}
 	// REL38-09: escalation is terminal — a second pass must not re-escalate.
 	if err := handler(ctx, jobs.Task{ID: "reconcile-4", Kind: jobs.TypeReconcile}); err != nil {
@@ -254,7 +262,7 @@ func TestReconcileHandlerEscalates(t *testing.T) {
 	}
 	count := 0
 	for _, entry := range history {
-		if entry.Reason == "escalated" {
+		if strings.HasPrefix(entry.Reason, "escalated") {
 			count++
 		}
 	}

@@ -401,10 +401,19 @@ func TestJobQueueClaimDoesNotWaitOnOtherQueues(t *testing.T) {
 		t.Fatalf("lock expired row: %v", err)
 	}
 	hold := 1200 * time.Millisecond
+	// The commit releases the lock that makes this test meaningful, so it has to
+	// run in the background while Claim is measured — but it must not outlive the
+	// test: a commit landing after the test returns writes to the jobs table while
+	// the next test is resetting it, which is how this file's neighbour tests
+	// became flaky. The cleanup waits for the goroutine before resetJobs' own
+	// cleanup deletes rows (t.Cleanup runs last-registered-first).
+	committed := make(chan struct{})
 	go func() {
+		defer close(committed)
 		time.Sleep(hold)
 		_ = tx.Commit(ctx)
 	}()
+	t.Cleanup(func() { <-committed })
 
 	start := time.Now()
 	task, err := queue.Claim(ctx, []string{"report"}, time.Minute)
@@ -781,7 +790,7 @@ func TestJobQueueTransitionSQLIsGuarded(t *testing.T) {
 // one-connection pool, checking out a second connection for the migration
 // transaction deadlocks against itself.
 func TestMigrateWithSingleConnection(t *testing.T) {
-	url := testSchemaDSN(t, "test_storage")
+	url := testSchemaDSN(t, testSchema)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	store, err := Open(ctx, Config{URL: url, MaxConns: 1})

@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"testing"
@@ -17,6 +18,15 @@ import (
 	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 )
+
+// testSchema is this test process's schema for the storage suite.
+//
+// A per-package schema keeps `go test ./...` packages apart, but a fixed name
+// still lets two *concurrent processes* share one schema: one process's TRUNCATE
+// removes rows the other is asserting on, and before the cleanup was atomic that
+// also produced an operation_transitions_operation_id_fkey failure. Appending the
+// process id gives every run its own schema; TestMain drops it afterwards.
+var testSchema = fmt.Sprintf("test_storage_%d", os.Getpid())
 
 // testSchemaDSN returns the test database DSN scoped to a per-package schema.
 //
@@ -56,7 +66,7 @@ func testSchemaDSN(t *testing.T, schema string) string {
 
 func testStore(t *testing.T) *Store {
 	t.Helper()
-	url := testSchemaDSN(t, "test_storage")
+	url := testSchemaDSN(t, testSchema)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	store, err := Open(ctx, Config{URL: url, MaxConns: 4})
@@ -68,6 +78,22 @@ func testStore(t *testing.T) *Store {
 		t.Fatalf("Migrate: %v", err)
 	}
 	return store
+}
+
+// TestMain drops this process's schema after the suite, so a per-process name
+// does not leave a schema behind on every run. A killed process leaks one; that
+// is the price of not sharing a schema with a concurrent run.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if base := os.Getenv("MAGE2MCP_TEST_DATABASE_URL"); base != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if conn, err := pgx.Connect(ctx, base); err == nil {
+			_, _ = conn.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{testSchema}.Sanitize()+" CASCADE")
+			_ = conn.Close(ctx)
+		}
+		cancel()
+	}
+	os.Exit(code)
 }
 
 func TestMigrateIsIdempotent(t *testing.T) {

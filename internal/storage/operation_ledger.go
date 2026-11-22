@@ -1313,15 +1313,14 @@ func (l *OperationLedger) MakeReconcilable(ctx context.Context, id string) (bool
 // Before that exit existed, eleven production order.create rows had nowhere to go.
 //
 // reason is the caller's account of why it gave up (cmd/worker passes
-// "reconciliation attempts exhausted; manual review required"). It is deliberately
-// not recorded yet: operation_transitions.reason carries the fixed token
-// 'escalated', because cmd/worker's TestReconcileHandlerEscalates asserts that
-// exact string to prove escalation is terminal. Recording the free text instead
-// needs that assertion changed to a prefix match in the same change, which is a
-// cross-package edit this change does not make. Until then the operator-facing
-// "why" is error_code='needs_manual_reconciliation' plus reconcile_count.
+// "reconciliation attempts exhausted; manual review required"). It is recorded in
+// the transition's reason column as "escalated: <reason>", so an operator reading
+// operation.list{needs_attention:true} learns why the row was escalated instead of
+// only that it was. The 'escalated' token stays the prefix of every row — the ones
+// written before this change and the ones written after — so a reader that looks
+// for it by prefix keeps working; an empty reason still lands as exactly
+// 'escalated'.
 func (l *OperationLedger) Escalate(ctx context.Context, id, fence, reason string) (bool, error) {
-	_ = reason
 	tag, err := l.store.pool.Exec(ctx, `
 		WITH updated AS (
 			UPDATE operations
@@ -1332,9 +1331,11 @@ func (l *OperationLedger) Escalate(ctx context.Context, id, fence, reason string
 			RETURNING id, state, fence, attempt
 		), logged AS (
 			INSERT INTO operation_transitions (operation_id, from_state, to_state, fence, attempt, reason)
-			SELECT id, 'reconciling', state, fence, attempt, 'escalated' FROM updated
+			SELECT id, 'reconciling', state, fence, attempt,
+			       CASE WHEN $3 = '' THEN 'escalated' ELSE 'escalated: ' || $3 END
+			FROM updated
 		)
-		SELECT id FROM updated`, id, fence)
+		SELECT id FROM updated`, id, fence, reason)
 	if err != nil {
 		return false, fmt.Errorf("storage: escalate operation: %w", err)
 	}
