@@ -256,6 +256,7 @@ job.result = {"created":0,"failed":1,"partial":true,"total":1,
 **但 `imports` prompt 没写这条分界**，还给了相反的描述（"rejected row by row"）。一个只读 prompt
 （不支持工具描述裁剪的客户端、或按 prompt 决策的 agent）会预期「校验期逐行拒绝」，实际拿到的是
 「先排队、再在执行期部分失败」。两者的**后续动作不同**：
+
 - 整单拒绝：改文件重发，不会产生任何写入；
 - 逐行失败：**已经写入了成功行**（`partial:true`），必须对账 + `resume`。
 
