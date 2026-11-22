@@ -447,7 +447,11 @@ var (
 	// surface: ACL resource names, quoted attribute codes, and SKU-shaped tokens.
 	upstreamACLRE    = regexp.MustCompile(`[A-Za-z_]+::[A-Za-z_]+`)
 	upstreamQuotedRE = regexp.MustCompile(`"[^"]*"`)
-	upstreamSKURE    = regexp.MustCompile(`[A-Z0-9][A-Z0-9_-]*[0-9][A-Z0-9_-]*`)
+	// upstreamSKURE matches an identifier that mixes letters and digits. A bare
+	// number is not a SKU: matching it dropped whole reasons such as
+	// "Większość pieniędzy do zwrotu to 16." (F5), which is exactly the
+	// money-failure text a caller needs.
+	upstreamSKURE = regexp.MustCompile(`[A-Z0-9_-]*([A-Z][A-Z0-9_-]*[0-9]|[0-9][A-Z0-9_-]*[A-Z])[A-Z0-9_-]*`)
 )
 
 // upstreamTextIsSafe reports whether Magento's reason can be carried in a detail.
@@ -708,7 +712,10 @@ func resolveUpstreamPlaceholders(message string, parameters map[string]any) stri
 		return message
 	}
 	if len(parameters) == 0 {
-		return upstreamNumericPlaceholderRE.ReplaceAllString(message, "(omitted)")
+		// Both template shapes become an explicit marker: a raw "%customerGroup"
+		// or "%1" is a template the caller cannot act on (U-25, F4).
+		resolved := upstreamPlaceholderRE.ReplaceAllString(message, "(omitted)")
+		return upstreamNumericPlaceholderRE.ReplaceAllString(resolved, "(omitted)")
 	}
 	lower := make(map[string]string, len(parameters))
 	for key, value := range parameters {
@@ -723,7 +730,11 @@ func resolveUpstreamPlaceholders(message string, parameters map[string]any) stri
 		if value, ok := lower[name]; ok {
 			return value
 		}
-		return token
+		// Magento sends `parameters` as an array for some templates, so a named
+		// placeholder such as %customerGroup has no matching key and used to be
+		// echoed verbatim (F4). An explicit omission marker is actionable; a
+		// template token is not.
+		return "(omitted)"
 	})
 	return upstreamNumericPlaceholderRE.ReplaceAllStringFunc(resolved, func(token string) string {
 		name := strings.TrimPrefix(token, "%")

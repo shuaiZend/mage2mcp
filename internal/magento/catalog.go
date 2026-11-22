@@ -230,7 +230,7 @@ func (s *Service) CategoryProducts(ctx context.Context, categoryID, limit, offse
 	}
 	var products []Product
 	if err := json.Unmarshal(raw, &products); err == nil {
-		hydrated, err := s.hydrateCategoryProducts(ctx, products, limit)
+		hydrated, err := s.hydrateCategoryProducts(ctx, products)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -246,12 +246,16 @@ func (s *Service) CategoryProducts(ctx context.Context, categoryID, limit, offse
 	if payload.Items == nil {
 		payload.Items = []Product{}
 	}
-	hydrated, err := s.hydrateCategoryProducts(ctx, payload.Items, limit)
+	hydrated, err := s.hydrateCategoryProducts(ctx, payload.Items)
 	if err != nil {
 		return nil, 0, err
 	}
 	return hydrated, payload.TotalCount, nil
 }
+
+// hydrationBatchSize bounds one enrichment search. The batch size, not the
+// caller's page limit, decides searchCriteria[pageSize] (F3).
+const hydrationBatchSize = 100
 
 // hydrateCategoryProducts fills in the product fields Magento's category listing
 // leaves empty.
@@ -261,7 +265,7 @@ func (s *Service) CategoryProducts(ctx context.Context, categoryID, limit, offse
 // to return name "", price 0 and status 0 for real products (U-36). One extra
 // search keyed on the page's SKUs costs a single request and returns the full
 // projection.
-func (s *Service) hydrateCategoryProducts(ctx context.Context, products []Product, limit int) ([]Product, error) {
+func (s *Service) hydrateCategoryProducts(ctx context.Context, products []Product) ([]Product, error) {
 	if len(products) == 0 {
 		return products, nil
 	}
@@ -278,26 +282,38 @@ func (s *Service) hydrateCategoryProducts(ctx context.Context, products []Produc
 	if !missing || len(skus) == 0 {
 		return products, nil
 	}
-	query := make(url.Values)
-	query.Set("searchCriteria[pageSize]", strconv.Itoa(limit))
-	query.Set("searchCriteria[filter_groups][0][filters][0][field]", "sku")
-	query.Set("searchCriteria[filter_groups][0][filters][0][value]", strings.Join(skus, ","))
-	query.Set("searchCriteria[filter_groups][0][filters][0][condition_type]", "in")
-	raw, err := s.client.do(ctx, http.MethodGet, "/products", query, nil)
-	if err != nil {
-		// The listing is still a usable answer (skus are correct); do not fail the
-		// read because the enrichment could not run.
-		return products, nil
-	}
-	var payload struct {
-		Items []Product `json:"items" jsonschema:"Entries returned by this call."`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return products, nil
-	}
-	bySKU := make(map[string]Product, len(payload.Items))
-	for _, product := range payload.Items {
-		bySKU[product.SKU] = product
+	// The page size of the enrichment search is derived from the rows actually
+	// returned by the category listing, never from the caller's `limit`: this
+	// store ignores searchCriteria[pageSize] on the listing route, so a limit of
+	// 2 came back as 182 rows and only 2 of them were enriched (F3). Each batch
+	// asks for exactly the number of SKUs it carries.
+	bySKU := make(map[string]Product, len(skus))
+	for start := 0; start < len(skus); start += hydrationBatchSize {
+		end := start + hydrationBatchSize
+		if end > len(skus) {
+			end = len(skus)
+		}
+		batch := skus[start:end]
+		query := make(url.Values)
+		query.Set("searchCriteria[pageSize]", strconv.Itoa(len(batch)))
+		query.Set("searchCriteria[filter_groups][0][filters][0][field]", "sku")
+		query.Set("searchCriteria[filter_groups][0][filters][0][value]", strings.Join(batch, ","))
+		query.Set("searchCriteria[filter_groups][0][filters][0][condition_type]", "in")
+		raw, err := s.client.do(ctx, http.MethodGet, "/products", query, nil)
+		if err != nil {
+			// The listing is still a usable answer (skus are correct); do not fail
+			// the read because the enrichment could not run.
+			continue
+		}
+		var payload struct {
+			Items []Product `json:"items" jsonschema:"Entries returned by this call."`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			continue
+		}
+		for _, product := range payload.Items {
+			bySKU[product.SKU] = product
+		}
 	}
 	for i, product := range products {
 		if full, ok := bySKU[product.SKU]; ok {

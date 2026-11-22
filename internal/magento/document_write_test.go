@@ -704,3 +704,86 @@ func TestCreateCreditmemoRefundableQuantityIsStructured(t *testing.T) {
 		t.Fatalf("message = %q, want the singular form", typed.Message)
 	}
 }
+
+// F1/U-14: the defect scene is capture=false while the invoice still comes back
+// paid (state 2) — what an offline payment method such as checkmo always does.
+// Reverting Captured to "invoice.State == invoiceStatePaid" makes this test fail;
+// the pre-repair TestCreateInvoice table only had capture:false/state:1.
+func TestCreateInvoiceDoesNotClaimCaptureForOfflinePayment(t *testing.T) {
+	fake := &invoiceFake{state: 2}
+	ts := httptest.NewServer(fake.handler(t))
+	defer ts.Close()
+	useLedger(t, newFakeLedger())
+
+	result, err := testService(t, ts.URL).CreateInvoice(context.Background(), InvoiceCreateInput{
+		OrderID: 42, Capture: false,
+		Items:          []InvoiceLine{{OrderItemID: 1, Qty: 2}},
+		IdempotencyKey: "invoice-offline",
+	})
+	if err != nil {
+		t.Fatalf("CreateInvoice: %v", err)
+	}
+	if result.Invoice.State != 2 {
+		t.Fatalf("invoice state = %d, want the paid state an offline method returns", result.Invoice.State)
+	}
+	if result.Captured {
+		t.Fatal("captured = true for capture=false: an offline payment method marks the invoice paid without moving money")
+	}
+}
+
+// F6: the local refund ceiling used to be built from the remaining units and
+// shipping only, so an earlier memo's adjustment_positive was invisible: the
+// request passed the local check and Magento rejected it with "the most you can
+// refund is 16" (which F5 now surfaces, but the gateway should not send it at
+// all). The order-level ceiling is grand_total - total_refunded. Removing that
+// ceiling makes this test fail (the request would reach the fake and "succeed").
+func TestCreateCreditmemoCeilingIncludesEarlierAdjustments(t *testing.T) {
+	// 51.00 order, 35.00 already refunded by an earlier memo (34.00 line + 1.00
+	// net adjustment); one 7.00 unit plus the remaining 10.00 shipping is 17.00,
+	// but only 16.00 is still refundable.
+	order := `{"entity_id":42,"order_currency_code":"USD","grand_total":51,"total_refunded":35,` +
+		`"shipping_amount":10,"shipping_refunded":0,` +
+		`"items":[{"item_id":1,"sku":"SKU-1","price":7,"qty_invoiced":1,"qty_refunded":0}]}`
+	fake := &creditmemoFake{orderJSON: order, invoices: singleInvoice}
+	ts := httptest.NewServer(fake.handler(t))
+	defer ts.Close()
+	useLedger(t, newFakeLedger())
+
+	_, err := testService(t, ts.URL).CreateCreditmemo(context.Background(), CreditmemoCreateInput{
+		OrderID: 42, Items: []DocumentLine{{OrderItemID: 1, Qty: 1}},
+	})
+	if errs.CodeOf(err) != errs.CodeValidationFailed {
+		t.Fatalf("err = %v, want validation_failed before any refund request", err)
+	}
+	var typed *errs.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("not a taxonomy error: %v", err)
+	}
+	if typed.Details["refundable_amount"] != "16.00" {
+		t.Fatalf("details = %v, want refundable_amount 16.00 (51.00 - 35.00)", typed.Details)
+	}
+	if posts := postsIn(fake.requests); posts != 0 {
+		t.Fatalf("POSTs = %d, want 0 (rejected before the refund call)", posts)
+	}
+}
+
+// F7: `invoice_linked` must be present even when it is false. It was missing from
+// the tool output struct entirely, so a caller could not distinguish "Magento
+// stored no invoice link" from "this build does not report the link at all".
+// Adding omitempty (or dropping the field) makes this test fail.
+func TestCreditmemoToolOutputAlwaysCarriesInvoiceLinked(t *testing.T) {
+	unlinked, err := json.Marshal(creditmemoCreateOutput{InvoiceID: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(unlinked), `"invoice_linked":false`) {
+		t.Fatalf("unlinked output = %s, want an explicit \"invoice_linked\":false", unlinked)
+	}
+	linked, err := json.Marshal(creditmemoCreateOutput{InvoiceID: 7, InvoiceLinked: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(linked), `"invoice_linked":true`) {
+		t.Fatalf("linked output = %s, want \"invoice_linked\":true", linked)
+	}
+}

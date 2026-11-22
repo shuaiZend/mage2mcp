@@ -2753,3 +2753,56 @@ func (importBatchStub) GetImportBatch(context.Context, string, string, string) (
 func (importBatchStub) ListImportBatches(context.Context, string, int) ([]jobs.ImportBatch, error) {
 	return nil, nil
 }
+
+// F1/U-78: the outcome audit row is written after the tool returns, which is
+// exactly when a timed-out call has an already-expired context. recordOutcome
+// used to pass that dead context to the audit sink, so the write failed and the
+// intent row dangled (SEC-01). Reverting to the request context makes this test
+// fail: the callback would observe context.DeadlineExceeded.
+func TestOutcomeAuditSeesLiveContextAfterTimeout(t *testing.T) {
+	reg := registry.New()
+	tool := registry.Tool{
+		Name: "magento.product.slow", Title: "Slow tool",
+		Description: "Timeout fixture.", Capability: "magento.product.read",
+		Permission: registry.PermissionRead, Timeout: 20 * time.Millisecond,
+		Annotations: mcp.ToolAnnotations{ReadOnlyHint: true},
+	}
+	tool.Register = func(srv *mcp.Server) error {
+		mcp.AddTool(srv, &mcp.Tool{Name: tool.Name, Title: tool.Title, Description: tool.Description,
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+			func(ctx context.Context, _ *mcp.CallToolRequest, _ authzInput) (*mcp.CallToolResult, authzOutput, error) {
+				<-ctx.Done()
+				return nil, authzOutput{}, ctx.Err()
+			})
+		return nil
+	}
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var outcomeErrs []error
+	var sawOutcome bool
+	opts := Options{Version: "test", Registry: reg,
+		Audit: func(ctx context.Context, _, _, phase, _, _ string) {
+			if phase != "outcome" {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			sawOutcome = true
+			outcomeErrs = append(outcomeErrs, ctx.Err())
+		},
+	}
+	res := callWithOptions(t, opts, "agent-1", tool.Name, map[string]any{"instance": "store-us"})
+	if !res.IsError {
+		t.Fatalf("a tool that exceeded its deadline must fail: %+v", res.StructuredContent)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !sawOutcome {
+		t.Fatal("no outcome audit event: the intent row would dangle")
+	}
+	if len(outcomeErrs) != 1 || outcomeErrs[0] != nil {
+		t.Fatalf("outcome audit context error = %v, want nil (the audit write must not inherit the request's cancellation)", outcomeErrs)
+	}
+}

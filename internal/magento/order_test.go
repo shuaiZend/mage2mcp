@@ -506,3 +506,173 @@ func TestSalesSummaryUnknownTotalAtCapStaysTruncated(t *testing.T) {
 		t.Fatal("truncated = false although total_count was omitted: an unknown total at the cap must stay truncated")
 	}
 }
+
+// U-31 / GG-02: the single-order read is the only way support can answer "where was
+// it sent?" — no tool can read an order address after placement. The projection must
+// therefore carry both addresses, the address email and phone, and the shipping
+// method, while the order-level customer email stays out.
+func TestGetOrderReturnsAddressesForSupport(t *testing.T) {
+	// Magento carries the delivery address in extension_attributes.shipping_assignments;
+	// the top-level form is kept because a single-store payload may spell it that way.
+	// Both shapes must project the same address, so a decoding change cannot quietly
+	// empty the field support depends on.
+	cases := map[string]string{
+		"top-level address": `{"entity_id": 42, "increment_id": "000000042", "status": "processing",
+			"state": "processing", "customer_email": "buyer@example.com",
+			"shipping_description": "Flat Rate - Fixed",
+			"shipping_address": {"firstname": "Anna", "lastname": "Kowalska", "street": ["ul. Testowa 1"],
+				"city": "Warszawa", "postcode": "00-001", "country_id": "PL", "telephone": "500100200",
+				"email": "anna@example.com"},
+			"billing_address": {"firstname": "Anna", "lastname": "Kowalska", "city": "Warszawa",
+				"country_id": "PL", "email": "anna@example.com"}}`,
+		"shipping assignment address": `{"entity_id": 42, "increment_id": "000000042", "status": "processing",
+			"state": "processing", "customer_email": "buyer@example.com",
+			"shipping_description": "Flat Rate - Fixed",
+			"billing_address": {"firstname": "Anna", "lastname": "Kowalska", "city": "Warszawa",
+				"country_id": "PL", "email": "anna@example.com"},
+			"extension_attributes": {"shipping_assignments": [{"shipping": {
+				"method": "flatrate_flatrate",
+				"address": {"firstname": "Anna", "lastname": "Kowalska", "street": ["ul. Testowa 1"],
+					"city": "Warszawa", "postcode": "00-001", "country_id": "PL", "telephone": "500100200",
+					"email": "anna@example.com"}}}]}}`,
+	}
+	for name, payload := range cases {
+		t.Run(name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(payload))
+			}))
+			defer ts.Close()
+			order, err := testService(t, ts.URL).GetOrder(context.Background(), 42)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if order.ShippingDescription == "" {
+				t.Fatal("shipping_description is empty; support cannot say how the parcel was sent")
+			}
+			ship := order.ShippingAddress
+			if ship == nil {
+				t.Fatal("shipping_address is nil; support cannot confirm a delivery without it")
+			}
+			if ship.Firstname != "Anna" || ship.Lastname != "Kowalska" || ship.City != "Warszawa" ||
+				ship.Postcode != "00-001" || ship.CountryID != "PL" {
+				t.Fatalf("shipping_address = %+v", ship)
+			}
+			if ship.Email != "anna@example.com" || ship.Telephone != "500100200" {
+				t.Fatalf("contact fields = %q/%q, want the address email and phone", ship.Email, ship.Telephone)
+			}
+			if order.BillingAddress == nil || order.BillingAddress.City != "Warszawa" {
+				t.Fatalf("billing_address = %+v, want the billing address", order.BillingAddress)
+			}
+			raw, err := json.Marshal(order)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "buyer@example.com") {
+				t.Fatalf("order-level customer email leaked into the projection: %s", raw)
+			}
+		})
+	}
+}
+
+// F2: Magento's order resource has no top-level shipping_address; the delivery
+// address is in extension_attributes.shipping_assignments[].shipping.address.
+// Decoding only the top-level field left ShippingAddress permanently nil, so the
+// U-31 support answer was still impossible. Removing
+// fillShippingAddressFromAssignments makes this test fail.
+func TestGetOrderReadsShippingAddressFromAssignments(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"entity_id": 7, "increment_id": "000000007", "status": "processing", "state": "processing",
+			"shipping_description": "Flat Rate - Fixed",
+			"extension_attributes": {"shipping_assignments": [
+				{"stock_id": 1, "shipping": {"address": {
+					"firstname": "Anna", "lastname": "Kowalska", "street": ["ul. Testowa 1"],
+					"city": "Warszawa", "postcode": "00-001", "country_id": "PL",
+					"region": "Mazowieckie", "telephone": "500100200", "email": "anna@example.com"},
+					"method": "flatrate"}}
+			]}
+		}`))
+	}))
+	defer ts.Close()
+	order, err := testService(t, ts.URL).GetOrder(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("GetOrder: %v", err)
+	}
+	ship := order.ShippingAddress
+	if ship == nil {
+		t.Fatal("shipping_address is nil: the delivery address in extension_attributes.shipping_assignments was not read")
+	}
+	if ship.Firstname != "Anna" || ship.Lastname != "Kowalska" || ship.City != "Warszawa" ||
+		ship.Postcode != "00-001" || ship.CountryID != "PL" {
+		t.Fatalf("shipping_address = %+v", ship)
+	}
+	if len(ship.Street) != 1 || ship.Street[0] != "ul. Testowa 1" {
+		t.Fatalf("street = %v, want the delivery street", ship.Street)
+	}
+	if ship.Telephone != "500100200" || ship.Email != "anna@example.com" {
+		t.Fatalf("contact fields = %q/%q, want the address phone and email", ship.Telephone, ship.Email)
+	}
+	if order.ShippingDescription != "Flat Rate - Fixed" {
+		t.Fatalf("shipping_description = %q", order.ShippingDescription)
+	}
+}
+
+// F2: a top-level shipping_address is still honoured when a build sends one, so
+// the projection does not depend on a single Magento shape.
+func TestGetOrderPrefersTopLevelShippingAddress(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"entity_id": 8, "increment_id": "000000008",
+			"shipping_address": {"city": "Krakow", "country_id": "PL"},
+			"extension_attributes": {"shipping_assignments": [
+				{"shipping": {"address": {"city": "Warszawa", "country_id": "PL"}}}]}
+		}`))
+	}))
+	defer ts.Close()
+	order, err := testService(t, ts.URL).GetOrder(context.Background(), 8)
+	if err != nil {
+		t.Fatalf("GetOrder: %v", err)
+	}
+	if order.ShippingAddress == nil || order.ShippingAddress.City != "Krakow" {
+		t.Fatalf("shipping_address = %+v, want the top-level address", order.ShippingAddress)
+	}
+}
+
+// F1/U-31: the fulfilment counters must be on the single-order projection.
+// Breaking their mapping (or dropping the fields) makes this test fail; the
+// pre-repair TestGetOrderReturnsProjection only asserted sku and qty_ordered.
+func TestGetOrderReturnsFulfilmentCounters(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"entity_id": 9, "increment_id": "000000009",
+			"items": [{"item_id": 1, "sku": "SKU-1", "name": "Widget", "qty_ordered": 4,
+				"qty_shipped": 3, "qty_invoiced": 2, "qty_refunded": 1,
+				"price": 10, "row_total": 40}]
+		}`))
+	}))
+	defer ts.Close()
+	order, err := testService(t, ts.URL).GetOrder(context.Background(), 9)
+	if err != nil {
+		t.Fatalf("GetOrder: %v", err)
+	}
+	if len(order.Items) != 1 {
+		t.Fatalf("items = %+v", order.Items)
+	}
+	item := order.Items[0]
+	if item.QtyShipped == nil || *item.QtyShipped != 3 {
+		t.Fatalf("qty_shipped = %v, want 3", item.QtyShipped)
+	}
+	if item.QtyInvoiced == nil || *item.QtyInvoiced != 2 {
+		t.Fatalf("qty_invoiced = %v, want 2", item.QtyInvoiced)
+	}
+	if item.QtyRefunded == nil || *item.QtyRefunded != 1 {
+		t.Fatalf("qty_refunded = %v, want 1", item.QtyRefunded)
+	}
+	if item.QtyOrdered != 4 {
+		t.Fatalf("qty_ordered = %v, want 4", item.QtyOrdered)
+	}
+}

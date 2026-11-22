@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -385,6 +386,47 @@ func TestSalesSummaryDescriptionStatesTheWindowCap(t *testing.T) {
 		for _, want := range []string{"366 days", "timezone"} {
 			if !strings.Contains(tool.Description, want) {
 				t.Fatalf("%s description must mention %q: %q", name, want, tool.Description)
+			}
+		}
+	}
+}
+
+// GG-02: a single-order read returns the shipping and billing addresses, including
+// the email and phone carried by the address. Three places used to promise the
+// opposite — the tool description, the Order struct doc, and the README — so a
+// support agent was told the one field it needs does not exist. They must describe
+// the same behaviour; this test fails if any of them drifts back to the old
+// promise or stops naming what is returned.
+func TestOrderGetAddressDisclosureIsConsistent(t *testing.T) {
+	sources := map[string]string{"tools.go order.get description": orderGetToolDescription}
+	orderSource, err := os.ReadFile("order.go")
+	if err != nil {
+		t.Fatalf("read order.go: %v", err)
+	}
+	sources["order.go Order doc comment"] = string(orderSource)
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	sources["README.md"] = string(readme)
+
+	denials := []string{
+		"addresses are not returned",
+		"addresses, and payment data are not returned",
+		"addresses are intentionally absent",
+		"order reads omit email, addresses",
+	}
+	for where, text := range sources {
+		lower := strings.ToLower(text)
+		if !strings.Contains(lower, "shipping and billing addresses") {
+			t.Fatalf("%s does not say the read returns the shipping and billing addresses", where)
+		}
+		if !strings.Contains(lower, "address email") {
+			t.Fatalf("%s does not disclose that the address carries an email", where)
+		}
+		for _, denial := range denials {
+			if strings.Contains(lower, denial) {
+				t.Fatalf("%s still promises %q", where, denial)
 			}
 		}
 	}

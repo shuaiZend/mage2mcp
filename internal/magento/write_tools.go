@@ -988,10 +988,12 @@ const (
 	invoiceCreateToolTitle   = "Create Magento invoice"
 	invoiceCreateDescription = "Magento write operation: invoices an order through the workflow route " +
 		"(POST /rest/{store_code}/V1/order/{orderId}/invoice) on the resolved instance, which is the route that honours capture. " +
-		"capture=false records an open invoice and charges nothing; capture=true captures the payment and the returned " +
-		"invoice state proves whether it did. Idempotent when idempotency_key is supplied: a repeat with the same arguments " +
-		"replays the recorded invoice. An ambiguous outcome is recorded as unknown and must be polled, never retried. " +
-		"Requires human confirmation."
+		"capture=false records an open invoice and charges nothing; capture=true asks Magento to capture the payment. " +
+		"The captured flag reports whether this call asked for capture and the invoice came back paid; it is not proof that " +
+		"money moved, because an offline payment method such as checkmo marks the invoice paid either way. The invoice state " +
+		"alone never proves a capture: read captured, not state, before recording a receipt. Idempotent when " +
+		"idempotency_key is supplied: a repeat with the same arguments replays the recorded invoice. An ambiguous outcome is " +
+		"recorded as unknown and must be polled, never retried. Requires human confirmation."
 
 	invoiceCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + idempotencyKeyProp + `,
 		"order_id": {"type": "integer", "minimum": 1, "description": "Magento order entity id."},
@@ -1061,7 +1063,9 @@ const (
 	creditmemoCreateToolTitle   = "Create Magento credit memo"
 	creditmemoCreateDescription = "Magento write operation: creates a credit memo (POST /rest/{store_code}/V1/order/{orderId}/refund) with 1-100 order-item lines and " +
 		"optional adjustments on the resolved instance. The order and its invoices are read first: the memo is linked to an invoice and a quantity above " +
-		"qty_invoiced - qty_refunded is rejected before any refund request. Idempotent when idempotency_key is supplied: a repeat " +
+		"qty_invoiced - qty_refunded is rejected before any refund request. " +
+		"Shipping is refunded only as far as shipping_amount says: omit it and a partial refund returns no shipping, while a memo that consumes every " +
+		"remaining refundable unit returns the remaining shipping; 0 states explicitly that no shipping is refunded. Idempotent when idempotency_key is supplied: a repeat " +
 		"with the same arguments replays the recorded credit memo. An ambiguous outcome is recorded as unknown and must be polled, " +
 		"never retried. Requires human confirmation."
 
@@ -1088,6 +1092,7 @@ const (
 		` + documentLinesProp + `,
 		"adjustment_positive": {"type": "number", "minimum": 0},
 		"adjustment_negative": {"type": "number", "minimum": 0},
+		"shipping_amount": {"type": "number", "minimum": 0, "description": "Shipping to refund with this memo. Omit it to refund no shipping unless this memo refunds every remaining refundable unit, in which case the remaining shipping is refunded; 0 refunds no shipping explicitly."},
 		"comment": {"type": "string", "maxLength": 1024},
 		"notify": {"type": "boolean", "default": false}
 	}, "required": ["instance", "order_id", "items"], "additionalProperties": false}`
@@ -1114,15 +1119,24 @@ type creditmemoCreateInput struct {
 	Items              []InvoiceLine `json:"items" jsonschema:"Entries returned by this call."`
 	AdjustmentPositive float64       `json:"adjustment_positive"`
 	AdjustmentNegative float64       `json:"adjustment_negative"`
-	Comment            string        `json:"comment"`
-	Notify             bool          `json:"notify"`
+	// ShippingAmount is a pointer so "omitted" and "0" stay distinguishable: the
+	// service refunds the remaining shipping on a memo that consumes the last
+	// refundable units only when the caller said nothing, and 0 always means "no
+	// shipping" (U-11). A plain float64 would collapse the two.
+	ShippingAmount *float64 `json:"shipping_amount"`
+	Comment        string   `json:"comment"`
+	Notify         bool     `json:"notify"`
 }
 
 type creditmemoCreateOutput struct {
-	Creditmemo  Creditmemo `json:"creditmemo" jsonschema:"The created credit memo, which is the refund record."`
-	InvoiceID   int        `json:"invoice_id" jsonschema:"Invoice the refund was issued against."`
-	OperationID string     `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
-	Replayed    bool       `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so the customer was not refunded twice."`
+	Creditmemo Creditmemo `json:"creditmemo" jsonschema:"The created credit memo, which is the refund record."`
+	InvoiceID  int        `json:"invoice_id" jsonschema:"Invoice the refund was issued against."`
+	// InvoiceLinked is always present: "false" is a finding (Magento stored no
+	// link, so a later read cannot prove which invoice this memo belongs to) and
+	// must not be confused with "field absent" (F7, consistent with U-30).
+	InvoiceLinked bool   `json:"invoice_linked" jsonschema:"True when Magento's read-back reports the same invoice link this call validated against."`
+	OperationID   string `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
+	Replayed      bool   `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so the customer was not refunded twice."`
 }
 
 func newShipmentCreateTool(lookup serviceLookup) registry.Tool {
@@ -1168,7 +1182,8 @@ func newCreditmemoCreateTool(lookup serviceLookup) registry.Tool {
 				result, err := svc.CreateCreditmemo(ctx, CreditmemoCreateInput{
 					OrderID: in.OrderID, InvoiceID: in.InvoiceID, Items: lines,
 					AdjustmentPositive: in.AdjustmentPositive, AdjustmentNegative: in.AdjustmentNegative,
-					Comment: in.Comment, Notify: in.Notify,
+					ShippingAmount: in.ShippingAmount,
+					Comment:        in.Comment, Notify: in.Notify,
 					IdempotencyKey: in.IdempotencyKey, Instance: in.Instance,
 				})
 				if err != nil {
@@ -1176,7 +1191,8 @@ func newCreditmemoCreateTool(lookup serviceLookup) registry.Tool {
 				}
 				return nil, creditmemoCreateOutput{
 					Creditmemo: result.Creditmemo, InvoiceID: result.InvoiceID,
-					OperationID: result.OperationID, Replayed: result.Replayed,
+					InvoiceLinked: result.InvoiceLinked,
+					OperationID:   result.OperationID, Replayed: result.Replayed,
 				}, nil
 			})
 		return nil

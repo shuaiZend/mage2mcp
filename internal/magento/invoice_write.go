@@ -37,8 +37,11 @@ type InvoiceCreateInput struct {
 // InvoiceCreateResult is the recorded outcome of an invoice creation.
 type InvoiceCreateResult struct {
 	Invoice Invoice `json:"invoice" jsonschema:"The invoice that was created or read."`
-	// Captured reports the invoice state Magento returned: a paid invoice proves
-	// the capture flag was honoured by the workflow route.
+	// Captured reports the caller's capture intent combined with the state Magento
+	// returned: it is true only when this call asked for capture and the invoice
+	// came back paid. It is not proof that money moved, and the invoice state
+	// cannot stand in for it: an offline payment method such as checkmo marks the
+	// invoice paid whether or not capture was requested (U-14).
 	Captured bool `json:"captured"`
 	// OperationID identifies the ledger operation; a replay returns the same id.
 	OperationID string `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
@@ -52,8 +55,10 @@ type InvoiceCreateResult struct {
 // capture=true; this gateway refuses to do that.
 //
 // capture=false records an open invoice and charges nothing; capture=true asks
-// Magento to capture the payment, and the returned invoice state (2 = paid)
-// proves whether it did.
+// Magento to capture the payment. The returned invoice state does not prove the
+// capture happened: an offline payment method such as checkmo marks the invoice
+// paid either way, so read Captured (capture requested AND paid) rather than
+// State before recording a receipt.
 //
 // The call is recorded in the operation ledger before the POST. An ambiguous
 // outcome (timeout, transport failure, 5xx) is recorded as unknown and returned

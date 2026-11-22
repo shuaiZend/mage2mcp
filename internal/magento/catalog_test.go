@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -327,5 +328,56 @@ func TestCategoryProductsSkipsHydrationWhenComplete(t *testing.T) {
 	}
 	if searches != 0 {
 		t.Fatalf("searches = %d, want 0 for a complete listing", searches)
+	}
+}
+
+// F3: the category listing route ignores searchCriteria[pageSize] on a real
+// store, so a caller asking for 2 rows can receive 182. The enrichment search
+// must size itself from the rows actually returned, not from the caller's limit;
+// otherwise only `limit` rows get names and the rest stay zero-valued. This fake
+// honours pageSize (as Magento's product search does), so reverting to
+// pageSize=limit leaves the third row unenriched and fails the test.
+func TestCategoryProductsHydratesMoreRowsThanLimit(t *testing.T) {
+	var pageSizes []int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/default/V1/categories/5/products":
+			// The listing ignores pageSize and returns three rows for limit=2.
+			_, _ = w.Write([]byte(`[{"id":1,"sku":"SKU-1"},{"id":2,"sku":"SKU-2"},{"id":3,"sku":"SKU-3"}]`))
+		case "/rest/default/V1/products":
+			pageSize, _ := strconv.Atoi(r.URL.Query().Get("searchCriteria[pageSize]"))
+			pageSizes = append(pageSizes, pageSize)
+			requested := strings.Split(r.URL.Query().Get("searchCriteria[filter_groups][0][filters][0][value]"), ",")
+			if pageSize > 0 && pageSize < len(requested) {
+				requested = requested[:pageSize]
+			}
+			items := make([]string, 0, len(requested))
+			for _, sku := range requested {
+				items = append(items, `{"id":1,"sku":"`+sku+`","name":"Product `+sku+`","price":9.99,"status":1,"visibility":4}`)
+			}
+			_, _ = w.Write([]byte(`{"items":[` + strings.Join(items, ",") + `],"total_count":` + strconv.Itoa(len(requested)) + `}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	products, _, err := testService(t, ts.URL).CategoryProducts(context.Background(), 5, 2, 0)
+	if err != nil {
+		t.Fatalf("CategoryProducts: %v", err)
+	}
+	if len(products) != 3 {
+		t.Fatalf("products = %d, want the 3 rows the listing returned", len(products))
+	}
+	for i, product := range products {
+		if product.Name == "" || product.Price == 0 || product.Status == 0 {
+			t.Fatalf("row %d = %+v, want every returned row enriched", i, product)
+		}
+	}
+	for _, size := range pageSizes {
+		if size < 3 {
+			t.Fatalf("enrichment pageSize = %d, want at least the 3 rows the listing returned", size)
+		}
 	}
 }

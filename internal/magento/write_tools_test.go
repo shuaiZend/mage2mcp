@@ -924,3 +924,134 @@ func TestWriteToolSourceHasNoHardcodedIdempotentHint(t *testing.T) {
 		t.Fatal("write_tools.go hard-codes IdempotentHint; derive it with writeIdempotentHint(name)")
 	}
 }
+
+// newWriteToolSession builds an MCP session over the write registry for tests
+// that must exercise a tool through validation, confirmation and the handler
+// rather than calling the service directly.
+func newWriteToolSession(t *testing.T, baseURL string) *mcp.ClientSession {
+	t.Helper()
+	reg := registry.New()
+	if err := RegisterWrites(reg, testService(t, baseURL)); err != nil {
+		t.Fatalf("RegisterWrites: %v", err)
+	}
+	srv, err := mcpserver.NewMCP(mcpserver.Options{Version: "test", Registry: reg, Confirm: magentoConfirmService(t)})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	t.Cleanup(cancel)
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
+// shippingRefundOrder is an order whose two units were invoiced and not refunded,
+// with 10 of shipping still refundable.
+const shippingRefundOrder = `{"entity_id":42,"order_currency_code":"USD","grand_total":60,` +
+	`"shipping_amount":10,"shipping_refunded":0,` +
+	`"items":[{"item_id":1,"sku":"SKU-1","price":25,"qty_invoiced":2,"qty_refunded":0}]}`
+
+// GG-01: the credit memo tool must accept shipping_amount. The Go input struct and
+// the service both knew the field, but creditmemoCreateSchema is hand-written and
+// declares additionalProperties:false, so every caller that used the U-11 shipping
+// control was rejected before the handler ran. Removing the schema property, or
+// dropping ShippingAmount from the tool input struct, makes this test fail.
+func TestCreditmemoCreateAcceptsShippingAmount(t *testing.T) {
+	var doc struct {
+		Properties map[string]struct {
+			Type        string   `json:"type"`
+			Minimum     *float64 `json:"minimum"`
+			Description string   `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(creditmemoCreateSchema), &doc); err != nil {
+		t.Fatalf("creditmemo.create schema is not valid JSON: %v", err)
+	}
+	prop, ok := doc.Properties["shipping_amount"]
+	if !ok {
+		t.Fatal("creditmemo.create schema does not accept shipping_amount; MCP callers cannot reach the shipping control")
+	}
+	if prop.Type != "number" || prop.Minimum == nil || *prop.Minimum != 0 {
+		t.Fatalf("shipping_amount schema = %+v, want type number with minimum 0", prop)
+	}
+	if !strings.Contains(prop.Description, "remaining shipping") {
+		t.Fatalf("shipping_amount description does not explain the default: %q", prop.Description)
+	}
+
+	// Schema acceptance alone is not enough: a missing struct field would drop the
+	// value silently, which is the worse failure (the refund looks successful but
+	// no shipping comes back). Drive the tool end to end and read the upstream body.
+	explicit := &creditmemoFake{orderJSON: shippingRefundOrder, invoices: singleInvoice}
+	ts := httptest.NewServer(explicit.handler(t))
+	defer ts.Close()
+	useLedger(t, newFakeLedger())
+	res := callWriteTool(t, context.Background(), newWriteToolSession(t, ts.URL), creditmemoCreateToolName, map[string]any{
+		"instance": "default", "order_id": 42,
+		"items":           []any{map[string]any{"order_item_id": 1, "qty": 1}},
+		"shipping_amount": 4,
+	})
+	if res.IsError {
+		t.Fatalf("creditmemo.create rejected shipping_amount: %+v", res.Content)
+	}
+	var body refundOrderBody
+	if err := json.Unmarshal(explicit.postBody, &body); err != nil {
+		t.Fatalf("refund body: %v", err)
+	}
+	if body.Arguments == nil || body.Arguments.ShippingAmount == nil || *body.Arguments.ShippingAmount != 4 {
+		t.Fatalf("upstream arguments = %+v, want an explicit shipping_amount of 4", body.Arguments)
+	}
+
+	// Omitting the field must stay distinguishable from 0: a partial refund sends
+	// an explicit 0 so Magento does not sweep the whole remaining shipping in.
+	omitted := &creditmemoFake{orderJSON: shippingRefundOrder, invoices: singleInvoice}
+	tsOmitted := httptest.NewServer(omitted.handler(t))
+	defer tsOmitted.Close()
+	res = callWriteTool(t, context.Background(), newWriteToolSession(t, tsOmitted.URL), creditmemoCreateToolName, map[string]any{
+		"instance": "default", "order_id": 42,
+		"items": []any{map[string]any{"order_item_id": 1, "qty": 1}},
+	})
+	if res.IsError {
+		t.Fatalf("creditmemo.create without shipping_amount failed: %+v", res.Content)
+	}
+	if err := json.Unmarshal(omitted.postBody, &body); err != nil {
+		t.Fatalf("refund body: %v", err)
+	}
+	if body.Arguments == nil || body.Arguments.ShippingAmount == nil || *body.Arguments.ShippingAmount != 0 {
+		t.Fatalf("upstream arguments = %+v, want shipping_amount 0 when the caller omitted it", body.Arguments)
+	}
+}
+
+// GG-03: an agent cannot use a default it cannot see. The credit memo description
+// must say what omitting shipping_amount does and what 0 means.
+func TestCreditmemoCreateDescriptionStatesShippingDefault(t *testing.T) {
+	for _, want := range []string{"shipping_amount", "partial refund returns no shipping", "remaining shipping", "0 states explicitly"} {
+		if !strings.Contains(creditmemoCreateDescription, want) {
+			t.Fatalf("creditmemo.create description does not mention %q: %s", want, creditmemoCreateDescription)
+		}
+	}
+}
+
+// GG-04: with an offline payment method Magento marks the invoice paid whether or
+// not capture was requested, so the invoice state cannot prove a capture. A
+// description that says it does sends an ERP to the wrong field (U-14).
+func TestInvoiceCreateDescriptionDoesNotClaimStateProvesCapture(t *testing.T) {
+	lower := strings.ToLower(invoiceCreateDescription)
+	if strings.Contains(lower, "state proves") {
+		t.Fatalf("invoice.create still claims the invoice state proves the capture: %s", invoiceCreateDescription)
+	}
+	for _, want := range []string{"captured", "checkmo", "never proves a capture"} {
+		if !strings.Contains(lower, want) {
+			t.Fatalf("invoice.create description does not mention %q: %s", want, invoiceCreateDescription)
+		}
+	}
+}

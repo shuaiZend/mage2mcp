@@ -35,8 +35,11 @@ In a hurry? [Quickstart](#quickstart-development) · [Docker](#docker) ·
   identity, bound to the canonical argument hash, the tool, and the instance.
   Every write is gated by a durable operation ledger with fencing and idempotency
   keys; an ambiguous outcome becomes `unknown` and is reconciled, never retried.
-- **PII stays inside Magento.** Customer and address reads return country/region/
-  default flags only; order reads omit email, addresses, and payment data.
+- **PII is bounded and disclosed.** Customer reads return country/region/default
+  flags only. A single-order read returns the shipping and billing addresses
+  (recipient, street, phone, address email) because support cannot confirm a
+  delivery without them, and it never returns payment data; order search omits
+  addresses.
 - **Built for operations.** PostgreSQL job queue (no Redis), advisory-locked
   migrations, an operation ledger with a reconciler, async imports with
   idempotency, live progress, resumable failed rows, and 30-day batch retention.

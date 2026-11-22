@@ -672,7 +672,10 @@ func TestRedactedRouteKeepsActionWords(t *testing.T) {
 		"/configurable-products/WJ01/children": "/configurable-products/{id}/children",
 		"/invoices/123/capture":                "/invoices/{id}/capture",
 		"/order/1/refund":                      "/order/{id}/refund",
-		"/shipments/1":                         "/shipments/{id}",
+		// U-22: "ship" was missing from the action-word allowlist, so a shipment
+		// failure was labelled /order/{id}/{id} and named no action at all.
+		"/order/1/ship": "/order/{id}/ship",
+		"/shipments/1":  "/shipments/{id}",
 	}
 	for in, want := range cases {
 		if got := redactedRoute(in); got != want {
@@ -903,5 +906,84 @@ func TestCustomerObservationsStillReadTheCustomer(t *testing.T) {
 				t.Fatalf("reads = %v, want [%s]", paths, tc.wantPath)
 			}
 		})
+	}
+}
+
+// F4: Magento sends `parameters` as an array for some templates, so a named
+// placeholder such as %customerGroup has no matching key. It used to be echoed
+// verbatim ("… =%customerGroup"), which is a template the caller cannot act on.
+// Reverting the fallback to `return token` makes this test fail.
+func TestStatusErrorOmitsUnresolvedNamedPlaceholder(t *testing.T) {
+	body := []byte(`{"message":"Brak takiego podmiotu z grupą klientów =%customerGroup. Sprawdź %websiteId.","parameters":["0","1"]}`)
+	err := statusError(http.MethodPost, "/products/tier-prices", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	reason := e.Details["upstream_message"] + e.Details["upstream_reason"]
+	if reason == "" {
+		t.Fatalf("details = %v, want the reason to reach the caller", e.Details)
+	}
+	if strings.Contains(reason, "%customerGroup") || strings.Contains(reason, "%websiteId") {
+		t.Fatalf("reason = %q, want the template tokens replaced", reason)
+	}
+	if !strings.Contains(reason, "(omitted)") {
+		t.Fatalf("reason = %q, want an explicit omission marker", reason)
+	}
+}
+
+// F4: the same rule applies when Magento sends no parameters at all.
+func TestStatusErrorOmitsNamedPlaceholderWithoutParameters(t *testing.T) {
+	body := []byte(`{"message":"Grupa %customerGroup nie istnieje."}`)
+	err := statusError(http.MethodPost, "/products/tier-prices", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	reason := e.Details["upstream_message"] + e.Details["upstream_reason"]
+	if strings.Contains(reason, "%customerGroup") {
+		t.Fatalf("reason = %q, want the template token replaced", reason)
+	}
+	if !strings.Contains(reason, "(omitted)") {
+		t.Fatalf("reason = %q, want an explicit omission marker", reason)
+	}
+}
+
+// F5: the SKU heuristic used to match a bare number, so a money-failure reason
+// that mentions an amount ("… do zwrotu to 16.") was classified as
+// identifier-bearing and dropped to the server log, leaving the caller with
+// nothing but upstream_status. Reverting the regex to the digit-only shape makes
+// this test fail.
+func TestStatusErrorKeepsReasonThatMentionsAnAmount(t *testing.T) {
+	body := []byte(`{"message":"Creditmemo Document Validation Error(s):\nWiększość pieniędzy do zwrotu to 16."}`)
+	err := statusError(http.MethodPost, "/order/4/refund", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	reason := e.Details["upstream_message"] + e.Details["upstream_reason"]
+	if reason == "" {
+		t.Fatalf("details = %v, want the refund ceiling reason to reach the caller", e.Details)
+	}
+	if !strings.Contains(reason, "16") {
+		t.Fatalf("reason = %q, want the amount named", reason)
+	}
+	if !strings.Contains(strings.ToLower(reason), "zwrotu") {
+		t.Fatalf("reason = %q, want Magento's own sentence", reason)
+	}
+}
+
+// F5: a real identifier (letters and digits) still stays server-side.
+func TestStatusErrorStillHidesMixedIdentifier(t *testing.T) {
+	body := []byte(`{"message":"The SKU 24-MB04 is not assigned to the ACL resource Magento_Catalog::products."}`)
+	err := statusError(http.MethodPut, "/products/24-MB04", http.StatusBadRequest, body, "pl")
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatal("want a taxonomy error")
+	}
+	for key, value := range e.Details {
+		if strings.Contains(value, "24-MB04") || strings.Contains(value, "ACL resource") {
+			t.Fatalf("detail %q leaked upstream text: %q", key, value)
+		}
 	}
 }

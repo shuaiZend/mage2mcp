@@ -71,9 +71,13 @@ type OrderAddress struct {
 
 // Order is the explicit order projection this slice exposes.
 //
-// Customer email, addresses, and payment details are intentionally absent:
-// order analytics does not need them, and omitting them keeps the tool free of
-// personal data. Items are populated by GetOrder, not by SearchOrders.
+// A single-order read returns the shipping and billing addresses (recipient,
+// street, phone, address email) and the shipping method: support cannot confirm
+// or correct a delivery without them, and no other tool can read an order
+// address after placement (U-31). Payment data is never projected and the
+// order-level customer email is not returned; the only email here is the one
+// carried by the address itself. Items and addresses are populated by GetOrder,
+// not by SearchOrders, whose field projection omits them.
 type Order struct {
 	EntityID        int         `json:"entity_id" jsonschema:"Magento entity id. Every order tool takes this, not the increment id."`
 	IncrementID     string      `json:"increment_id" jsonschema:"Human-facing order number, for example 000000123. Stable and unique per store."`
@@ -128,7 +132,45 @@ func (s *Service) GetOrder(ctx context.Context, orderID int) (*Order, error) {
 	if err := json.Unmarshal(raw, &order); err != nil {
 		return nil, errs.New(errs.CodeUpstreamUnavailable, "Magento returned an unreadable order payload").WithCause(err)
 	}
+	// Magento's order resource does not carry a top-level shipping_address: the
+	// delivery address lives in extension_attributes.shipping_assignments[].shipping.address.
+	// Decoding the top-level field alone left ShippingAddress permanently nil, so the
+	// support answer "where was it sent?" was still impossible after U-31 (F2).
+	if order.ShippingAddress == nil {
+		if err := order.fillShippingAddressFromAssignments(raw); err != nil {
+			return nil, err
+		}
+	}
 	return &order, nil
+}
+
+// fillShippingAddressFromAssignments lifts the delivery address out of
+// extension_attributes.shipping_assignments, which is where Magento actually
+// stores it. The first assignment that carries an address wins: an order can be
+// split across several shipments, and they all deliver to the same address.
+func (o *Order) fillShippingAddressFromAssignments(raw []byte) error {
+	var payload struct {
+		ExtensionAttributes struct {
+			ShippingAssignments []struct {
+				Shipping struct {
+					Address *OrderAddress `json:"address"`
+				} `json:"shipping"`
+			} `json:"shipping_assignments"`
+		} `json:"extension_attributes"`
+	}
+	// This is an enrichment of a payload that already decoded into Order. A build
+	// that shapes the nested address differently must not turn a readable order
+	// into a failed read, so a decode failure leaves the address absent.
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+	for _, assignment := range payload.ExtensionAttributes.ShippingAssignments {
+		if assignment.Shipping.Address != nil {
+			o.ShippingAddress = assignment.Shipping.Address
+			return nil
+		}
+	}
+	return nil
 }
 
 // SearchOrders returns one page of orders and the total match count.

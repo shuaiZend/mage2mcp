@@ -319,9 +319,10 @@ const (
 	salesSummaryToolTitle = "Magento sales summary"
 
 	orderGetToolDescription = "Reads one order from the configured Magento 2 REST API " +
-		"(GET /rest/{store_code}/V1/orders/{id}) including its line items. " +
-		"Read-only. Customer email, addresses, and payment data are not returned. " +
-		"The instance input is required and must name a configured Magento instance."
+		"(GET /rest/{store_code}/V1/orders/{id}) including its line items, the shipping method, and the " +
+		"shipping and billing addresses (recipient, street, phone, address email), because support cannot " +
+		"confirm or correct a delivery without them. Read-only; payment data is not returned and order search " +
+		"omits addresses. The instance input is required and must name a configured Magento instance."
 	orderSearchToolDescription = "Searches the configured Magento 2 REST API " +
 		"(GET /rest/{store_code}/V1/orders with searchCriteria filter groups) by status, state, increment id, " +
 		"creation window, or store view. Read-only; line items are omitted from search results. " +

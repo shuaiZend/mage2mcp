@@ -303,6 +303,11 @@ type orderRefundState struct {
 	// may return, so a partial refund cannot sweep the whole amount (U-11).
 	ShippingAmount   float64 `json:"shipping_amount"`
 	ShippingRefunded float64 `json:"shipping_refunded"`
+	// TotalRefunded is everything Magento has already refunded on the order,
+	// including shipping and the adjustments of earlier credit memos. The
+	// line-based estimate alone ignored those, so a second refund could pass the
+	// local check and still be rejected upstream (F6).
+	TotalRefunded float64 `json:"total_refunded"`
 }
 
 // orderRefundItem carries the invoiced and refunded quantities of one line.
@@ -325,6 +330,7 @@ func (s *Service) orderRefundState(ctx context.Context, orderID int) (*orderRefu
 		GrandTotal       float64 `json:"grand_total" jsonschema:"Document total including shipping and tax."`
 		ShippingAmount   float64 `json:"shipping_amount"`
 		ShippingRefunded float64 `json:"shipping_refunded"`
+		TotalRefunded    float64 `json:"total_refunded"`
 		Items            []struct {
 			ItemID      int     `json:"item_id"`
 			SKU         string  `json:"sku" jsonschema:"Product SKU."`
@@ -340,6 +346,7 @@ func (s *Service) orderRefundState(ctx context.Context, orderID int) (*orderRefu
 	state := &orderRefundState{
 		EntityID: wire.EntityID, Currency: wire.Currency, GrandTotal: wire.GrandTotal,
 		ShippingAmount: wire.ShippingAmount, ShippingRefunded: wire.ShippingRefunded,
+		TotalRefunded: wire.TotalRefunded,
 	}
 	state.Items = make([]OrderItem, 0, len(wire.Items))
 	state.Refund = make([]orderRefundItem, 0, len(wire.Items))
@@ -484,7 +491,24 @@ func (s *orderRefundState) refundableRemaining() (Money, error) {
 	if err != nil {
 		return Money{}, err
 	}
-	return Money{Minor: total + shipping.Minor, Currency: s.Currency}, nil
+	estimate := Money{Minor: total + shipping.Minor, Currency: s.Currency}
+	// The order-level ceiling is what Magento itself enforces: grand_total minus
+	// everything already refunded, adjustments included. The line estimate cannot
+	// see an earlier memo's adjustment_positive, so it overstates what is left and
+	// let a request through that upstream then rejected (F6).
+	if s.GrandTotal > 0 {
+		ceiling, err := moneyFromAmount(s.GrandTotal-s.TotalRefunded, s.Currency)
+		if err != nil {
+			return Money{}, err
+		}
+		if ceiling.Minor < 0 {
+			ceiling.Minor = 0
+		}
+		if ceiling.Minor < estimate.Minor {
+			return ceiling, nil
+		}
+	}
+	return estimate, nil
 }
 
 // checkRefundableAmount rejects a memo whose total exceeds what the order can
