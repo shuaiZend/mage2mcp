@@ -12,8 +12,9 @@ One endpoint, one auth model, one audit trail — with typed, documented tools t
 agents can actually use safely. Writes are two-step human-approved; reads are
 read-only by default and PII-safe.
 
-> **Status: v0.11.1 (pre-1.0).** Up to 112 tools (101 Magento) at full
-> configuration; the default read-only configuration registers 54. Read-only
+> **Status: v0.11.7 (pre-1.0).** 115 tools at maximal configuration (104
+> Magento); the read-only default registers 56, and a Magento-enabled
+> deployment 105. Read-only
 > acceptance against a live Magento production store covered 23 checks and a
 > 30-day business drill-down (924 orders) with no writes; write verification ran
 > against a disposable demo. No live Magento integration test exists. Releases
@@ -38,7 +39,7 @@ read-only by default and PII-safe.
   behind one gateway with per-instance authorization and audit. Unified analytics
   bindings currently require exactly one Cloudflare zone and one GA4 property.
 
-## Tool surface (up to 112 tools)
+## Tool surface (up to 115 tools)
 
 The count is a function of configuration: the default read-only configuration
 registers 54 tools (43 Magento); `tools.writes: true` adds 52 Magento write
@@ -138,9 +139,10 @@ also recorded in [CHANGELOG.md](CHANGELOG.md).
 
 | Start here | For |
 |---|---|
+| [docs/tutorial.md](docs/tutorial.md) | **Tutorial: from zero to a working agent** — [中文](docs/i18n/zh/tutorial.md) · [Español](docs/i18n/es/tutorial.md) · [Nederlands](docs/i18n/nl/tutorial.md) |
 | [docs/index.md](docs/index.md) | Documentation entry point |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | Design catalog with implementation status |
-| [docs/implemented-tools.md](docs/implemented-tools.md) | The 112 tools registered today |
+| [docs/implemented-tools.md](docs/implemented-tools.md) | The 105 tools registered today |
 | [docs/magento-fields.md](docs/magento-fields.md) | Field requirements and SEO guidance |
 | [docs/configuration.md](docs/configuration.md) | Every configuration key, default, and environment override |
 | [docs/compatibility.md](docs/compatibility.md) | Supported components and stability promises |
