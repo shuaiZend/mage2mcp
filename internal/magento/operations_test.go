@@ -15,10 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/requestid"
 	mcpserver "github.com/shuaiZend/mage2mcp/internal/mcp/server"
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/storage"
@@ -914,5 +916,169 @@ func TestOperationsDisposeGuards(t *testing.T) {
 	}
 	if record.State != storage.OpFailed {
 		t.Fatalf("state = %s, want failed", record.State)
+	}
+}
+
+// The self-ledgered money tools write their own outcome audit row, inside the
+// ledger transaction. Before this fix that row carried no request_id while the
+// middleware's intent row for the same call did, so a funding call could not be
+// followed from intent to outcome (v0.11.7 fixed only the middleware path).
+//
+// This drives the real path end to end: an MCP call whose tool owns its ledger
+// operation, so the middleware writes the intent row and skips the outcome, and
+// the tool writes the outcome from inside internal/magento.
+func TestSelfLedgeredOutcomeCarriesTheCallRequestID(t *testing.T) {
+	url := testSchemaDSN(t, "test_magento")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	store, err := storage.Open(ctx, storage.Config{URL: url, MaxConns: 4})
+	if err != nil {
+		t.Fatalf("storage.Open: %v", err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	useLedger(t, storage.NewOperationLedger(store))
+
+	const toolName = "magento.order.create"
+	const instance = "store-requestid"
+	// A fresh entity per run: the ledger keeps rows and the test schema persists.
+	entityID := "reqid-" + time.Now().UTC().Format("20060102-150405.000000000")
+
+	reg := registry.New()
+	if err := reg.Register(registry.Tool{
+		Name: toolName, Title: "Place an order", Permission: registry.PermissionWrite,
+		Capability: "magento.order.writes", Timeout: 30 * time.Second,
+		Description: "Test double that drives the real ledger like the money tools do.",
+		Register: func(srv *mcp.Server) error {
+			mcp.AddTool(srv, &mcp.Tool{Name: toolName, Description: "place an order"},
+				func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, map[string]any, error) {
+					ops, err := configuredOperations()
+					if err != nil {
+						return nil, nil, err
+					}
+					run, begun, err := ops.Begin(ctx, OperationRequest{
+						Tool: toolName, Instance: instance, Subject: "erp-agent",
+						EntityType: storage.EntityOrder, EntityID: entityID,
+						// Unique per run: an identical call replays the earlier
+						// operation instead of writing a new outcome row.
+						Args: map[string]any{"customer_id": 7, "run": entityID},
+					})
+					if err != nil {
+						return nil, nil, err
+					}
+					if run == nil {
+						return nil, map[string]any{"replayed": true, "operation": begun.OperationID}, nil
+					}
+					if err := run.Succeed(ctx, "order-"+entityID, map[string]any{"ok": true}); err != nil {
+						return nil, nil, err
+					}
+					return nil, map[string]any{"operation": run.ID()}, nil
+				})
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("register %s: %v", toolName, err)
+	}
+
+	ledger := storage.NewOperationLedger(store)
+	auditor := storage.NewAuditRecorder(store)
+	srv, err := mcpserver.NewMCP(mcpserver.Options{
+		Version: "test", Registry: reg, Confirm: magentoConfirmService(t),
+		SelfLedgeredTools: map[string]bool{toolName: true},
+		// The intent row is the middleware's; it carries the same request id, which
+		// is what makes the two rows of one call joinable.
+		Audit: func(ctx context.Context, tool, instance, phase, state, code string) {
+			decision := "allow"
+			if phase == "outcome" && state != "succeeded" {
+				decision = "error"
+			}
+			_ = auditor.Record(ctx, audit.Event{
+				Subject: "erp-agent", IdentityClass: "service", Tool: tool, Instance: instance,
+				Scope: "call", Decision: decision, Phase: phase, State: state, ErrorCode: code,
+				RequestID: requestid.From(ctx),
+			})
+		},
+		// The gate is what writes the middleware's intent row; without it there is
+		// no intent row to compare against.
+		BeginOperation: func(ctx context.Context, req mcpserver.OperationRequest) (mcpserver.OperationTicket, error) {
+			ticket, err := ledger.BeginCall(ctx, storage.GateRequest{
+				Operation: req.Tool, InstanceID: req.Instance, Subject: req.Subject,
+				ArgsHash: req.ArgsHash, IdempotencyKey: req.IdempotencyKey,
+				ConfirmationID: req.ConfirmationID, EntityType: req.EntityType,
+				EntityID: req.EntityID, AmountMinor: req.AmountMinor, Currency: req.Currency,
+			})
+			return mcpserver.OperationTicket{
+				OperationID: ticket.OperationID, Fence: ticket.Fence,
+				Decision: string(ticket.Decision), Attempt: ticket.Attempt,
+				Replayed: ticket.Replayed, ReplayResult: ticket.ReplayResult,
+				UpstreamRef: ticket.UpstreamRef,
+			}, err
+		},
+		FinishOperation: func(ctx context.Context, ticket mcpserver.OperationTicket, out mcpserver.OperationOutcome) error {
+			return ledger.FinishCall(ctx,
+				storage.GateTicket{OperationID: ticket.OperationID, Fence: ticket.Fence, Attempt: ticket.Attempt},
+				storage.GateOutcome{State: out.State, ErrorCode: out.ErrorCode,
+					UpstreamRef: out.UpstreamRef, Result: out.Result,
+					RetryAfter: out.RetryAfter, Audit: out.Audit})
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewMCP: %v", err)
+	}
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil).
+		Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	result, err := callToolApproved(t, ctx, session, &mcp.CallToolParams{
+		Name: toolName, Arguments: map[string]any{},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("call %s = %+v, %v", toolName, result, err)
+	}
+	// The id the client can see on the result.
+	metaID, _ := result.Meta["request_id"].(string)
+	if metaID == "" {
+		t.Fatalf("result carries no _meta.request_id: %+v", result.Meta)
+	}
+
+	// The id the self-ledgered outcome row was written with.
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect to read audit rows: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var outcomeID string
+	if err := conn.QueryRow(ctx, `
+		SELECT request_id FROM audit_events
+		 WHERE tool = $1 AND phase = 'outcome' AND scope = 'self'
+		 ORDER BY occurred_at DESC LIMIT 1`, toolName).Scan(&outcomeID); err != nil {
+		t.Fatalf("read the self-ledgered outcome row: %v", err)
+	}
+	if outcomeID != metaID {
+		t.Fatalf("self-ledgered outcome request_id = %q, want the call's _meta.request_id %q", outcomeID, metaID)
+	}
+
+	// And the middleware's intent row for the same call carries it too, so the
+	// three rows of one call are joinable.
+	var intentID string
+	if err := conn.QueryRow(ctx, `
+		SELECT request_id FROM audit_events
+		 WHERE tool = $1 AND phase = 'intent'
+		 ORDER BY occurred_at DESC LIMIT 1`, toolName).Scan(&intentID); err != nil {
+		t.Fatalf("read the intent row: %v", err)
+	}
+	if intentID != metaID {
+		t.Fatalf("intent request_id = %q, want %q", intentID, metaID)
 	}
 }

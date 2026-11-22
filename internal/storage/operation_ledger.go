@@ -48,6 +48,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/requestid"
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
 )
@@ -507,13 +508,14 @@ func (l *OperationLedger) succeedExec(ctx context.Context, ex executor, id, fenc
 			-- so a crash between the tool's commit and the middleware cannot lose it.
 			-- This is the five self-ledgered money tools' only audit write.
 			INSERT INTO audit_events (event_id, occurred_at, subject_hash, identity_class, tool,
-			                          instance_id, scope, decision, phase, state, error_code)
+			                          instance_id, scope, decision, phase, state, error_code, request_id)
 			SELECT gen_random_uuid(), now(), o.subject_hash, 'service', o.operation,
-			       o.instance_id, 'self', 'allow', 'outcome', 'succeeded', NULLIF('', '')
+			       o.instance_id, 'self', 'allow', 'outcome', 'succeeded', NULLIF('', ''),
+			       NULLIF($6, '')
 			  FROM updated u JOIN operations o ON o.id = u.id
 		 WHERE $5::boolean
 		)
-		SELECT id FROM updated`, id, fence, upstreamRef, jsonArg(result), writeAudit)
+		SELECT id FROM updated`, id, fence, upstreamRef, jsonArg(result), writeAudit, requestid.From(ctx))
 }
 
 // Fail implements T4: executing -> failed. Only call it when the upstream system
@@ -549,13 +551,14 @@ func (l *OperationLedger) failExec(ctx context.Context, ex executor, id, fence, 
 			-- so a crash between the tool's commit and the middleware cannot lose it.
 			-- This is the five self-ledgered money tools' only audit write.
 			INSERT INTO audit_events (event_id, occurred_at, subject_hash, identity_class, tool,
-			                          instance_id, scope, decision, phase, state, error_code)
+			                          instance_id, scope, decision, phase, state, error_code, request_id)
 			SELECT gen_random_uuid(), now(), o.subject_hash, 'service', o.operation,
-			       o.instance_id, 'self', 'allow', 'outcome', 'failed', NULLIF($3, '')
+			       o.instance_id, 'self', 'allow', 'outcome', 'failed', NULLIF($3, ''),
+			       NULLIF($5, '')
 			  FROM updated u JOIN operations o ON o.id = u.id
 		 WHERE $4::boolean
 		)
-		SELECT id FROM updated`, id, fence, errorCode, writeAudit)
+		SELECT id FROM updated`, id, fence, errorCode, writeAudit, requestid.From(ctx))
 }
 
 // Unknown implements T5: executing -> unknown. This is the transition that makes
@@ -584,13 +587,14 @@ func (l *OperationLedger) unknownExec(ctx context.Context, ex executor, id, fenc
 			-- so a crash between the tool's commit and the middleware cannot lose it.
 			-- This is the five self-ledgered money tools' only audit write.
 			INSERT INTO audit_events (event_id, occurred_at, subject_hash, identity_class, tool,
-			                          instance_id, scope, decision, phase, state, error_code)
+			                          instance_id, scope, decision, phase, state, error_code, request_id)
 			SELECT gen_random_uuid(), now(), o.subject_hash, 'service', o.operation,
-			       o.instance_id, 'self', 'allow', 'outcome', 'outcome_unknown', NULLIF($3, '')
+			       o.instance_id, 'self', 'allow', 'outcome', 'outcome_unknown', NULLIF($3, ''),
+			       NULLIF($6, '')
 			  FROM updated u JOIN operations o ON o.id = u.id
 		 WHERE $5::boolean
 		)
-		SELECT id FROM updated`, id, fence, errorCode, retryAfter.String(), writeAudit)
+		SELECT id FROM updated`, id, fence, errorCode, retryAfter.String(), writeAudit, requestid.From(ctx))
 }
 
 // RecoverExpired resolves rows whose owner died, so a money operation can never

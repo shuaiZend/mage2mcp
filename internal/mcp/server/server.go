@@ -27,6 +27,7 @@ import (
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/jobs"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/requestid"
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/security/auth"
 	"github.com/shuaiZend/mage2mcp/internal/security/confirm"
@@ -227,7 +228,7 @@ func installPolicy(srv *mcp.Server, opts Options) {
 			// ownership of the audit outcome; both the audit row and the result
 			// _meta carry the same id.
 			reqID := newRequestID()
-			ctx = context.WithValue(ctx, requestIDKey{}, reqID)
+			ctx = requestid.With(ctx, reqID)
 			ctx, callState := audit.WithCallState(ctx)
 			tool := call.Params.Name
 			instance := instanceArgument(call.Params.Arguments)
@@ -724,18 +725,11 @@ func codeOfResult(result mcp.Result) errs.Code {
 }
 
 // requestID returns the request id the audit and log carry, or "".
-func requestID(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-	if id, ok := ctx.Value(requestIDKey{}).(string); ok {
-		return id
-	}
-	return ""
-}
-
-// requestIDKey is the context key for the per-call request id.
-type requestIDKey struct{}
+//
+// The value lives in internal/mcp/requestid because the self-ledgered tools in
+// internal/magento write their own outcome audit row and cannot import this
+// package. Both sides read the same context key, so one call's rows share one id.
+func requestID(ctx context.Context) string { return requestid.From(ctx) }
 
 const platformInfoToolName = "platform.info"
 

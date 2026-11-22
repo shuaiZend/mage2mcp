@@ -32,6 +32,7 @@ import (
 
 	errs "github.com/shuaiZend/mage2mcp/internal/core/errors"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/registry"
+	"github.com/shuaiZend/mage2mcp/internal/mcp/requestid"
 	"github.com/shuaiZend/mage2mcp/internal/mcp/toolerr"
 	"github.com/shuaiZend/mage2mcp/internal/security/audit"
 	"github.com/shuaiZend/mage2mcp/internal/security/auth"
@@ -481,6 +482,10 @@ func (o *Operations) Dispose(ctx context.Context, id string, judgment storage.Di
 		Tool: operationDisposeToolName, Instance: record.InstanceID,
 		Scope: "dispose", Phase: "outcome",
 		Decision: disposeAuditDecision(judgment), State: disposeAuditState(judgment),
+		// The request id is what ties this row to the middleware's intent row for
+		// the same call. It lives in a package both sides can import because this
+		// one cannot import internal/mcp/server (cycle).
+		RequestID: requestid.From(ctx),
 	}
 	if _, err := o.ledger.Dispose(ctx, id, judgment, note, upstreamRef, event); err != nil {
 		return nil, err
