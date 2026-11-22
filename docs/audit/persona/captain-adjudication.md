@@ -434,3 +434,48 @@ ObserveOperation(ctx, "magento.order.create", "customer", "7") -> applied
 
 **这条值得记**：修一个「记录语义错」的缺陷，可能让**依赖那个错误语义的守卫失效**。t18 没有
 改完就走，而是加探针验证了改动对下游的影响——这正是我们应该对所有「改数据语义」的修复做的。
+
+## 亲验：t20 的两条 P0 —— 一条是「修复了但用不到」，一条是「隐私承诺已不成立」
+
+t20 盘点出 20 条说明面缺口。其中两条我自己核了，都成立，而且比报告描述的更严重。
+
+### GG-01：U-11 的运费修复对 agent **完全不可达**
+
+**实测（生产 v0.11.7）**：
+
+```text
+magento.creditmemo.create {"order_id":41, "items":[...], "shipping_amount":0}
+→ invalid_argument: validating root: unexpected additional properties ["shipping_amount"]
+```
+
+原因：`shipping_amount` 加进了 Go 结构体（`order_documents_write.go:64`），但 **`creditmemoCreateSchema`
+是手写的字符串**（`write_tools.go:1085`），有 `"additionalProperties": false`，没加这个字段。
+
+**后果比一个字段没生效更严重**：我在 v0.11.7 的发布说明里写了「It now takes `shipping_amount` and
+refunds remaining shipping only when the last units go」。**这句话是假的**——参数在 schema 层就被拒绝，
+根本到不了 Go 结构体。
+
+这是本轮最值得记的教训：**Go 结构体改了不等于工具契约改了。** 这个项目的工具 schema 有两套真相——
+结构体上的 `jsonschema` tag（用于输出）与手写的 schema 字符串（用于输入校验）。修复轮只改了前者。
+
+### GG-02：隐私承诺已经不成立
+
+`OrderAddress` 包含 `Firstname`/`Lastname`/`Street`/`City`/`Postcode`/`Telephone`/`Email`，
+`Order` 含 `ShippingAddress`/`BillingAddress`——**订单读取返回完整地址与邮箱**。
+
+但三处都说不是：
+
+| 位置 | 原文 |
+|---|---|
+| `tools.go:323`（工具描述） | "Customer email, addresses, and payment data are not returned" |
+| `order.go:74-77`（结构体注释） | "Customer email, addresses, and payment details are intentionally absent … keeps the tool free of personal data" |
+| `README.md:38-39` | "PII stays inside Magento … order reads omit email, addresses, and payment data" |
+
+这大概率是 U-31（客服岗位报「order.get 缺地址，无法确认发货」）修复时**有意加上地址**，但没人回头改
+那三处声明。
+
+**为什么这条比普通文档滞后严重**：隐私声明是**承诺**，不是描述。用户会据此判断能不能把网关放在
+PII 敏感环境里。一条不成立的隐私承诺比没有承诺更危险——它让人放心地做了一个本不该做的决定。
+
+修法必须二选一并写清理由：要么去掉地址（牺牲客服可用性），要么**如实声明地址会被返回**并说明理由
+（支持需要它确认发货）。不能只改一处留两处矛盾。
