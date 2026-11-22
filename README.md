@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/shuaiZend/mage2mcp?include_prereleases&sort=semver)](https://github.com/shuaiZend/mage2mcp/releases)
-[![Latest release v0.11.1](https://img.shields.io/badge/latest-v0.11.1-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1)
+[![Latest release v0.11.7](https://img.shields.io/badge/latest-v0.11.7-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.7)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](go.mod)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25%20%7C%202026--07--28-7c3aed.svg)](docs/mcp-conformance.md)
@@ -12,14 +12,19 @@ One endpoint, one auth model, one audit trail — with typed, documented tools t
 agents can actually use safely. Writes are two-step human-approved; reads are
 read-only by default and PII-safe.
 
-> **Status: v0.11.7 (pre-1.0).** 115 tools at maximal configuration (104
-> Magento); the read-only default registers 56, and a Magento-enabled
-> deployment 105. Read-only
-> acceptance against a live Magento production store covered 23 checks and a
-> 30-day business drill-down (924 orders) with no writes; write verification ran
-> against a disposable demo. No live Magento integration test exists. Releases
-> ship signed artifacts, SBOM, and a multi-arch image. Interfaces may still
-> change with an ADR before 1.0. See [verification status](#verification-status).
+> [!TIP]
+> **New here?** The [tutorial](docs/tutorial.md) takes you from an empty machine to an agent
+> that reads a real store, changes a price, places an order and refunds it — with the approval
+> gate exercised along the way, not described from a distance. Translated:
+> [中文](docs/i18n/zh/tutorial.md) · [Español](docs/i18n/es/tutorial.md) ·
+> [Nederlands](docs/i18n/nl/tutorial.md).
+
+In a hurry? [Quickstart](#quickstart-development) · [Docker](#docker) ·
+[all documentation](docs/index.md).
+
+> **Status: v0.11.7 (pre-1.0).** Interfaces may still change with an ADR before 1.0.
+> What is tested and what is not is in [verification status](#verification-status); what is
+> known to be missing is in [known limitations](docs/audit/known-limitations.md).
 
 ## Why mage2mcp
 
@@ -41,14 +46,15 @@ read-only by default and PII-safe.
 
 ## Tool surface (up to 115 tools)
 
-The count is a function of configuration: the default read-only configuration
-registers 54 tools (43 Magento); `tools.writes: true` adds 52 Magento write
-tools, `database.url` adds 6 asynchronous import tools, and a `bindings` block
-adds the unified tool. The table below is the maximal surface.
+The count is a function of configuration: the read-only default registers 56 tools
+(45 Magento); `tools.writes: true` adds 53 Magento write tools, `database.url` adds the
+asynchronous import tools, and a `bindings` block adds the unified tool. The table below is
+the maximal surface; [implemented-tools.md](docs/implemented-tools.md) is generated from the
+registry and is the authoritative count.
 
 | Module | Tools at full configuration | Examples |
 |---|---:|---|
-| Magento 2 | 101 | products, configurable variants, categories, MSI inventory, orders, invoices/shipments/credit memos, customers, media, imports, business analysis |
+| Magento 2 | 104 | products, configurable variants, categories, MSI inventory, orders, invoices/shipments/credit memos, customers, media, imports, business analysis |
 | Cloudflare | 3 | zone traffic, security events, security summary |
 | Google Analytics 4 | 6 | traffic reports, realtime, ecommerce, property metadata/capabilities |
 | Unified analytics | 1 | Magento vs GA4 traffic comparison |
@@ -78,7 +84,7 @@ Highlights of the Magento surface:
 |---|---|
 | Source code | Go gateway: MCP server, auth, RBAC, audit, metrics, PostgreSQL queue and operation ledger, Docker |
 | Tests and CI | Unit, race, contract, PostgreSQL-backed and fake-Magento e2e tests; GitHub CI is a manual pre-release workflow, `scripts/local-ci.sh` is the day-to-day gate |
-| Releases | [v0.11.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1) with signed artifacts, checksums, SBOM, multi-arch GHCR image |
+| Releases | [v0.11.7](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.7) with signed artifacts, checksums, SBOM, multi-arch GHCR image |
 | Verification | Read-only acceptance against a live Magento store (23 checks, 924-order business report); write verification on a disposable demo; **no live Magento integration test** |
 | Documentation | Architecture, ADRs (22), tool catalog, field reference, configuration, compatibility, operations, release notes |
 | License and community | [Apache-2.0](LICENSE), [NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md) |
@@ -96,12 +102,17 @@ Highlights of the Magento surface:
 
 ## Releases
 
-The latest release is [**v0.11.1**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1)
-(2026-11-20), the production-readiness remediation: a full audit of the security,
-Magento, reliability, MCP, performance and documentation surfaces, with every
-confirmed P0 fixed and independently reviewed. It adds the operation ledger, job
-fencing, per-instance outbound limits and a registry-generated tool inventory.
-Read the [v0.11.1 release notes](docs/releases/v0.11.1.md).
+The latest release is [**v0.11.7**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.7)
+(2026-11-22), the persona pass: seven agents with different jobs tested the gateway the way
+their work actually uses it, produced 101 findings, and the deduplicated 85 were repaired. It
+closes a silent repricing bug where a weight edit rewrote the selling price, makes partial
+refunds stop refunding all shipping, repairs tier prices in both directions, and gives
+`operation_unknown` query and disposition tools so an ambiguous write has an exit instead of
+sitting forever. Read the [v0.11.7 release notes](docs/releases/v0.11.7.md).
+
+Recent releases: [v0.11.6](docs/releases/v0.11.6.md) (semantic-layer pass: partial refunds and
+shipments were applied to the whole order) · [v0.11.5](docs/releases/v0.11.5.md) ·
+[v0.11.4](docs/releases/v0.11.4.md) · [all releases](https://github.com/shuaiZend/mage2mcp/releases).
 
 Every tagged release publishes:
 
@@ -124,6 +135,12 @@ sha256sum --check checksums.txt
 
 | Release | Notes | Highlights |
 |---|---|---|
+| [v0.11.7](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.7) | [release notes](docs/releases/v0.11.7.md) | Persona pass: 85 findings repaired. Silent repricing from a weight edit; partial refunds stopped refunding all shipping; tier prices usable in both directions; `operation_unknown` gained query and disposition tools |
+| [v0.11.6](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.6) | [release notes](docs/releases/v0.11.6.md) | Semantic-layer pass: partial refunds and shipments were applied to the whole order; approval audit rows rejected by a CHECK constraint; instance binding on the default RBAC policy |
+| [v0.11.5](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.5) | [release notes](docs/releases/v0.11.5.md) | Import status fix that would have turned a bulk delisting into a bulk listing; product-copy instructions |
+| [v0.11.4](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.4) | [release notes](docs/releases/v0.11.4.md) | Money path fixes: invoice, shipment and credit memo document creation |
+| [v0.11.3](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.3) | [release notes](docs/releases/v0.11.3.md) | Live-store defects and the route/schema corrections they exposed |
+| [v0.11.2](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.2) | [release notes](docs/releases/v0.11.2.md) | Defects found by the live Magento run |
 | [v0.11.1](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.1) | [release notes](docs/releases/v0.11.1.md) | Operation ledger and reconciler; RBAC scope ladder enforced; confirmation bound to tool and instance; job fencing; per-instance limits; generated tool inventory |
 | [v0.11.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.0) | [release notes](docs/releases/v0.11.0.md) | Write-safety prompt; product-copy fixes D1–D3, D5, D6, D8–D11; admin credential form |
 | [v0.10.0](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.10.0) | [release notes](docs/releases/v0.10.0.md) | Admin-credential auto-token; CI speed-ups; Actions refresh; katex advisory |
