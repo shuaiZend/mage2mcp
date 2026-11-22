@@ -195,8 +195,8 @@ const importsPrompt = "" +
 	"3. `magento.import.start` — one unique `idempotency_key` per import.\n" +
 	"4. `magento.import.status` — poll to a terminal state, parse `job.result` for counts;\n" +
 	"   `magento.import.batch` names the failed rows.\n" +
-	"6. `magento.import.resume` (failed rows only) or `magento.import.cancel`.\n" +
-	"7. `magento.products.get` on a sample: a \"successful\" job with an unchanged price is the failure\n" +
+	"5. `magento.import.resume` (failed rows only) or `magento.import.cancel`.\n" +
+	"6. `magento.products.get` on a sample: a \"successful\" job with an unchanged price is the failure\n" +
 	"   to check for.\n" +
 	"\n" +
 	"Mutually exclusive with `magento.products.bulk_update` for `price`/`name`: both are ignored inside\n" +

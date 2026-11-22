@@ -309,8 +309,8 @@ const (
 	// GG-10: an agent that does not know which columns are required, or what one bad
 	// row does, sends a payload it cannot repair. Both facts belong here because they
 	// decide the shape of the file, not the semantics of a single field.
-	importStartToolDescription = "Queues a bounded CSV/JSON product import (8 MiB, 5000 rows, base64 within the 16 MiB body limit) after structural validation. " +
-		"Returns a job id; poll import.status for the report. " +
+	importStartToolDescription = "Queues a bounded CSV/JSON product import (8 MiB, 5000 rows, base64 within the 16 MiB body limit) after validation. " +
+		"Returns a job id; poll import.status. " +
 		"REQUIRED COLUMNS: sku on every row; a row that creates a product also needs name, attribute_set_id and type_id (simple|virtual). An update row may omit them: a sku,price file is a valid bulk reprice. Other columns become attributes. " +
 		"ONLY sku IS CHECKED BEFORE THE JOB EXISTS: a bad sku rejects the whole payload (validation_failed, details.rows naming every bad row). A create row missing one of them still returns a job id and fails per row at execution: reconcile with partial:true and failures[]. Execution failures are per-row, not retried. " +
 		"Write operation: requires confirmation and a configured database queue. " +

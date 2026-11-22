@@ -23,8 +23,8 @@ job, `database.url` for the job tools to exist.
 3. `magento.import.start` — one unique `idempotency_key` per import.
 4. `magento.import.status` — poll to a terminal state, parse `job.result` for counts;
    `magento.import.batch` names the failed rows.
-6. `magento.import.resume` (failed rows only) or `magento.import.cancel`.
-7. `magento.products.get` on a sample: a "successful" job with an unchanged price is the failure
+5. `magento.import.resume` (failed rows only) or `magento.import.cancel`.
+6. `magento.products.get` on a sample: a "successful" job with an unchanged price is the failure
    to check for.
 
 Mutually exclusive with `magento.products.bulk_update` for `price`/`name`: both are ignored inside
