@@ -566,25 +566,26 @@ const (
 	// the derived idempotency key, and the outcomes that are terminal. It is phrased
 	// conditionally because a deployment with tools.writes=false registers no write
 	// tools at all.
-	instructionWrites = "WRITES (when this deployment enables them): a write needs two steps. " +
+	instructionWrites = "WRITES (if enabled): a write needs two steps. " +
 		"The first call returns confirmation_required with a confirmation_id; resend the same " +
 		"arguments plus that id. The approver must be a different human identity; a service or " +
 		"agent token cannot approve. The approval is bound to the tool, the instance and a hash " +
 		"of the arguments, so an injected write cannot execute silently. Omitting " +
 		"idempotency_key derives a key from the arguments, so an identical call replays instead " +
-		"of executing; send a UUID per real operation. operation_unknown is never retryable: " +
-		"poll with magento.operation.get, and use magento.operation.dispose to record a human " +
-		"judgement. retryable:false and unsupported_capability are terminal."
+		"of executing; send a UUID per real operation. Reuse that same key when retrying: a " +
+		"fresh key after a timeout runs the operation twice. operation_unknown is never " +
+		"retryable: poll with magento.operation.get, and use magento.operation.dispose to " +
+		"record a human judgement. retryable:false and unsupported_capability are terminal."
 
 	// instructionReads lists the output semantics that are not what the field name
 	// suggests: legacy stock, captured, report revenue, base price, UTC timestamps.
-	instructionReads = "READS: inventory qty is legacy and can be 0 while is_in_stock is true; " +
-		"judge availability by is_in_stock, per-source numbers by inventory.source_items. " +
-		"captured means this call asked to capture and the invoice came back paid, not that " +
-		"money moved. Report revenue sums grand_total for every order in the window, canceled " +
-		"included, refunds not deducted. product price is the global base price; store-scope " +
-		"price or special_price decides what a shopper pays, so read the order line. " +
-		"created_at is UTC."
+	instructionReads = "READS: inventory qty is legacy, may be 0 while is_in_stock is true; " +
+		"judge by is_in_stock, per-source via magento.inventory.source_items. " +
+		"captured means capture was requested and the invoice came back paid, not that " +
+		"money moved. Report revenue sums grand_total in the window, canceled included, " +
+		"refunds not deducted; caps 366 days/1000 orders, truncated/excluded_orders show " +
+		"gaps. product price is the global base price; store-scope or special_price decides " +
+		"it; read the order line. created_at is UTC."
 
 	// instructionDiscovery covers the metadata an agent should trust and the one error
 	// code that is a capability gap rather than a failure.

@@ -2160,6 +2160,9 @@ func TestInstructionsCarryRedLines(t *testing.T) {
 		"dispose endpoint":         "magento.operation.dispose",
 		"terminal codes":           "unsupported_capability are terminal",
 		"legacy stock":             "is_in_stock",
+		"retry reuses the key":     "Reuse that same key when retrying",
+		"report window cap":        "366 days/1000 orders",
+		"report truncation":        "truncated/excluded_orders",
 		"captured semantics":       "not that money moved",
 		"report revenue caliber":   "canceled included, refunds not deducted",
 		"base price":               "global base price",
@@ -3279,5 +3282,93 @@ func TestIdempotencyKeyDescriptionsStateTheDerivedKey(t *testing.T) {
 	}
 	if seen == 0 {
 		t.Fatal("no tool exposes idempotency_key")
+	}
+}
+
+// F1 (t51): the instructions named `inventory.source_items` without its module
+// prefix, so an agent following the text could not resolve the tool. The
+// cross-reference test only looked for `magento.*` tokens and missed it. This
+// check covers both shapes: every `magento.*`/`platform.*` token must be a
+// registered tool, and a registered tool must never appear in its short form.
+func TestInstructionToolNamesResolve(t *testing.T) {
+	tools := fullMagentoTools(t)
+	known := make(map[string]bool, len(tools)+1)
+	for name := range tools {
+		known[name] = true
+	}
+	// platform.info is server-owned, not part of the Magento registry.
+	known["platform.info"] = true
+
+	fullNameRE := regexp.MustCompile(`\b(?:magento|platform)\.[a-z][a-z0-9_.]*[a-z0-9]\b`)
+	for _, ref := range fullNameRE.FindAllString(serverInstructions, -1) {
+		if !known[ref] {
+			t.Fatalf("instructions reference %q, which is not a registered tool", ref)
+		}
+	}
+
+	// A short form (the registered name minus "magento.") is exactly the F1 bug:
+	// it reads like a tool and resolves to nothing.
+	for name := range tools {
+		short := strings.TrimPrefix(name, "magento.")
+		if short == name || short == "" {
+			continue
+		}
+		if strings.Contains(serverInstructions, "magento."+short) {
+			continue
+		}
+		shortRE := regexp.MustCompile(`\b` + regexp.QuoteMeta(short) + `\b`)
+		if shortRE.MatchString(serverInstructions) {
+			t.Fatalf("instructions name %q without its module prefix; the registered tool is %q", short, name)
+		}
+	}
+}
+
+// F2 (t51): compressing the instructions moved the copy recipe to the
+// product_copy prompt, but the non-Magento mapping section was lost in the move:
+// the old text said "WHEN THE SOURCE IS NOT MAGENTO (Shopify, WooCommerce, …)"
+// and neither the instructions nor the prompt mentioned it afterwards. This test
+// keeps the substance in the prompt a client actually receives.
+func TestProductCopyPromptCarriesNonMagentoMapping(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(Handler(srv, Options{Registry: mustRegistry(t)}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "prompt-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+
+	result, err := session.GetPrompt(ctx, &mcp.GetPromptParams{Name: "product_copy"})
+	if err != nil {
+		t.Fatalf("prompts/get product_copy: %v", err)
+	}
+	if len(result.Messages) == 0 {
+		t.Fatal("product_copy has no messages")
+	}
+	text, ok := result.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("product_copy body is %T, want text", result.Messages[0].Content)
+	}
+	body := normaliseProse(text.Text)
+	// Each phrase is one piece of the mapping method the old instructions carried.
+	for _, want := range []string{
+		"shopify",                // names the non-Magento sources
+		"not magento",            // says the source model differs
+		"do not translate names", // analyse the model instead of renaming
+		"how the source represents variants",
+		"tree or a flat tag list",
+		"whether it has skus at all",
+		"one child per variant",
+		"confirm every uncertain mapping before writing",
+		"not visible on the product page",
+		"never create an attribute, attribute set, category, website or store view",
+	} {
+		if !strings.Contains(body, normaliseProse(want)) {
+			t.Fatalf("product_copy lost %q; the non-Magento mapping method is missing", want)
+		}
 	}
 }
