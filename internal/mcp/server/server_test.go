@@ -2896,7 +2896,11 @@ type guideTool struct {
 	Output        map[string]any
 }
 
-func fullMagentoTools(t *testing.T) map[string]guideTool {
+// guidanceSession connects an MCP client to a server carrying the full Magento
+// catalogue. The guidance checks read what a client actually sees (tools/list and
+// prompts/list), not what the source declares, so a registration failure cannot
+// hide behind a constant.
+func guidanceSession(t *testing.T) (context.Context, *mcp.ClientSession) {
 	t.Helper()
 	client, err := magento.NewClient(magento.ClientConfig{
 		BaseURL: "https://shop.example.com", StoreCode: "default", Signer: noopTestSigner{},
@@ -2927,19 +2931,43 @@ func fullMagentoTools(t *testing.T) map[string]guideTool {
 		t.Fatalf("NewMCP: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := srv.Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatalf("server connect: %v", err)
 	}
-	defer func() { _ = serverSession.Close() }()
+	t.Cleanup(func() { _ = serverSession.Close() })
 	sdkClient := mcp.NewClient(&mcp.Implementation{Name: "guidance-test", Version: "0"}, nil)
 	session, err := sdkClient.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatalf("client connect: %v", err)
 	}
-	defer func() { _ = session.Close() }()
+	t.Cleanup(func() { _ = session.Close() })
+	return ctx, session
+}
+
+// publishedPrompts is the prompt surface a client can actually ask for.
+func publishedPrompts(t *testing.T) map[string]bool {
+	t.Helper()
+	ctx, session := guidanceSession(t)
+	listed, err := session.ListPrompts(ctx, nil)
+	if err != nil {
+		t.Fatalf("prompts/list: %v", err)
+	}
+	out := make(map[string]bool, len(listed.Prompts))
+	for _, prompt := range listed.Prompts {
+		out[prompt.Name] = true
+	}
+	if len(out) == 0 {
+		t.Fatal("prompts/list returned nothing; a prompt reference cannot be validated against an empty list")
+	}
+	return out
+}
+
+func fullMagentoTools(t *testing.T) map[string]guideTool {
+	t.Helper()
+	ctx, session := guidanceSession(t)
 	listed, err := session.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
@@ -3157,20 +3185,36 @@ func countProperties(properties map[string]any) int {
 // registry, so a cross-reference cannot rot into a dead end.
 func TestCrossReferencesExist(t *testing.T) {
 	tools := fullMagentoTools(t)
+	prompts := publishedPrompts(t)
 	known := make(map[string]bool, len(tools))
 	for name := range tools {
 		known[name] = true
 	}
-	// Prompts are not tools but are legitimately named in guidance text.
-	known["product_copy"] = true
-	known["write_safety"] = true
 	referenceRE := regexp.MustCompile(`magento\.[a-z][a-z0-9_.]*[a-z0-9]`)
+	// A prompt is named in two documented shapes: "Recipe: <name>." and
+	// "the <name> prompt". Both must resolve to a prompt prompts/list actually
+	// publishes. A hardcoded allowlist is what let a reference to a prompt that
+	// did not exist ship (review F3): it passed whether or not the prompt was
+	// registered. The patterns are deliberately tight — "for the product." is
+	// prose, not a prompt reference.
+	promptReferenceREs := []*regexp.Regexp{
+		regexp.MustCompile(`Recipe: ([a-z][a-z0-9_]+)\.`),
+		regexp.MustCompile(`the ([a-z][a-z0-9_]+) prompt`),
+	}
 	check := func(where, text string) {
 		t.Helper()
 		for _, ref := range referenceRE.FindAllString(text, -1) {
 			ref = strings.TrimSuffix(ref, ".")
 			if !known[ref] {
 				t.Fatalf("%s references %q, which is not a registered tool", where, ref)
+			}
+		}
+		for _, re := range promptReferenceREs {
+			for _, match := range re.FindAllStringSubmatch(text, -1) {
+				name := match[1]
+				if !prompts[name] {
+					t.Fatalf("%s references the %q prompt, which prompts/list does not publish", where, name)
+				}
 			}
 		}
 	}
