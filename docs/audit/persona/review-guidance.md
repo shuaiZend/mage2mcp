@@ -102,8 +102,10 @@ REVIEW instructions runes=2474                     # a90a303
 discovery **288**/300、copy **446**/450，+8 个分隔符 = **2,474**。
 
 两条要记住的：
+
 + `reads` 只剩 **2 个字符**余量（498/500）。这是设计使然（超预算即失败），但下次改读语义必然要动预算，
   别误判成回归。
+
 + 历史基线：`e1715a3` 时 instructions 是 **3,157** 且 15/16 红线缺失——那正是 F1 的证据，`cd97a6d` 后消失。
 
 ## 4. 隐私声明：三处一致 + 真实调用对照
@@ -189,6 +191,7 @@ $ git status                              → ?? skills/  ?? scripts/gen-prompts
 + **O2**：`TestOrderGetAddressDisclosureIsConsistent` 把整个 `order.go` 当结构体注释（§4）。建议按 AST 取。
 + **O3**：`guidanceExemptions` 把 4 个工具（`import.start/cancel/resume`、`operation.list`）排除在字段/
   instance 覆盖之外，理由写清了（常量在别的文件），但它们不在「95% 覆盖」的分母约束里，后续应回收。
+
 + **O4**：`instructionReads` 只剩 2 字符余量（498/500），属设计内，但下次改读语义要动预算。
 
 ## 8. 断言放宽审查（逐条看 diff）
