@@ -2169,6 +2169,18 @@ func TestInstructionsCarryRedLines(t *testing.T) {
 		"utc timestamps":           "created_at is UTC",
 		"authoritative tool list":  "platform.info",
 		"hints untrustworthy":      "Do not trust annotation hints",
+		// G2-SO-06: the approval step was missing from the two-step sentence, so a
+		// client that followed it resent the id and got confirmation_required with
+		// no id. The instructions must name the step and the command that does it.
+		"three steps":                 "three steps: call",
+		"approval command":            "mage2mcp-admin approve",
+		"unapproved resend has no id": "with no id",
+		// G2-SO-08: replayed:true is a silent lie unless the reader knows the write
+		// did not run and the body is the earlier result.
+		"replay did not execute":   "this call did not execute",
+		"replay needs a read-back": "read the entity back",
+		// G2-SO-10: three confirmation codes were missing from the error table.
+		"confirmation codes": "confirmation_used/expired/param_mismatch",
 	} {
 		if !strings.Contains(serverInstructions, want) {
 			t.Fatalf("red line %q (%q) is missing from the instructions", name, want)
@@ -3370,5 +3382,92 @@ func TestProductCopyPromptCarriesNonMagentoMapping(t *testing.T) {
 		if !strings.Contains(body, normaliseProse(want)) {
 			t.Fatalf("product_copy lost %q; the non-Magento mapping method is missing", want)
 		}
+	}
+}
+
+// fetchWriteContractPrompt fetches the write_contract prompt over the wire, so a stale
+// generated file fails here rather than passing against the reference on disk.
+func fetchWriteContractPrompt(t *testing.T) string {
+	t.Helper()
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(Handler(srv, Options{Registry: mustRegistry(t)}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "write-contract-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+
+	result, err := session.GetPrompt(ctx, &mcp.GetPromptParams{Name: "write_contract"})
+	if err != nil {
+		t.Fatalf("prompts/get write_contract: %v", err)
+	}
+	if len(result.Messages) == 0 {
+		t.Fatal("write_contract has no messages")
+	}
+	text, ok := result.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("write_contract body is %T, want text", result.Messages[0].Content)
+	}
+	return normaliseProse(text.Text)
+}
+
+// TestWriteContractPromptCarriesTheWriteContract pins the four write-contract facts
+// t45 measured on v0.11.9 and this round corrected. Each assertion is one defect:
+// a missing approval step (G2-SO-06), an unreadable replayed flag (G2-SO-08), four
+// undocumented confirmation codes (G2-SO-10), and error details the text promised
+// but the gateway never sends (G2-SO-03).
+func TestWriteContractPromptCarriesTheWriteContract(t *testing.T) {
+	body := fetchWriteContractPrompt(t)
+	for name, want := range map[string]string{
+		"three steps":             "three steps",
+		"approval command":        "mage2mcp-admin approve",
+		"unapproved resend":       "confirmation_required with no id",
+		"code: required":          "confirmation_required",
+		"code: param mismatch":    "confirmation_param_mismatch",
+		"code: used":              "confirmation_used",
+		"code: expired":           "confirmation_expired",
+		"replay did not execute":  "this call did not execute",
+		"replay read-back":        "read the entity back",
+		"replay has no operation": "a replay has no operation_id",
+		"details.validation":      "details.validation",
+		"no details.reason":       "no details.reason exists",
+		"state-forbidden is not an illegal_transition": "not illegal_transition",
+		"pre-checks after approval":                    "pre-checks run after approval",
+		"operation tools take no instance":             "neither takes instance",
+		"price and status":                             "status: 2 off (404)",
+		"visibility":                                   "visibility: 1 hides but keeps it enabled",
+	} {
+		if !strings.Contains(body, normaliseProse(want)) {
+			t.Fatalf("write_contract prompt lost %q (%q)", name, want)
+		}
+	}
+}
+
+// TestShipRecipeTellsTheTruthAboutCancelAndTruncation pins the two ship-recipe
+// corrections from t45. Both were the opposite of the old text: Magento silently
+// truncates a quantity above the unshipped amount (G2-SO-05, which also corrects
+// round-1 SO-05 to NOT-A-DEFECT), and canceling a shipped order is not blocked
+// (G2-SO-01) — it leaves an order that is canceled, shipped and has no return.
+func TestShipRecipeTellsTheTruthAboutCancelAndTruncation(t *testing.T) {
+	body := fetchWriteContractPrompt(t)
+	for name, want := range map[string]string{
+		"truncation is silent":  "silently truncates",
+		"round-1 correction":    "round-1 so-05 → not-a-defect",
+		"compare total_qty":     "compare total_qty with your request",
+		"cancel is not blocked": "canceling a shipped order is not blocked",
+		"dirty end state":       "leaves it canceled + shipped + no return",
+	} {
+		if !strings.Contains(body, normaliseProse(want)) {
+			t.Fatalf("ship recipe lost %q (%q)", name, want)
+		}
+	}
+	// The old text claimed the opposite; it must not come back.
+	if strings.Contains(body, "needs a return") {
+		t.Fatal("ship recipe still claims canceling after a shipment needs a return")
 	}
 }
