@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/shuaiZend/mage2mcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/shuaiZend/mage2mcp?include_prereleases&sort=semver)](https://github.com/shuaiZend/mage2mcp/releases)
-[![Latest release v0.11.8](https://img.shields.io/badge/latest-v0.11.8-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.8)
+[![Latest release v0.11.9](https://img.shields.io/badge/latest-v0.11.9-7c3aed.svg)](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.9)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](go.mod)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25%20%7C%202026--07--28-7c3aed.svg)](docs/mcp-conformance.md)
@@ -22,7 +22,7 @@ read-only by default and PII-safe.
 In a hurry? [Quickstart](#quickstart-development) · [Docker](#docker) ·
 [all documentation](docs/index.md).
 
-> **Status: v0.11.8 (pre-1.0).** Interfaces may still change with an ADR before 1.0.
+> **Status: v0.11.9 (pre-1.0).** Interfaces may still change with an ADR before 1.0.
 > What is tested and what is not is in [verification status](#verification-status); what is
 > known to be missing is in [known limitations](docs/audit/known-limitations.md).
 
@@ -87,7 +87,7 @@ Highlights of the Magento surface:
 |---|---|
 | Source code | Go gateway: MCP server, auth, RBAC, audit, metrics, PostgreSQL queue and operation ledger, Docker |
 | Tests and CI | Unit, race, contract, PostgreSQL-backed and fake-Magento e2e tests; GitHub CI is a manual pre-release workflow, `scripts/local-ci.sh` is the day-to-day gate |
-| Releases | [v0.11.8](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.8) with signed artifacts, checksums, SBOM, multi-arch GHCR image |
+| Releases | [v0.11.9](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.9) with signed artifacts, checksums, SBOM, multi-arch GHCR image |
 | Verification | Read-only acceptance against a live Magento store (23 checks, 924-order business report); write verification on a disposable demo; **no live Magento integration test** |
 | Documentation | Architecture, ADRs (22), tool catalog, field reference, configuration, compatibility, operations, release notes |
 | License and community | [Apache-2.0](LICENSE), [NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md) |
@@ -105,13 +105,13 @@ Highlights of the Magento surface:
 
 ## Releases
 
-The latest release is [**v0.11.8**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.8)
+The latest release is [**v0.11.9**](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.9)
 (2026-11-22), the persona pass: seven agents with different jobs tested the gateway the way
 their work actually uses it, produced 101 findings, and the deduplicated 85 were repaired. It
 closes a silent repricing bug where a weight edit rewrote the selling price, makes partial
 refunds stop refunding all shipping, repairs tier prices in both directions, and gives
 `operation_unknown` query and disposition tools so an ambiguous write has an exit instead of
-sitting forever. Read the [v0.11.8 release notes](docs/releases/v0.11.8.md).
+sitting forever. Read the [v0.11.9 release notes](docs/releases/v0.11.9.md).
 
 Recent releases: [v0.11.6](docs/releases/v0.11.6.md) (semantic-layer pass: partial refunds and
 shipments were applied to the whole order) · [v0.11.5](docs/releases/v0.11.5.md) ·
@@ -138,7 +138,7 @@ sha256sum --check checksums.txt
 
 | Release | Notes | Highlights |
 |---|---|---|
-| [v0.11.8](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.8) | [release notes](docs/releases/v0.11.8.md) | Persona pass: 85 findings repaired. Silent repricing from a weight edit; partial refunds stopped refunding all shipping; tier prices usable in both directions; `operation_unknown` gained query and disposition tools |
+| [v0.11.9](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.9) | [release notes](docs/releases/v0.11.9.md) | Persona pass: 85 findings repaired. Silent repricing from a weight edit; partial refunds stopped refunding all shipping; tier prices usable in both directions; `operation_unknown` gained query and disposition tools |
 | [v0.11.6](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.6) | [release notes](docs/releases/v0.11.6.md) | Semantic-layer pass: partial refunds and shipments were applied to the whole order; approval audit rows rejected by a CHECK constraint; instance binding on the default RBAC policy |
 | [v0.11.5](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.5) | [release notes](docs/releases/v0.11.5.md) | Import status fix that would have turned a bulk delisting into a bulk listing; product-copy instructions |
 | [v0.11.4](https://github.com/shuaiZend/mage2mcp/releases/tag/v0.11.4) | [release notes](docs/releases/v0.11.4.md) | Money path fixes: invoice, shipment and credit memo document creation |

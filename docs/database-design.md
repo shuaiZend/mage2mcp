@@ -1,6 +1,6 @@
 # Database design
 
-**Status:** as-built for v0.11.8
+**Status:** as-built for v0.11.9
 (2026-11-20). This document describes the PostgreSQL schema that ships in
 `internal/storage/migrations/000001..000006`. It is not a design proposal.
 

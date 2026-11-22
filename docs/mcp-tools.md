@@ -1,6 +1,6 @@
 # MCP tool contract
 
-**Status:** as-built for v0.11.8
+**Status:** as-built for v0.11.9
 (2026-11-20). This document defines how tools are named, validated, authorized,
 confirmed, and versioned. The authoritative list of registered tools is
 [implemented-tools.md](implemented-tools.md); this page does not duplicate it.

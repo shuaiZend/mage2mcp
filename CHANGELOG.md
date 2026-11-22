@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.9] - 2026-11-22
+
+Gate integrity: the local gate had been red since 2026-11-21, and three problems were hiding
+each other. Full notes: [docs/releases/v0.11.9.md](docs/releases/v0.11.9.md).
+
+### Fixed
+
+- **The test suite raced itself.** `go test -race ./...` failed at random, and
+  `internal/storage` failed on its own: cleanup was two independent `DELETE`s, and the schema
+  name was fixed, so two concurrent test processes shared one set of tables. Cleanup is now a
+  single `TRUNCATE ... CASCADE`, and each test process gets its own schema, dropped afterwards.
+  This matters because `go test -race ./...` is the release workflow's verify command — the
+  previous release passing was luck.
+- **`Escalate` never recorded why a row was escalated.** `cmd/worker` passes a reason and the
+  ledger discarded it, writing the literal `'escalated'`. An operator looking at
+  `operation.list{needs_attention:true}` — the view built for exactly this — learned that a row
+  was escalated and nothing about why. It now lands as `escalated: <reason>`, with `escalated`
+  still the prefix of every row.
+- **A test leaked a goroutine** that committed a transaction after the test returned, writing to
+  a table neighbouring tests were asserting on.
+- **101 pre-existing lint findings**, cleared with no behaviour change and no blanket
+  suppression. Three were real: two compared wrapped errors with `==` (one was an audit test that
+  silently read "no audit row" as "row present"), and two doc comments for `JobQueue.Cancel` were
+  attached to `PruneJobs`, leaving the exported `Cancel` with no documentation at all and its
+  tenant-isolation rule written down nowhere.
+- **The skip gate in `local-ci.sh` counted packages** as skipped tests, so it failed on every run
+  since it landed; and the failing-test extractor matched a field order `go test -json` never
+  produces, so a real failure printed an exit code and no names.
+
+### Added
+
+- `scripts/check-test-inventory.sh`, wired into CI and `local-ci.sh`: a test that disappears
+  between two refs fails the build. Twice this round a green gate was mistaken for correctness.
+
+### Changed
+
+- `local-ci.sh` now completes end to end for the first time since it landed. The three problems
+  above were stacked so that each hid the next.
+
 ## [0.11.8] - 2026-11-22
 
 The guidance pass: what the server tells an agent, where it says it, and a skill so the rules

@@ -1,6 +1,6 @@
 # Google Analytics 4 integration
 
-**Status:** as-built for v0.11.8
+**Status:** as-built for v0.11.9
 (2026-11-20). The shipped module is a read-only GA4 Data API client with six
 registered tools. Acquisition, funnel, landing-page, event, cohort, audience,
 and channel-revenue reports are **not implemented**; they are listed as PLANNED
