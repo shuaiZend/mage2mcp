@@ -220,65 +220,63 @@ const importsPrompt = "" +
 const productCopyPrompt = "" +
 	"# Copying products from another store\n" +
 	"\n" +
-	"The server's instructions carry only the red lines. This file is the full recipe, because a\n" +
-	"half-copied configurable product looks correct in a list and is unsellable on the storefront.\n" +
+	"The instructions carry only the red lines. This is the full recipe: a half-copied configurable\n" +
+	"product looks right in a list and is unsellable on the storefront.\n" +
 	"\n" +
 	"## Why discovery comes first\n" +
 	"\n" +
-	"A product is not a row of fields. A configurable product is a parent whose sellable identity is\n" +
-	"the set of its children, its option values, its attribute set and its categories. Copying\n" +
-	"\"the same name and price\" produces a product that exists and cannot be bought: the parent has no\n" +
-	"children, the option values are not in the attribute, or the attribute set does not carry the\n" +
-	"attributes the copy needs.\n" +
-	"\n" +
-	"**Do not infer an option from a description.** If the source says \"available in red and blue\",\n" +
-	"read the configurable children; do not create option values from prose.\n" +
+	"A configurable product is a parent whose sellable identity is its children, option values,\n" +
+	"attribute set and categories. Copying \"the same name and price\" produces a product that cannot be bought: no children, option\n" +
+	"values missing from the attribute, or an attribute set that does not carry them. **Do not infer an option from a description**;\n" +
+	"read the configurable children, not the prose.\n" +
 	"\n" +
 	"## Recipe: copy a product from another store\n" +
 	"\n" +
-	"1. **Discover the source.** For each product, record:\n" +
-	"   - `magento.product.get` — type, attribute set, status, visibility, `url_key`, price, tier\n" +
-	"     prices, custom options, media.\n" +
-	"   - `magento.configurable.children` — every child SKU, and for each child its attribute values.\n" +
-	"   - `magento.attributes.list` (for the attribute set) — the full attribute set, not the fields\n" +
-	"     that happen to be filled in.\n" +
-	"   - `magento.product.options` — custom options and their price types.\n" +
-	"   - `magento.category.products` or the product's categories — where it is listed.\n" +
-	"2. **Check what exists on the target.** `magento.attribute.sets`, `magento.attributes.list`,\n" +
+	"1. **Discover the source**: `magento.product.get` (type, attribute set, status, visibility,\n" +
+	"   `url_key`, price, tier prices, options, media), `magento.configurable.children` (every child and\n" +
+	"   its attribute values), `magento.attributes.list` for the whole attribute set, and its categories.\n" +
+	"2. **Check what exists on the target**: `magento.attribute.sets`, `magento.attributes.list`,\n" +
 	"   `magento.attributes.options`, `magento.categories.flat`. Anything missing is a taxonomy change.\n" +
-	"3. **Ask for taxonomy changes in writing.** Creating a category, an attribute, an option value or\n" +
-	"   an attribute set changes the store's structure and its URLs. Do not create any of them\n" +
-	"   without a human agreeing to that specific change.\n" +
-	"4. **Create in dependency order.** Simple children first (`magento.product.create`), then the\n" +
-	"   configurable parent (`magento.configurable.create` with its options and children), then\n" +
-	"   media (`magento.product.media.upload`), then category assignment\n" +
-	"   (`magento.category.assign_product`), then links (`magento.product.links.add`).\n" +
-	"5. **Verify like a shopper.** `magento.configurable.children` must list every child;\n" +
-	"   `magento.product.get` must show the same type and attribute values; `magento.inventory.status`\n" +
-	"   must show the parent as in stock. A parent whose children have source items is still not\n" +
-	"   salable until its own stock says so.\n" +
-	"6. **Report the gaps.** A copy is done only when type, options and attribute values match. If\n" +
-	"   something could not be reproduced (a missing attribute set, an option value you were not\n" +
-	"   allowed to create), say which product and which field — an incomplete copy reported as\n" +
-	"   complete is worse than a copy that was not attempted.\n" +
+	"3. **Ask for taxonomy changes in writing.** Creating a category, attribute, option value or\n" +
+	"   attribute set changes the store's structure and URLs.\n" +
+	"4. **Create in dependency order**: children (`magento.product.create`), parent\n" +
+	"   (`magento.configurable.create`), media (`magento.product.media.upload`), categories\n" +
+	"   (`magento.category.assign_product`), links (`magento.product.links.add`).\n" +
+	"5. **Verify like a shopper**: every child listed, same type and attribute values,\n" +
+	"   `magento.inventory.status` showing the parent in stock. A parent whose children have stock\n" +
+	"   is still not salable until its own stock says so.\n" +
+	"6. **Report the gaps.** A copy is done only when type, options and attribute values match; name the\n" +
+	"   product and field that could not be reproduced.\n" +
+	"\n" +
+	"## When the source is not Magento\n" +
+	"\n" +
+	"Shopify, WooCommerce, a static site, a marketplace: their model rarely maps one-to-one, so **do not\n" +
+	"translate names** — analyse the source model and map explicitly. Record **how the\n" +
+	"source represents variants** (one product with options, or separate products), what its option and\n" +
+	"attribute fields actually are, whether its categories are **a tree or a flat tag list**, **whether\n" +
+	"it has SKUs at all**, and what it does with currency, tax class, visibility and stock. Then map: a\n" +
+	"variant set becomes one configurable product with **one child per variant**; a text or number field\n" +
+	"becomes an attribute plus an attribute set that carries it; a flat tag list becomes a category\n" +
+	"tree; a source without SKUs needs one invented per variant, agreed with the human. **Confirm every\n" +
+	"uncertain mapping before writing**, and again before an update that changes an existing product's\n" +
+	"type, options or attributes: say what you are mapping, what the target needs and what you are unsure\n" +
+	"about. **A wrong mapping is not visible on the product page** until someone tries to buy, filter or\n" +
+	"report on it. **Never create an attribute, attribute set, category, website or store view** to make\n" +
+	"a mapping fit without the human agreeing to that change.\n" +
 	"\n" +
 	"## Traps specific to this gateway\n" +
 	"\n" +
-	"- **`price` is the global base price.** A store-scope price or `special_price` decides what a\n" +
-	"  shopper pays, and the product read may show the global value. Read an order line when the\n" +
-	"  question is \"what did the customer pay\".\n" +
-	"- **A configurable parent's price is derived from its children**; a price you write on the parent\n" +
-	"  may read back as 0.\n" +
-	"- **Changing `url_key` changes the storefront URL** and Magento creates no redirect for API\n" +
-	"  writes. Treat it as a structure change.\n" +
-	"- **Media is per store view.** Uploading once does not populate every store view; check the\n" +
-	"  image roles after `magento.product.media.upload`.\n" +
-	"- **Tier prices are per customer group** (`magento.customer.groups`); a copy without the group\n" +
-	"  ids copies a price nobody sees.\n" +
+	"- **`price` is the global base price**; a store-scope price or `special_price` decides what a\n" +
+	"  shopper pays, so read an order line for what the customer paid.\n" +
+	"- **A configurable parent's price is derived from its children**; a price written on the parent may\n" +
+	"  read back as 0.\n" +
+	"- **Changing `url_key` changes the storefront URL**; API writes create no redirect.\n" +
+	"- **Media is per store view**; check the image roles after `magento.product.media.upload`.\n" +
+	"- **Tier prices are per customer group** (`magento.customer.groups`); without the group ids you\n" +
+	"  copy a price nobody sees.\n" +
 	"\n" +
-	"Mutually exclusive with: `magento.product.create` for a configurable parent (it creates a simple\n" +
-	"product), and `magento.configurable.create_variations` when you already have the children —\n" +
-	"that path skips creating duplicates but still needs the option values to exist."
+	"Mutually exclusive with `magento.product.create` for a configurable parent and\n" +
+	"`magento.configurable.create_variations` when the children exist."
 
 const writeSafetyPrompt = "" +
 	"# Catalog safety\n" +
