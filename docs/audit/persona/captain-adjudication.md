@@ -672,3 +672,56 @@ t37 报：契约 inScope 列的是 `server.go`，没有 `server_test.go`，而�
 **这是我的契约错误**——我写 inScope 时漏了测试文件。t37 没有擅自填错，而是明确报告了这个不一致，这是对的。
 
 由于 t37 已完成（任务不可再 amend），我在此记录：**实际改动是 `internal/mcp/server/server_test.go`**，已随 `b9335e9` 提交。
+
+## 第五次「信号不可信」：`go test -race ./...` 会随机失败
+
+清完 lint 债务后我跑 `local-ci.sh`，它在 `go test -race` 段失败。逐层查下去，发现的问题比 lint 债务严重得多。
+
+### 现象（实测）
+
+```text
+go test -race -count=1 ./internal/storage/   连跑 3 次 → 0 / 12 / 0 个失败
+go test -race -count=1 ./...                 连跑 3 次 → 20 / 0 / 1 个失败
+```
+
+**单包自己就会 flaky**，不是跨包干扰。典型失败：
+
+```text
+cleanup operations: ERROR: update or delete on table "operations" violates
+  foreign key constraint "operation_transitions_operation_id_fkey"
+```
+
+### 根因（初步判断，已派任务验证）
+
+`operation_ledger_test.go` 的 `ledgerFixture` 清理是两条**独立** `DELETE`：
+
+```go
+DELETE FROM operation_transitions
+DELETE FROM operations          ← 两者之间若有新 transition 插入，就 FK 冲突
+```
+
+而注释写着「these tests must own the whole table」——它假设独占，但可能有对账器 goroutine 仍在写入。
+
+### 为什么这比 lint 债务严重
+
+`go test -race ./...` 是**发布工作流 verify 阶段的命令**（`release.yml:46`）。flaky 的后果：
+
+| 后果 | 说明 |
+|---|---|
+| **发布可能随机失败** | v0.11.8 通过是运气，不是保证 |
+| **红也不可信** | 真回归与 flake 分不开 |
+| **人们开始重跑直到绿** | 这是门禁失效的最终形态 |
+
+### 这是本轮第五次同一类问题
+
+| # | 信号 | 它没有证明的 |
+|---|---|---|
+| 1 | 测试通过 | 测的不是那条路径 |
+| 2 | 门禁绿 | 该存在的测试已不在 |
+| 3 | 结构体改了 | 参数到不了结构体 |
+| 4 | lint 报 73 条 | 真实是 101 条（默认上限截断） |
+| 5 | **测试绿** | **它可能只是这一次绿** |
+
+第 4 条是我自己的错误：t41 与 t40 都报告了「真实数量比默认输出多」，我才发现我量的是截断视图。已修正 `docs/audit/lint-debt.md`。
+
+**这五次的共同点**：我把一个信号当成了它没有承诺的东西。信号本身没错，错的是我读它的方式。
