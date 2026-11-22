@@ -37,6 +37,7 @@ and the release audit is in [audit/](audit/).
 | Document | Read it for |
 |---|---|
 | [Tutorial](tutorial.md) | **From zero to a working agent** — [中文](i18n/zh/tutorial.md) · [Español](i18n/es/tutorial.md) · [Nederlands](i18n/nl/tutorial.md) |
+| [Guidance delivery](guidance.md) | How the rules reach an agent: instructions, MCP prompts, the skill — and what needs installing |
 | [Architecture](architecture.md) | System context, containers, request lifecycle, configuration, deployment |
 | [Module boundaries](module-boundaries.md) | Ownership, dependency rules, Go contracts |
 | [MCP tool catalog](mcp-tools.md) | Tool naming, schemas, permissions, catalog |

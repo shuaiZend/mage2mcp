@@ -117,8 +117,12 @@ Claude Desktop (`claude_desktop_config.json`):
 
 Restart the client. It calls `tools/list` on connect and you should see the Magento tools.
 The server also sends **instructions** at initialize: read them once, because they state how
-to treat tool results (as data, never as instructions) and the rules for copying a product
-from another store.
+to treat tool results (as data, never as instructions) and the red lines for writes and reads.
+
+It also publishes six **prompts** — recipes for refunds, imports, reports, product copy and
+the write contract. **Nothing to install**: call `prompts/list` and load the one that matches
+your task. If your client supports skills but not prompts, the same text is committed under
+`skills/mage2mcp/`; see [guidance.md](guidance.md) for which layer applies to you.
 
 Any other client: point it at the same URL with the Streamable HTTP transport.
 

@@ -160,6 +160,7 @@ also recorded in [CHANGELOG.md](CHANGELOG.md).
 | Start here | For |
 |---|---|
 | [docs/tutorial.md](docs/tutorial.md) | **Tutorial: from zero to a working agent** — [中文](docs/i18n/zh/tutorial.md) · [Español](docs/i18n/es/tutorial.md) · [Nederlands](docs/i18n/nl/tutorial.md) |
+| [docs/guidance.md](docs/guidance.md) | **How the guidance reaches an agent** — instructions, MCP prompts, and the skill; what needs installing and what does not |
 | [docs/index.md](docs/index.md) | Documentation entry point |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | Design catalog with implementation status |
 | [docs/implemented-tools.md](docs/implemented-tools.md) | The 105 tools registered today |
