@@ -5,7 +5,13 @@ they accumulate because `local-ci.sh` is the only gate that runs the linter, and
 failing earlier for an unrelated reason (the skip gate counted packages), so nobody reached
 this stage.
 
-Total: **73** findings.
+**Correction.** The list below was first recorded as 73 findings. That was wrong: it was taken
+with golangci-lint's defaults, which cap repeats at `max-same-issues: 3` and stop a linter at
+`max-issues-per-linter: 50`. Measured with both caps off at the same commit, the real count is
+**101**. One directory reported 17 and actually had 27. The lesson is the same one this project
+kept relearning: a tool's output is not the whole truth unless you ask what it left out.
+
+Total: **101** findings (73 as first measured, truncated by the default caps).
 
 | Directory | Count |
 |---|---:|
