@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -31,6 +33,9 @@ func Add[In, Out any](s *mcp.Server, t *mcp.Tool, h func(context.Context, *mcp.C
 		}
 	}
 	if err := ValidateSchema(t); err != nil {
+		panic(fmt.Sprintf("toolerr: %v", err))
+	}
+	if err := validateSchemaMatchesInput[In](t); err != nil {
 		panic(fmt.Sprintf("toolerr: %v", err))
 	}
 	validator := compile(t.InputSchema)
@@ -347,4 +352,109 @@ func detailString(details any, key string) string {
 // as ErrorResult so a handler error cannot drift from the exported contract.
 func errorResult(err error) *mcp.CallToolResult {
 	return ErrorResult(err)
+}
+
+// schemaInputExceptions lists the tools whose hand-written input schema
+// deliberately differs from the Go input struct, with the reason. The list is
+// meant to stay empty: a mismatch is how `shipping_amount` reached the Go struct
+// without reaching the schema, which made a documented parameter unreachable
+// (GG-01). An exception is only acceptable when the difference is the contract.
+var schemaInputExceptions = map[string]string{}
+
+// schemaInputExtraProperties are schema properties that the server middleware
+// consumes before the handler decodes the arguments, so they have no struct field
+// by design. Each entry states why it is not a mismatch.
+var schemaInputExtraProperties = map[string]string{
+	"confirmation_id": "consumed by the confirmation middleware before the handler decodes the arguments",
+}
+
+// validateSchemaMatchesInput checks that a tool's hand-written input schema names
+// exactly the properties its Go input struct decodes. Inferred schemas are built
+// from the struct, so they are skipped; a tool with an explicit schema must keep
+// the two in step.
+//
+// This runs at registration, so a mismatch fails startup (NewMCP turns the panic
+// into an error) instead of shipping a parameter that silently does nothing.
+func validateSchemaMatchesInput[In any](t *mcp.Tool) error {
+	if t == nil || t.InputSchema == nil {
+		return nil
+	}
+	if _, exempt := schemaInputExceptions[t.Name]; exempt {
+		return nil
+	}
+	inType := reflect.TypeOf((*In)(nil)).Elem()
+	if inType.Kind() != reflect.Struct {
+		// The handler input is not a struct (a map, an interface): there is no
+		// static field set to compare against.
+		return nil
+	}
+	raw, err := json.Marshal(t.InputSchema)
+	if err != nil {
+		return fmt.Errorf("tool %q input schema is not JSON: %w", t.Name, err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("tool %q input schema is not a JSON object: %w", t.Name, err)
+	}
+	structFields := jsonFieldNames(inType)
+	schemaFields := make(map[string]struct{}, len(doc.Properties))
+	for name := range doc.Properties {
+		schemaFields[name] = struct{}{}
+	}
+	var problems []string
+	for name := range structFields {
+		if _, ok := schemaFields[name]; !ok {
+			problems = append(problems, "struct field "+name+" is not in the schema")
+		}
+	}
+	for name := range schemaFields {
+		if _, ok := structFields[name]; ok {
+			continue
+		}
+		if _, middleware := schemaInputExtraProperties[name]; middleware {
+			continue
+		}
+		problems = append(problems, "schema property "+name+" has no struct field")
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	sort.Strings(problems)
+	return fmt.Errorf("tool %q input schema does not match its Go input struct: %s",
+		t.Name, strings.Join(problems, "; "))
+}
+
+// jsonFieldNames returns the JSON property names a struct decodes, following
+// embedded structs the way encoding/json flattens them.
+func jsonFieldNames(t reflect.Type) map[string]struct{} {
+	out := make(map[string]struct{})
+	var walk func(reflect.Type)
+	walk = func(t reflect.Type) {
+		if t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		if t.Kind() != reflect.Struct {
+			return
+		}
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			tag := field.Tag.Get("json")
+			name, _, _ := strings.Cut(tag, ",")
+			if field.Anonymous && name == "" {
+				walk(field.Type)
+				continue
+			}
+			if !field.IsExported() || name == "-" {
+				continue
+			}
+			if name == "" {
+				name = field.Name
+			}
+			out[name] = struct{}{}
+		}
+	}
+	walk(t)
+	return out
 }

@@ -83,7 +83,7 @@ const (
 
 	instanceProp                = `"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."}`
 	confirmationProp            = `"confirmation_id": {"type": "string", "maxLength": 128, "description": "Approval id from a confirmation_required response; resend the same arguments with this id to execute."}`
-	idempotencyKeyProp          = `"idempotency_key": {"type": "string", "maxLength": 256, "description": "Optional replay key. Repeating it with the same arguments returns the recorded outcome without a second upstream mutation; reusing it with different arguments is rejected as idempotency_key_reuse. Without a key one is derived from the arguments. The key is not caller-scoped, so treat it as a secret: use an unguessable value (a UUID), never a predictable one."}`
+	idempotencyKeyProp          = `"idempotency_key": {"type": "string", "maxLength": 256, "description": "Replay key. Repeating it with the same arguments returns the recorded outcome without a second upstream mutation; reusing it with different arguments is rejected as idempotency_key_reuse. Omitting it derives a key from the arguments, so an identical call replays instead of executing: send a UUID per real operation. The key is not caller-scoped, so treat it as a secret, never a predictable value."}`
 	configurableOperationIDProp = `"operation_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$", "description": "Optional resume handle. Pass the operation_id returned by a partial configurable.create to resume it: children and a parent that already exist are reused instead of re-created, missing links are repaired, and no duplicate SKU is written. Omit it for a fresh create, which refuses a pre-existing SKU."}`
 	skuProp                     = `"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}`
 	nameProp                    = `"name": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Display name shown in the storefront."}`
@@ -117,7 +117,7 @@ const (
 
 	productCreateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + typeIDProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + quantityProp + `, ` + seoProps + `, ` + pricingProps + `}, "required": ["instance", "sku", "name", "attribute_set_id", "type_id", "price"], "additionalProperties": false}`
 	productUpdateSchema        = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `, ` + nameProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `, "category_ids": {"type": "array", "maxItems": 500, "items": {"type": "integer", "minimum": 1, "description": "Requested page size."}, "description": "Replaces the product's category assignments when provided; an empty array clears them."}, "website_ids": {"type": "array", "maxItems": 50, "items": {"type": "integer", "minimum": 1, "description": "Requested page size."}, "description": "Replaces the product's website assignments when provided."}}, "required": ["instance", "sku"], "additionalProperties": false}`
-	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + configurableOperationIDProp + `, "parent": {"type": "object", "description": "The configurable parent product. It is created first; the children are linked to it after.", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "description": "Attributes the shopper chooses between, for example color. Each must be a selectable attribute of the parent attribute set.", "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `"}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1}, "label": {"type": "string", "maxLength": 255, "description": "Label shown to the shopper."}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "description": "The variant products. Every child needs a value for each variant attribute or the link is rejected.", "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, "name": {"type": "string", "maxLength": 255, "description": "Display name."}, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `, ` + seoProps + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
+	configurableCreateSchema   = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + configurableOperationIDProp + `, "parent": {"type": "object", "description": "The configurable parent product. It is created first; the children are linked to it after.", "additionalProperties": false, "required": ["sku", "name", "attribute_set_id", "price"], "properties": {` + skuProp + `, ` + nameProp + `, ` + setProp + `, ` + priceProp + `, ` + statusProp + `, ` + visibilityProp + `, ` + websiteIDsProp + `, ` + categoryIDsProp + `, ` + attributesProp + `, ` + seoProps + `, ` + pricingProps + `}}, "variant_attributes": {"type": "array", "minItems": 1, "maxItems": 5, "description": "Attributes the shopper chooses between, for example color. Each must be a selectable attribute of the parent attribute set.", "items": {"type": "object", "additionalProperties": false, "required": ["attribute_id", "code", "values"], "properties": {"attribute_id": {"type": "integer", "minimum": 1, "description": "Numeric attribute id from magento.attributes.list; it must be a selectable attribute of the parent attribute set."}, "code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `", "description": "Attribute code, for example color; it must match attribute_id."}, "values": {"type": "array", "minItems": 1, "maxItems": 100, "description": "Option values the shopper chooses between, each with the index of an existing attribute option.", "items": {"type": "object", "additionalProperties": false, "required": ["value_index"], "properties": {"value_index": {"type": "integer", "minimum": 1, "description": "Option value index from magento.attributes.options."}, "label": {"type": "string", "maxLength": 255, "description": "Label shown to the shopper."}}}}}}}, "children": {"type": "array", "minItems": 1, "maxItems": 50, "description": "The variant products. Every child needs a value for each variant attribute or the link is rejected.", "items": {"type": "object", "additionalProperties": false, "required": ["sku", "attributes"], "properties": {` + skuProp + `, "name": {"type": "string", "maxLength": 255, "description": "Display name."}, ` + childAttributesProp + `, ` + priceProp + `, ` + quantityProp + `, ` + seoProps + `}}}}, "required": ["instance", "parent", "variant_attributes", "children"], "additionalProperties": false}`
 	configurableAddChildSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "SKU of the configurable parent product."}, "child_sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "SKU of the variant child product."}}, "required": ["instance", "parent_sku", "child_sku"], "additionalProperties": false}`
 	inventoryAssignSchema      = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, "items": {"type": "array", "minItems": 1, "maxItems": 100, "description": "Lines to act on. Each entry names an order item and a quantity; the quantities must not exceed what is still outstanding.", "items": {"type": "object", "additionalProperties": false, "required": ["sku", "source_code", "quantity"], "properties": {"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU."}, "source_code": {"type": "string", "pattern": "` + sourceCodeInputPattern + `", "description": "Inventory source code, for example default. Use magento.inventory.sources to list them."}, "quantity": {"type": "integer", "minimum": 0}, "status": {"type": "integer", "enum": [0, 1], "default": 1, "description": "1 in stock (default), 0 out of stock."}}}}}, "required": ["instance", "items"], "additionalProperties": false}`
 )
@@ -745,11 +745,11 @@ const importExecuteSchema = `{
   "additionalProperties": false,
   "required": ["instance", "format", "data_base64"],
   "properties": {
-    "instance": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
-    "format": {"type": "string", "enum": ["csv", "json"]},
-    "data_base64": {"type": "string", "maxLength": 11184812},
-    "update_existing": {"type": "boolean", "default": false},
-    "confirmation_id": {"type": "string", "maxLength": 128}
+    "instance": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$", "description": "Configured Magento instance id; required, and must name a configured instance."},
+    "format": {"type": "string", "enum": ["csv", "json"], "description": "Payload encoding: csv with a header row, or a json array of objects."},
+    "data_base64": {"type": "string", "maxLength": 11184812, "description": "The import payload, base64 encoded: at most 8 MiB decoded and 5000 rows."},
+    "update_existing": {"type": "boolean", "default": false, "description": "When true, a row whose SKU exists updates it; when false the row is skipped. Default false."},
+    "confirmation_id": {"type": "string", "maxLength": 128, "description": "Approval id from a confirmation_required response; resend the same arguments with this id to execute."}
   }
 }`
 
@@ -940,8 +940,8 @@ const (
 		"mime_type": {"type": "string", "enum": ["image/jpeg", "image/png", "image/webp", "image/gif"], "description": "Declared MIME type. It must match the type sniffed from the decoded bytes or the upload is rejected."},
 		"data_base64": {"type": "string", "maxLength": 6990508, "description": "Base64 image content, at most 5 MiB decoded."},
 		"label": {"type": "string", "maxLength": 255, "description": "Label shown to the shopper."},
-		"position": {"type": "integer", "minimum": 0, "maximum": 1000},
-		"types": {"type": "array", "items": {"type": "string", "enum": ["image", "small_image", "thumbnail", "swatch_image"]}, "maxItems": 4}
+		"position": {"type": "integer", "minimum": 0, "maximum": 1000, "description": "Sort position of the new image in the gallery; lower comes first."},
+		"types": {"type": "array", "description": "Image roles this upload fills: image (base), small_image (listing), thumbnail and swatch_image. At most four.", "items": {"type": "string", "enum": ["image", "small_image", "thumbnail", "swatch_image"]}, "maxItems": 4}
 	}, "required": ["instance", "sku", "filename", "mime_type", "data_base64"], "additionalProperties": false}`
 )
 
@@ -1077,24 +1077,24 @@ const (
 	shipmentCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"order_id": {"type": "integer", "minimum": 1, "description": "Magento order entity id, not the increment id. Use magento.order.search to find it."},
 		` + documentLinesProp + `,
-		"tracks": {"type": "array", "maxItems": 20, "items": {"type": "object", "additionalProperties": false,
+		"tracks": {"type": "array", "maxItems": 20, "description": "Tracking numbers attached to the shipment; at most 20.", "items": {"type": "object", "additionalProperties": false,
 			"required": ["track_number", "carrier_code"],
-			"properties": {"track_number": {"type": "string", "maxLength": 128},
+			"properties": {"track_number": {"type": "string", "maxLength": 128, "description": "Carrier tracking number, 1-128 bytes without control characters."},
 				"title": {"type": "string", "maxLength": 255, "description": "Display title for this entry."},
-				"carrier_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}}}},
-		"comment": {"type": "string", "maxLength": 1024},
-		"notify": {"type": "boolean", "default": false}
+				"carrier_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$", "description": "Carrier code as the store spells it, for example ups or dhl; lowercase letters, digits and underscores."}}}},
+		"comment": {"type": "string", "maxLength": 1024, "description": "Status-history comment appended to the shipment; at most 1024 bytes without control characters."},
+		"notify": {"type": "boolean", "default": false, "description": "True emails the customer about the shipment. Default false."}
 	}, "required": ["instance", "order_id", "items"], "additionalProperties": false}`
 
 	creditmemoCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + idempotencyKeyProp + `,
 		"order_id": {"type": "integer", "minimum": 1, "description": "Magento order entity id, not the increment id."},
 		"invoice_id": {"type": "integer", "minimum": 1, "description": "Invoice to refund. Required when the order has several invoices; resolved automatically when it has exactly one."},
 		` + documentLinesProp + `,
-		"adjustment_positive": {"type": "number", "minimum": 0},
-		"adjustment_negative": {"type": "number", "minimum": 0},
+		"adjustment_positive": {"type": "number", "minimum": 0, "description": "Extra amount added to the refund beyond the returned lines, for example a goodwill credit."},
+		"adjustment_negative": {"type": "number", "minimum": 0, "description": "Amount subtracted from the refund beyond the returned lines, for example a restocking fee."},
 		"shipping_amount": {"type": "number", "minimum": 0, "description": "Shipping to refund with this memo. Omit it to refund no shipping unless this memo refunds every remaining refundable unit, in which case the remaining shipping is refunded; 0 refunds no shipping explicitly."},
-		"comment": {"type": "string", "maxLength": 1024},
-		"notify": {"type": "boolean", "default": false}
+		"comment": {"type": "string", "maxLength": 1024, "description": "Credit-memo comment stored on the document; at most 1024 bytes without control characters."},
+		"notify": {"type": "boolean", "default": false, "description": "True emails the customer about the refund. Default false."}
 	}, "required": ["instance", "order_id", "items"], "additionalProperties": false}`
 )
 
@@ -1219,7 +1219,7 @@ const (
 		"order_id": {"type": "integer", "minimum": 1, "description": "Magento order entity id, not the increment id."},
 		"comment": {"type": "string", "minLength": 1, "maxLength": 1024, "description": "Comment text shown in the order's status history."},
 		"status": {"type": "string", "maxLength": 64, "description": "Optional new order status; omit to only add the comment."},
-		"notify": {"type": "boolean", "default": false}
+		"notify": {"type": "boolean", "default": false, "description": "True emails the customer the comment. Default false."}
 	}, "required": ["instance", "order_id", "comment"], "additionalProperties": false}`
 
 	orderHoldSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
@@ -1310,23 +1310,23 @@ const (
 		"parent_id": {"type": "integer", "minimum": 1, "description": "Parent category id; 2 is Magento's default root."},
 		"name": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Display name."},
 		"url_key": {"type": "string", "maxLength": 255, "description": "Optional URL key; Magento derives one from the name when omitted."},
-		"is_active": {"type": "boolean", "default": true},
-		"position": {"type": "integer", "minimum": 0, "maximum": 10000},
-		"include_in_menu": {"type": "boolean", "default": true}
+		"is_active": {"type": "boolean", "default": true, "description": "True makes the category visible in the storefront. Default true."},
+		"position": {"type": "integer", "minimum": 0, "maximum": 10000, "description": "Sort position among sibling categories; lower comes first."},
+		"include_in_menu": {"type": "boolean", "default": true, "description": "True shows the category in the storefront navigation menu. Default true."}
 	}, "required": ["instance", "parent_id", "name"], "additionalProperties": false}`
 
 	categoryUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"category_id": {"type": "integer", "minimum": 1, "description": "Magento category entity id. The store root category is usually 2."},
 		"name": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Display name."},
-		"is_active": {"type": "boolean"},
-		"position": {"type": "integer", "minimum": 0, "maximum": 10000},
-		"include_in_menu": {"type": "boolean"}
+		"is_active": {"type": "boolean", "description": "True makes the category visible in the storefront; omit to leave it unchanged."},
+		"position": {"type": "integer", "minimum": 0, "maximum": 10000, "description": "Sort position among sibling categories; lower comes first."},
+		"include_in_menu": {"type": "boolean", "description": "True shows the category in the storefront navigation menu."}
 	}, "required": ["instance", "category_id"], "additionalProperties": false}`
 
 	categoryAssignSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"category_id": {"type": "integer", "minimum": 1, "description": "Magento category entity id. The store root category is usually 2."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU."},
-		"position": {"type": "integer", "minimum": 0, "maximum": 10000}
+		"position": {"type": "integer", "minimum": 0, "maximum": 10000, "description": "Sort position of the product inside the category; lower comes first. Omit for Magento's default."}
 	}, "required": ["instance", "category_id", "sku"], "additionalProperties": false}`
 )
 
@@ -1456,7 +1456,7 @@ const (
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product the relation is defined on."},
 		"link_type": {"type": "string", "enum": ["related", "upsell", "crosssell"], "description": "Relation kind: related (also bought), upsell (upgrade) or crosssell (add-on)."},
 		"linked_product_sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Other product in the relation. It must already exist and must not be the same SKU."},
-		"position": {"type": "integer", "minimum": 0, "maximum": 10000}
+		"position": {"type": "integer", "minimum": 0, "maximum": 10000, "description": "Sort position of the linked product in the relation; lower comes first. Omit for Magento's default."}
 	}, "required": ["instance", "sku", "link_type", "linked_product_sku"], "additionalProperties": false}`
 
 	productLinkRemoveSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
@@ -1472,6 +1472,17 @@ type productLinkWriteInput struct {
 	LinkType         string `json:"link_type" jsonschema:"Relation kind: related, upsell or crosssell."`
 	LinkedProductSKU string `json:"linked_product_sku" jsonschema:"The other product in the relation."`
 	Position         int    `json:"position" jsonschema:"Sort position among siblings."`
+}
+
+// productLinkRemoveInput is the remove route's argument set: it has no position,
+// because a removal is addressed by SKU, link type and target only. Sharing the
+// add tool's struct made the registration-time schema check report a property the
+// remove schema deliberately does not have.
+type productLinkRemoveInput struct {
+	Instance         string `json:"instance" jsonschema:"Configured instance id the result came from."`
+	SKU              string `json:"sku" jsonschema:"Product SKU."`
+	LinkType         string `json:"link_type" jsonschema:"Relation kind: related, upsell or crosssell."`
+	LinkedProductSKU string `json:"linked_product_sku" jsonschema:"The other product in the relation."`
 }
 
 type productLinkWriteOutput struct {
@@ -1506,7 +1517,7 @@ func newProductLinkRemoveTool(lookup serviceLookup) registry.Tool {
 	t := writeToolMetadata(productLinkRemoveToolName, productLinkRemoveToolTitle, productLinkRemoveDescription, capabilityProductWrite)
 	t.Register = func(srv *mcp.Server) error {
 		toolerr.Add(srv, mcpWriteTool(productLinkRemoveToolName, productLinkRemoveToolTitle, productLinkRemoveDescription, productLinkRemoveSchema),
-			func(ctx context.Context, _ *mcp.CallToolRequest, in productLinkWriteInput) (*mcp.CallToolResult, productLinkWriteOutput, error) {
+			func(ctx context.Context, _ *mcp.CallToolRequest, in productLinkRemoveInput) (*mcp.CallToolResult, productLinkWriteOutput, error) {
 				svc, err := lookup(in.Instance)
 				if err != nil {
 					return nil, productLinkWriteOutput{}, err
@@ -1661,9 +1672,11 @@ const (
 	orderCreateToolTitle   = "Create a Magento order"
 	orderCreateDescription = "Magento write operation: places an order through the admin cart flow (cart, items, shipping information, then " +
 		"PUT /rest/{store_code}/V1/carts/{cartId}/order) on the resolved instance. Totals are computed by Magento, never by the caller. " +
-		"Idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded order. An ambiguous " +
-		"placement is reconciled by reading the customer's recent orders back; an inconclusive read returns operation_unknown " +
-		"and must be polled, never retried. Requires human confirmation."
+		"Idempotent when idempotency_key is supplied: a repeat with the same arguments replays the recorded order. Omitting it derives a " +
+		"key from the arguments, so an identical second order for the same customer, items and address is replayed (replayed:true) instead " +
+		"of placed: send a fresh UUID for every real order. An ambiguous placement is reconciled by reading the customer's recent orders " +
+		"back; an inconclusive read returns operation_unknown and must be polled with magento.operation.get, never retried. " +
+		"Requires human confirmation."
 
 	addressSchema = `{"type": "object", "description": "Postal address for the order. Billing and shipping may be the same; both are required because Magento prices tax and shipping from them.", "additionalProperties": false,
 		"required": ["firstname", "lastname", "street", "city", "postcode", "country_id", "telephone"],
@@ -1767,15 +1780,16 @@ const (
 	tierPricesSetToolTitle   = "Replace Magento tier prices"
 	tierPricesSetDescription = "Magento write operation: replaces the tier prices of one product " +
 		"(POST /rest/{store_code}/V1/products/tier-prices) on the resolved instance with 1-50 fixed-price tiers. " +
-		"Magento's storage interface replaces the SKU's stored tiers, so omitted tiers are removed. Requires human confirmation."
+		"Magento's storage interface replaces the SKU's stored tiers, so omitted tiers are removed. " +
+		"Set customer_group to the group code from magento.customer.groups, not its numeric id. Requires human confirmation."
 
 	tierPricesSetSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
 		"prices": {"type": "array", "minItems": 1, "maxItems": 50, "description": "Tier prices to set. They replace the product's existing tier prices.", "items": {"type": "object",
 			"additionalProperties": false, "required": ["price", "customer_group", "quantity"],
-			"properties": {"price": {"type": "number", "exclusiveMinimum": 0},
-				"website_id": {"type": "integer", "minimum": 0},
-				"customer_group": {"type": "string", "minLength": 1, "maxLength": 64},
-				"quantity": {"type": "number", "exclusiveMinimum": 0}}}}
+			"properties": {"price": {"type": "number", "exclusiveMinimum": 0, "description": "Tier price per unit in the store currency; from this quantity up it replaces the base price."},
+				"website_id": {"type": "integer", "minimum": 0, "description": "Website the tier price applies to; 0 means all websites."},
+				"customer_group": {"type": "string", "minLength": 1, "maxLength": 64, "description": "Customer group code (for example ALL GROUPS or General), not the numeric id; look it up with magento.customer.groups."},
+				"quantity": {"type": "number", "exclusiveMinimum": 0, "description": "Minimum quantity that unlocks this tier price."}}}}
 	}, "required": ["instance", "sku", "prices"], "additionalProperties": false}`
 )
 
@@ -1926,10 +1940,10 @@ const (
 
 	customerUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"customer_id": {"type": "integer", "minimum": 1, "description": "Existing Magento customer id."},
-		"email": {"type": "string", "format": "email", "maxLength": 254},
-		"firstname": {"type": "string", "minLength": 1, "maxLength": 255},
-		"lastname": {"type": "string", "minLength": 1, "maxLength": 255},
-		"group_id": {"type": "integer", "minimum": 0}
+		"email": {"type": "string", "format": "email", "maxLength": 254, "description": "New login email; it must stay unique in the store. Omit to leave it unchanged."},
+		"firstname": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Given name. Omit to leave it unchanged."},
+		"lastname": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Family name. Omit to leave it unchanged."},
+		"group_id": {"type": "integer", "minimum": 0, "description": "Customer group id, which decides pricing. Omit to leave it unchanged."}
 	}, "required": ["instance", "customer_id"], "additionalProperties": false}`
 )
 
@@ -2022,9 +2036,9 @@ const (
 	mediaUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
 		"media_id": {"type": "integer", "minimum": 1, "description": "Gallery entry id from product.media, not a file name."},
 		"label": {"type": "string", "maxLength": 255, "description": "Label shown to the shopper."},
-		"position": {"type": "integer", "minimum": 0, "maximum": 1000},
-		"types": {"type": "array", "items": {"type": "string", "enum": ["image", "small_image", "thumbnail", "swatch_image"]}, "maxItems": 4},
-		"disabled": {"type": "boolean"}
+		"position": {"type": "integer", "minimum": 0, "maximum": 1000, "description": "Sort position of the image in the gallery; lower comes first."},
+		"types": {"type": "array", "description": "Image roles this entry fills: image (base), small_image (listing), thumbnail and swatch_image. At most four.", "items": {"type": "string", "enum": ["image", "small_image", "thumbnail", "swatch_image"]}, "maxItems": 4},
+		"disabled": {"type": "boolean", "description": "True hides the image from the storefront without deleting the file."}
 	}, "required": ["instance", "sku", "media_id"], "additionalProperties": false}`
 
 	orderCancelSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + idempotencyKeyProp + `,
@@ -2204,15 +2218,16 @@ func newAttributeOptionDeleteTool(lookup serviceLookup) registry.Tool {
 const (
 	bulkProductUpdateToolName    = "magento.products.bulk_update"
 	bulkProductUpdateToolTitle   = "Bulk update Magento products"
-	bulkProductUpdateDescription = "Magento write operation: applies the same status, visibility, or custom attributes to up to 50 products " +
+	bulkProductUpdateDescription = "Magento write operation: applies the same status, visibility or custom attributes to up to 50 products " +
 		"(one PUT per SKU) on the resolved instance. Partial success: failed SKUs are reported per row and earlier updates are not rolled back. " +
-		"Name and price are not part of the bulk update. Requires human confirmation."
+		"Only status, visibility and custom attributes are applied: price and name are not bulk-updatable, and putting them in attributes is " +
+		"silently ignored while the row still reports updated. Use magento.product.update per SKU for price or name. Requires human confirmation."
 
 	bulkProductUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"skus": {"type": "array", "minItems": 1, "maxItems": 50, "description": "Products to update. Every SKU must exist or the whole call is rejected.", "items": {"type": "string", "pattern": "` + skuInputPattern + `"}},
-		"status": {"type": "integer", "enum": [1, 2]},
-		"visibility": {"type": "integer", "enum": [1, 2, 3, 4]},
-		"attributes": {"type": "object", "additionalProperties": {"type": "string", "maxLength": 255}}
+		"status": {"type": "integer", "enum": [1, 2], "description": "1 enables every SKU in the request, 2 disables them."},
+		"visibility": {"type": "integer", "enum": [1, 2, 3, 4], "description": "1 not visible, 2 catalog, 3 search, 4 catalog and search; applied to every SKU."},
+		"attributes": {"type": "object", "description": "Custom attribute code to value. Reserved keys price and name are ignored by Magento here, so a row that sets them still reports updated; change those with magento.product.update.", "additionalProperties": {"type": "string", "maxLength": 255}}
 	}, "required": ["instance", "skus"], "additionalProperties": false}`
 )
 
@@ -2317,8 +2332,8 @@ const (
 		"telephone": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Contact phone number for this address."},
 		"region": {"type": "string", "maxLength": 255, "description": "Region name. Use region_id instead for countries that have a region directory."},
 		"region_id": {"type": "integer", "minimum": 1, "description": "Numeric region (state/province) id. Magento requires it for countries that have a region directory (Poland among them)."},
-		"default_billing": {"type": "boolean", "default": false},
-		"default_shipping": {"type": "boolean", "default": false}
+		"default_billing": {"type": "boolean", "default": false, "description": "True makes this the customer's default billing address. Default false."},
+		"default_shipping": {"type": "boolean", "default": false, "description": "True makes this the customer's default shipping address. Default false."}
 	}, "required": ["instance", "customer_id", "firstname", "lastname", "street", "city", "postcode", "country_id", "telephone"], "additionalProperties": false}`
 
 	customerAddressDeleteSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
@@ -2413,17 +2428,17 @@ const (
 	customerAddressUpdateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"customer_id": {"type": "integer", "minimum": 1, "description": "Existing Magento customer id."},
 		"address_id": {"type": "integer", "minimum": 1, "description": "Customer address id from magento.customer.addresses."},
-		"firstname": {"type": "string", "minLength": 1, "maxLength": 255},
-		"lastname": {"type": "string", "minLength": 1, "maxLength": 255},
-		"street": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string", "minLength": 1, "maxLength": 255}},
-		"city": {"type": "string", "minLength": 1, "maxLength": 255},
-		"postcode": {"type": "string", "minLength": 1, "maxLength": 255},
-		"country_id": {"type": "string", "pattern": "^[A-Z]{2}$"},
-		"telephone": {"type": "string", "minLength": 1, "maxLength": 255},
-		"region": {"type": "string", "maxLength": 255},
+		"firstname": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Recipient given name."},
+		"lastname": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Recipient family name."},
+		"street": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string", "minLength": 1, "maxLength": 255}, "description": "Street lines, most specific first; 1-4 lines."},
+		"city": {"type": "string", "minLength": 1, "maxLength": 255, "description": "City or locality."},
+		"postcode": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Postal code as the destination country writes it."},
+		"country_id": {"type": "string", "pattern": "^[A-Z]{2}$", "description": "ISO 3166-1 alpha-2 country code, uppercase."},
+		"telephone": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Contact phone number for this address."},
+		"region": {"type": "string", "maxLength": 255, "description": "Region name. Use region_id instead for countries that have a region directory."},
 		"region_id": {"type": "integer", "minimum": 1, "description": "Numeric region (state/province) id, required by Magento for countries with a region directory."},
-		"default_billing": {"type": "boolean"},
-		"default_shipping": {"type": "boolean"}
+		"default_billing": {"type": "boolean", "description": "True makes this the customer's default billing address."},
+		"default_shipping": {"type": "boolean", "description": "True makes this the customer's default shipping address."}
 	}, "required": ["instance", "customer_id", "address_id"], "additionalProperties": false}`
 )
 
@@ -2526,7 +2541,8 @@ const (
 	bulkOptionCreateToolTitle   = "Bulk create Magento attribute options"
 	bulkOptionCreateDescription = "Magento write operation: adds up to 50 option labels to one select or multiselect attribute " +
 		"(POST /rest/{store_code}/V1/products/attributes/{code}/options, one call per label) with a per-label partial-success report. " +
-		"Duplicate labels are skipped; earlier options stay on failure. " +
+		"A label repeated inside this request is dropped and does not appear in rows, so total can exceed the row count. A label that already " +
+		"exists in the attribute is reported as failed, not skipped: check magento.attributes.options before retrying. Earlier options stay on failure. " +
 		"The instance input is required and must name a configured Magento instance. Requires human confirmation."
 
 	bulkOptionCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
@@ -2665,13 +2681,13 @@ const (
 	inventorySourceCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
 		"source_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$", "description": "Inventory source code, for example default."},
 		"name": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Display name."},
-		"enabled": {"type": "boolean", "default": true},
-		"country_id": {"type": "string", "pattern": "^[A-Z]{2}$"},
-		"region": {"type": "string", "maxLength": 255},
-		"city": {"type": "string", "maxLength": 255},
-		"postcode": {"type": "string", "maxLength": 255},
-		"latitude": {"type": "number", "minimum": -90, "maximum": 90},
-		"longitude": {"type": "number", "minimum": -180, "maximum": 180}
+		"enabled": {"type": "boolean", "default": true, "description": "True makes the source active for stock calculations. Default true."},
+		"country_id": {"type": "string", "pattern": "^[A-Z]{2}$", "description": "ISO 3166-1 alpha-2 country code of the source location, uppercase."},
+		"region": {"type": "string", "maxLength": 255, "description": "Region or state name of the source location."},
+		"city": {"type": "string", "maxLength": 255, "description": "City of the source location."},
+		"postcode": {"type": "string", "maxLength": 255, "description": "Postal code of the source location."},
+		"latitude": {"type": "number", "minimum": -90, "maximum": 90, "description": "Latitude of the source location in decimal degrees, -90 to 90."},
+		"longitude": {"type": "number", "minimum": -180, "maximum": 180, "description": "Longitude of the source location in decimal degrees, -180 to 180."}
 	}, "required": ["instance", "source_code", "name"], "additionalProperties": false}`
 
 	stockSourceLinkSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `,
@@ -2927,19 +2943,20 @@ const (
 	productOptionCreateToolTitle   = "Create a Magento product custom option"
 	productOptionCreateDescription = "Magento write operation: adds one custom option to a product " +
 		"(POST /rest/{store_code}/V1/products/{sku}/options) on the resolved instance. Selectable types require 1-50 values with fixed or percent pricing. " +
-		"The instance input is required and must name a configured Magento instance. Requires human confirmation."
+		"Some stores do not expose that route: it then returns unsupported_capability, which is terminal, so do not retry and do not fall back to a " +
+		"product update without checking the result. The instance input is required and must name a configured Magento instance. Requires human confirmation."
 
 	productOptionCreateSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,
 		"title": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Label shown to the shopper for this custom option."},
 		"type": {"type": "string", "enum": ["field", "area", "file", "drop_down", "radio", "checkbox", "multiple", "date", "date_time", "time"], "description": "Input control. drop_down, radio, checkbox and multiple take values; the others do not."},
-		"is_require": {"type": "boolean", "default": false},
-		"sort_order": {"type": "integer", "minimum": 0},
-		"values": {"type": "array", "maxItems": 50, "items": {"type": "object", "additionalProperties": false,
+		"is_require": {"type": "boolean", "default": false, "description": "True when the shopper must choose an option before adding to cart. Default false."},
+		"sort_order": {"type": "integer", "minimum": 0, "description": "Display position among the product's custom options; lower comes first."},
+		"values": {"type": "array", "maxItems": 50, "description": "Selectable entries; required for drop_down, radio, checkbox and multiple, and rejected for the input types.", "items": {"type": "object", "additionalProperties": false,
 			"required": ["title"], "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Display title for this entry."},
-				"price": {"type": "number", "minimum": 0},
-				"price_type": {"type": "string", "enum": ["fixed", "percent"]},
-				"sku": {"type": "string", "maxLength": 64, "description": "Product SKU."},
-				"sort_order": {"type": "integer", "minimum": 0}}}}
+				"price": {"type": "number", "minimum": 0, "description": "Extra charge for choosing this entry, in the store currency; interpreted according to price_type."},
+				"price_type": {"type": "string", "enum": ["fixed", "percent"], "description": "fixed adds the price amount; percent adds that percentage of the product price."},
+				"sku": {"type": "string", "maxLength": 64, "description": "Optional SKU recorded for this option value, for inventory or fulfilment systems."},
+				"sort_order": {"type": "integer", "minimum": 0, "description": "Display position among the values; lower comes first."}}}}
 	}, "required": ["instance", "sku", "title", "type"], "additionalProperties": false}`
 )
 
@@ -3007,14 +3024,14 @@ const (
 		"option_id": {"type": "integer", "minimum": 1, "description": "Custom option id from product.options, or the attribute option id for attribute tools."},
 		"title": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Display title for this entry."},
 		"type": {"type": "string", "enum": ["field", "area", "file", "drop_down", "radio", "checkbox", "multiple", "date", "date_time", "time"], "description": "Input control. drop_down, radio, checkbox and multiple take values; the others do not."},
-		"is_require": {"type": "boolean", "default": false},
-		"sort_order": {"type": "integer", "minimum": 0},
-		"values": {"type": "array", "maxItems": 50, "items": {"type": "object", "additionalProperties": false,
+		"is_require": {"type": "boolean", "default": false, "description": "True when the shopper must choose an option before adding to cart. Default false."},
+		"sort_order": {"type": "integer", "minimum": 0, "description": "Display position among the product's custom options; lower comes first."},
+		"values": {"type": "array", "maxItems": 50, "description": "Selectable entries; required for drop_down, radio, checkbox and multiple, and rejected for the input types.", "items": {"type": "object", "additionalProperties": false,
 			"required": ["title"], "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 255, "description": "Display title for this entry."},
-				"price": {"type": "number", "minimum": 0},
-				"price_type": {"type": "string", "enum": ["fixed", "percent"]},
-				"sku": {"type": "string", "maxLength": 64, "description": "Product SKU."},
-				"sort_order": {"type": "integer", "minimum": 0}}}}
+				"price": {"type": "number", "minimum": 0, "description": "Extra charge for choosing this entry, in the store currency; interpreted according to price_type."},
+				"price_type": {"type": "string", "enum": ["fixed", "percent"], "description": "fixed adds the price amount; percent adds that percentage of the product price."},
+				"sku": {"type": "string", "maxLength": 64, "description": "Optional SKU recorded for this option value, for inventory or fulfilment systems."},
+				"sort_order": {"type": "integer", "minimum": 0, "description": "Display position among the values; lower comes first."}}}}
 	}, "required": ["instance", "sku", "option_id", "title", "type"], "additionalProperties": false}`
 
 	productOptionDeleteSchema = `{"type": "object", "properties": {` + instanceProp + `, ` + confirmationProp + `, ` + skuProp + `,

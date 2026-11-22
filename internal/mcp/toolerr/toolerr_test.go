@@ -47,7 +47,7 @@ type echoOutput struct {
 
 func TestStructuredErrorEnvelope(t *testing.T) {
 	session := newSession(t, func(srv *mcp.Server) {
-		Add(srv, &mcp.Tool{Name: "test.fail", InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false}`)},
+		Add(srv, &mcp.Tool{Name: "test.fail", InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"value":{"type":"string"}}}`)},
 			func(context.Context, *mcp.CallToolRequest, echoInput) (*mcp.CallToolResult, echoOutput, error) {
 				return nil, echoOutput{}, errs.New(errs.CodeNotFound, "missing resource").WithDetail("resource", "product")
 			})
@@ -238,7 +238,7 @@ func text(t *testing.T, res *mcp.CallToolResult) string {
 // exported builder) keeps raw storage text out of the agent-facing result.
 func TestUntypedHandlerErrorIsSanitized(t *testing.T) {
 	session := newSession(t, func(srv *mcp.Server) {
-		Add(srv, &mcp.Tool{Name: "test.storage", InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false}`)},
+		Add(srv, &mcp.Tool{Name: "test.storage", InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"value":{"type":"string"}}}`)},
 			func(context.Context, *mcp.CallToolRequest, echoInput) (*mcp.CallToolResult, echoOutput, error) {
 				return nil, echoOutput{}, errors.New(`storage: get job: ERROR: relation "jobs" does not exist (SQLSTATE 42P01)`)
 			})
@@ -266,7 +266,7 @@ func TestUntypedHandlerErrorIsSanitized(t *testing.T) {
 // once, not "not_found: not_found: ...".
 func TestHandlerErrorTextHasCodeOnce(t *testing.T) {
 	session := newSession(t, func(srv *mcp.Server) {
-		Add(srv, &mcp.Tool{Name: "test.notfound", InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false}`)},
+		Add(srv, &mcp.Tool{Name: "test.notfound", InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"value":{"type":"string"}}}`)},
 			func(context.Context, *mcp.CallToolRequest, echoInput) (*mcp.CallToolResult, echoOutput, error) {
 				return nil, echoOutput{}, errs.New(errs.CodeNotFound, "missing resource")
 			})
@@ -279,4 +279,86 @@ func TestHandlerErrorTextHasCodeOnce(t *testing.T) {
 	if strings.Count(rendered, "not_found") != 1 {
 		t.Fatalf("text %q contains the code %d times, want once", rendered, strings.Count(rendered, "not_found"))
 	}
+}
+
+// GG-01 root cause: a hand-written input schema drifted from the Go input struct,
+// so a documented parameter (`shipping_amount`) was rejected by the schema while
+// the struct had it. The registration check turns that class of drift into a
+// startup failure. Removing validateSchemaMatchesInput from Add makes the
+// registration below succeed and this test fail.
+func TestAddRejectsSchemaThatDriftedFromTheInputStruct(t *testing.T) {
+	type driftedInput struct {
+		Instance string   `json:"instance"`
+		Shipping *float64 `json:"shipping_amount"`
+	}
+	tool := &mcp.Tool{
+		Name: "test.drifted",
+		// The schema omits shipping_amount, exactly like the creditmemo bug.
+		InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"instance":{"type":"string"}},"required":["instance"]}`),
+	}
+	err := validateSchemaMatchesInput[driftedInput](tool)
+	if err == nil {
+		t.Fatal("a schema missing a struct field must be rejected at registration")
+	}
+	if !strings.Contains(err.Error(), "shipping_amount") || !strings.Contains(err.Error(), "not in the schema") {
+		t.Fatalf("err = %v, want it to name the drifting field", err)
+	}
+}
+
+// The reverse drift is equally fatal: a schema property with no struct field is a
+// parameter the caller can send and nothing reads.
+func TestSchemaInputCheckRejectsUnknownSchemaProperty(t *testing.T) {
+	type smallInput struct {
+		Instance string `json:"instance"`
+	}
+	tool := &mcp.Tool{
+		Name:        "test.extra",
+		InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"instance":{"type":"string"},"ghost":{"type":"string"}}}`),
+	}
+	err := validateSchemaMatchesInput[smallInput](tool)
+	if err == nil {
+		t.Fatal("a schema property with no struct field must be rejected")
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("err = %v, want it to name the ghost property", err)
+	}
+}
+
+// A matching schema passes, and the middleware-consumed confirmation_id is not
+// mistaken for drift.
+func TestSchemaInputCheckAcceptsMatchingSchema(t *testing.T) {
+	type goodInput struct {
+		Instance string `json:"instance"`
+	}
+	tool := &mcp.Tool{
+		Name:        "test.good",
+		InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"instance":{"type":"string"},"confirmation_id":{"type":"string"}},"required":["instance"]}`),
+	}
+	if err := validateSchemaMatchesInput[goodInput](tool); err != nil {
+		t.Fatalf("a matching schema must pass: %v", err)
+	}
+}
+
+// The registration path itself must refuse the drift, not just the helper: Add is
+// where a hand-written schema meets its Go input struct at startup. Removing the
+// validateSchemaMatchesInput call from Add makes this test fail (registration
+// succeeds and nothing is recovered).
+func TestAddRefusesDriftedSchemaAtRegistration(t *testing.T) {
+	type driftedInput struct {
+		Instance string   `json:"instance"`
+		Shipping *float64 `json:"shipping_amount"`
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Add accepted a schema that drifted from its input struct")
+		}
+	}()
+	newSession(t, func(srv *mcp.Server) {
+		Add(srv, &mcp.Tool{
+			Name:        "test.drifted",
+			InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"instance":{"type":"string"}},"required":["instance"]}`),
+		}, func(context.Context, *mcp.CallToolRequest, driftedInput) (*mcp.CallToolResult, echoOutput, error) {
+			return nil, echoOutput{}, nil
+		})
+	})
 }

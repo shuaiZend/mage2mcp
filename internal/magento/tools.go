@@ -30,6 +30,8 @@ const (
 	getToolDescription = "Reads one product from the configured Magento 2 REST catalog " +
 		"(GET /rest/{store_code}/V1/products/{sku}) using the integration credential. " +
 		"Read-only: it never creates, updates, or deletes data. " +
+		"The projection omits extension_attributes: configurable options and child SKUs are not returned (use " +
+		"magento.configurable.children), and stock_item is not returned (use magento.inventory.status). " +
 		"The instance input is required and must name a configured Magento instance."
 	searchToolDescription = "Searches the configured Magento 2 REST catalog " +
 		"(GET /rest/{store_code}/V1/products with searchCriteria filter groups) using the integration credential. " +
@@ -251,7 +253,7 @@ func newSearchTool(lookup serviceLookup) registry.Tool {
 const (
 	importValidateToolName        = "magento.import.validate"
 	importValidateToolTitle       = "Validate a product import"
-	importValidateToolDescription = "Parses and validates a CSV or JSON product import (base64-encoded, at most 8 MiB decoded and 5000 rows; the encoded payload must fit the server body limit, 16 MiB by default) and returns a preview with per-row errors. Read-only: nothing is written to Magento."
+	importValidateToolDescription = "Parses and validates a CSV or JSON product import (base64-encoded, at most 8 MiB decoded and 5000 rows; the encoded payload must fit the server body limit, 16 MiB by default) and returns a preview with per-row errors. Structural check only: it does not accept update_existing and does not run the same required-column rules as magento.import.start, so a payload can validate here and still be rejected there. Read-only: nothing is written to Magento."
 	importValidateCapability      = "magento.import.read"
 )
 
@@ -272,9 +274,9 @@ const importValidateSchema = `{
   "additionalProperties": false,
   "required": ["instance", "format", "data_base64"],
   "properties": {
-    "instance": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
-    "format": {"type": "string", "enum": ["csv", "json"]},
-    "data_base64": {"type": "string", "maxLength": 11184812}
+    "instance": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$", "description": "Configured Magento instance id; required, and must name a configured instance."},
+    "format": {"type": "string", "enum": ["csv", "json"], "description": "Payload encoding: csv with a header row, or a json array of objects."},
+    "data_base64": {"type": "string", "maxLength": 11184812, "description": "The import payload, base64 encoded: at most 8 MiB decoded and 5000 rows."}
   }
 }`
 
@@ -321,28 +323,31 @@ const (
 	orderGetToolDescription = "Reads one order from the configured Magento 2 REST API " +
 		"(GET /rest/{store_code}/V1/orders/{id}) including its line items, the shipping method, and the " +
 		"shipping and billing addresses (recipient, street, phone, address email), because support cannot " +
-		"confirm or correct a delivery without them. Read-only; payment data is not returned and order search " +
-		"omits addresses. The instance input is required and must name a configured Magento instance."
+		"confirm or correct a delivery without them. No tool can change a placed order's address: to correct one, cancel and re-place the " +
+		"order, or have a human edit it in the Magento admin. Read-only; payment data is not returned and order search omits addresses. " +
+		"The instance input is required and must name a configured Magento instance."
 	orderSearchToolDescription = "Searches the configured Magento 2 REST API " +
 		"(GET /rest/{store_code}/V1/orders with searchCriteria filter groups) by status, state, increment id, " +
-		"creation window, or store view. Read-only; line items are omitted from search results. " +
-		"The instance input is required and must name a configured Magento instance."
+		"creation window, or store view. Read-only; line items are omitted from search results. cursor is a row offset and must be a " +
+		"multiple of limit. The response has no total; use total_available when present. Paging is offset-based, so orders created during " +
+		"the scan can shift rows: deduplicate by entity_id. The instance input is required and must name a configured Magento instance."
 	salesSummaryToolDescription = "Aggregates Magento orders per day over a bounded window: order count, " +
 		"grand-total revenue, and item quantity. The window must be at most 366 days; split a longer " +
 		"range into several calls. Scans at most 1000 orders, oldest first, and reports total_available, " +
 		"scanned_orders, excluded_orders, and whether anything was excluded. Day buckets are calendar " +
 		"days in the store view timezone (returned as timezone), and a date-only from/to is a day in " +
 		"that timezone, so the buckets line up with the requested window. " +
-		"Revenue is order grand_total (tax and shipping included) and is not GA4 purchase revenue. " +
+		"Revenue is order grand_total (tax and shipping included) and is not GA4 purchase revenue. It sums every order in the window, " +
+		"canceled orders included, and does not deduct refunds: for net revenue subtract sales.analysis refunds yourself. " +
 		"The instance input is required and must name a configured Magento instance."
 
 	orderGetSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"order_id": {"type": "integer", "minimum": 1, "description": "Magento order entity id (not the increment id)."}
 	}, "required": ["instance", "order_id"], "additionalProperties": false}`
 
 	orderSearchSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"status": {"type": "string", "maxLength": 64, "description": "Order status, e.g. processing or complete."},
 		"state": {"type": "string", "maxLength": 64, "description": "Order state, e.g. new or complete."},
 		"increment_id": {"type": "string", "maxLength": 32, "description": "Exact increment id, e.g. 000000123."},
@@ -355,7 +360,7 @@ const (
 	}, "required": ["instance"], "additionalProperties": false}`
 
 	salesSummarySchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"from": {"type": "string", "description": "Inclusive window start, RFC 3339 or YYYY-MM-DD; a date is a calendar day in the store view timezone."},
 		"to": {"type": "string", "description": "Exclusive window end, RFC 3339 or YYYY-MM-DD; a date is a calendar day in the store view timezone."}
 	}, "required": ["instance", "from", "to"], "additionalProperties": false}`
@@ -498,22 +503,22 @@ const (
 		"The instance input is required and must name a configured Magento instance."
 
 	categoryGetSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"category_id": {"type": "integer", "minimum": 1, "description": "Magento category id."}
 	}, "required": ["instance", "category_id"], "additionalProperties": false}`
 
 	categoryTreeSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"root_id": {"type": "integer", "minimum": 1, "default": 2, "description": "Root category id; Magento's default root is 2."},
 		"depth": {"type": "integer", "minimum": 1, "maximum": 5, "default": 2, "description": "Tree depth, 1-5."}
 	}, "required": ["instance"], "additionalProperties": false}`
 
 	attributeSetsSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."}
 	}, "required": ["instance"], "additionalProperties": false}`
 
 	attributesSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"attribute_set_id": {"type": "integer", "minimum": 1, "description": "Attribute set id, e.g. 4 for Default."}
 	}, "required": ["instance", "attribute_set_id"], "additionalProperties": false}`
 )
@@ -661,17 +666,17 @@ const (
 		"The instance input is required and must name a configured Magento instance."
 
 	productMediaSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}
 	}, "required": ["instance", "sku"], "additionalProperties": false}`
 
 	stockStatusSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU, 1-64 characters from [A-Za-z0-9._:-]."}
 	}, "required": ["instance", "sku"], "additionalProperties": false}`
 
 	sourceItemsSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"skus": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string", "pattern": "` + skuInputPattern + `"}, "description": "SKUs to look up, 1-20."}
 	}, "required": ["instance", "skus"], "additionalProperties": false}`
 )
@@ -794,17 +799,17 @@ const (
 		"The instance input is required and must name a configured Magento instance."
 
 	orderIDOnlySchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"order_id": {"type": "integer", "minimum": 1, "description": "Magento order entity id."}
 	}, "required": ["instance", "order_id"], "additionalProperties": false}`
 
 	invoiceIDSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"invoice_id": {"type": "integer", "minimum": 1, "description": "Magento invoice entity id."}
 	}, "required": ["instance", "invoice_id"], "additionalProperties": false}`
 
 	shipmentIDSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"shipment_id": {"type": "integer", "minimum": 1, "description": "Magento shipment entity id."}
 	}, "required": ["instance", "shipment_id"], "additionalProperties": false}`
 )
@@ -971,7 +976,7 @@ const (
 		"The instance input is required and must name a configured Magento instance."
 
 	creditmemoIDSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"creditmemo_id": {"type": "integer", "minimum": 1, "description": "Magento credit memo entity id."}
 	}, "required": ["instance", "creditmemo_id"], "additionalProperties": false}`
 )
@@ -1054,18 +1059,18 @@ const (
 		"The instance input is required and must name a configured Magento instance."
 
 	configurableChildrenSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"parent_sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Configurable parent SKU."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Alias for parent_sku."}
 	}, "required": ["instance"], "additionalProperties": false}`
 
 	attributeOptionsSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"attribute_code": {"type": "string", "pattern": "` + attributeCodeInputPattern + `", "description": "Attribute code, e.g. color."}
 	}, "required": ["instance", "attribute_code"], "additionalProperties": false}`
 
 	categoryProductsSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"category_id": {"type": "integer", "minimum": 1, "description": "Magento category id."},
 		"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Page size, 1-200."},
 		"cursor": {"type": "string", "pattern": "` + cursorPattern + `", "description": "Zero-based row offset; must be a multiple of limit."}
@@ -1199,12 +1204,12 @@ const (
 		"The instance input is required and must name a configured Magento instance."
 
 	customerGetSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"customer_id": {"type": "integer", "minimum": 1, "description": "Magento customer id."}
 	}, "required": ["instance", "customer_id"], "additionalProperties": false}`
 
 	customerSearchSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"email": {"type": "string", "format": "email", "maxLength": 254, "description": "Exact customer email to match; never echoed back."},
 		"limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20, "description": "Page size, 1-100."},
 		"cursor": {"type": "string", "pattern": "` + cursorPattern + `", "description": "Zero-based row offset; must be a multiple of limit."}
@@ -1291,7 +1296,7 @@ const (
 		"The instance input is required and must name a configured Magento instance."
 
 	productLinksSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU."},
 		"link_type": {"type": "string", "enum": ["related", "upsell", "crosssell"], "description": "Link relation to list."}
 	}, "required": ["instance", "sku", "link_type"], "additionalProperties": false}`
@@ -1337,7 +1342,7 @@ const (
 		"The instance input is required and must name a configured Magento instance."
 
 	productsBatchSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"skus": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "pattern": "` + skuInputPattern + `"}, "description": "SKUs to fetch, 1-50; duplicates are ignored."}
 	}, "required": ["instance", "skus"], "additionalProperties": false}`
 )
@@ -1381,7 +1386,7 @@ const (
 		"It suggests improvements but never generates copy. Read-only."
 
 	productSEOSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU."}
 	}, "required": ["instance", "sku"], "additionalProperties": false}`
 )
@@ -1424,7 +1429,7 @@ const (
 		"name, street, city, postcode, and telephone are never returned. Read-only."
 
 	customerAddressesSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"customer_id": {"type": "integer", "minimum": 1, "description": "Magento customer id."}
 	}, "required": ["instance", "customer_id"], "additionalProperties": false}`
 )
@@ -1467,7 +1472,7 @@ const (
 		"(GET /rest/{store_code}/V1/stockItems/{sku} per SKU). Each SKU reports its own error instead of failing the batch. Read-only."
 
 	stockStatusBatchSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"skus": {"type": "array", "minItems": 1, "maxItems": 25, "items": {"type": "string", "pattern": "` + skuInputPattern + `"}, "description": "SKUs to look up, 1-25; duplicates are ignored."}
 	}, "required": ["instance", "skus"], "additionalProperties": false}`
 )
@@ -1512,7 +1517,7 @@ const (
 		"The instance input is required and must name a configured Magento instance."
 
 	tierPricesSchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."},
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."},
 		"sku": {"type": "string", "pattern": "` + skuInputPattern + `", "description": "Product SKU."}
 	}, "required": ["instance", "sku"], "additionalProperties": false}`
 )
@@ -1561,7 +1566,7 @@ const (
 		"The instance input is required and must name a configured Magento instance."
 
 	instanceOnlySchema = `{"type": "object", "properties": {
-		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id."}
+		"instance": {"type": "string", "pattern": "` + instancePattern + `", "description": "Configured Magento instance id; required, and must name a configured instance."}
 	}, "required": ["instance"], "additionalProperties": false}`
 )
 
@@ -1944,8 +1949,9 @@ const (
 	salesAnalysisToolDescription = "Aggregates an order window into business metrics: orders, revenue, AOV, discounts, shipping, tax, " +
 		"mixed-currency flag, guest share, repeat/new customers, coupons, refunds (total and by SKU), daily/weekday/hour trend, " +
 		"status/payment/store/currency mix, shipping methods, AOV bands, shipping country, top SKUs, and shipment latency. " +
-		"Only aggregates are returned; customer PII never enters the result. Scans at most 20,000 orders and reports " +
-		"total_available, excluded_orders, duplicates_skipped, and the paging caveat. Read-only. " +
+		"Only aggregates are returned; customer PII never enters the result. refunded_amount is a document-level total (lines + shipping + " +
+		"adjustments), not a line subtotal, while top_skus.revenue is a line subtotal and will not sum to total revenue. " +
+		"Scans at most 20,000 orders and reports total_available, excluded_orders, duplicates_skipped, and the paging caveat. Read-only. " +
 		"The instance input is required and must name a configured Magento instance."
 
 	salesAnalysisSchema = `{"type": "object", "properties": {
