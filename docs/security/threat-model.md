@@ -6,7 +6,7 @@
 | Version | 2.0 (as-built) |
 | Date | 2026-11-20 |
 | Owner | Security owner |
-| Status | As-built for v0.11.6. Supersedes the Phase 0 design baseline (v1.1). |
+| Status | As-built for v0.11.7. Supersedes the Phase 0 design baseline (v1.1). |
 | Baseline | `66786a5d10c1f78d00e08a5b42d01fcc2da37a3f` plus the remediation branch; [known limitations](../audit/known-limitations.md) is binding for the release verdict |
 | Related | [SECURITY.md](../../SECURITY.md), [security review](security-review.md), [remediation plan](../audit/remediation-plan.md) |
 

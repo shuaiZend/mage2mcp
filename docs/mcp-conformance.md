@@ -1,6 +1,6 @@
 # MCP conformance and best practices
 
-**Status:** as-built for v0.11.6
+**Status:** as-built for v0.11.7
 (2026-11-20). This document maps the MCP specification's requirements and
 security best practices to the shipped gateway and names the test that proves
 each row. Rows that are not implemented are marked **PLANNED**.

@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.7] - 2026-11-22
+
+The persona pass: seven agents with different jobs tested the gateway the way their work
+actually uses it, produced 101 findings, and the deduplicated 85 were repaired. Full notes:
+[docs/releases/v0.11.7.md](docs/releases/v0.11.7.md).
+
+### Fixed
+
+- **A weight edit silently repriced the product.** `buildUpdatePayload` passed
+  `[Weight, SpecialPrice, SpecialFromDate, SpecialToDate, Cost]` to a helper aligned against
+  `[special_price, special_from_date, special_to_date, cost, tax_class_id]`, shifting every
+  field one slot. Setting weight 9.99 on a product priced 100 put it on sale at 9.99 with no
+  error anywhere. The create path was correct, which is why only updates were wrong.
+- **Any credit memo or shipment carrying a comment was rejected.** `is_visible_on_front` is an
+  integer in Magento; the gateway sent a boolean.
+- **A partial refund refunded the whole shipping amount**, with no parameter to control it. It
+  now takes `shipping_amount` and refunds remaining shipping only when the last units go.
+- **Credit memos were not checked against the invoice's own quantity**, so a refund could
+  exceed the invoice it was against.
+- **Tier prices were unusable in both directions.** The write treated Magento's
+  200-with-an-error-array as success and stored nothing; the read decoded the write interface's
+  field names, so price and quantity always came back zero.
+- **`order.create` recorded the customer id as the order id**, so an operator reading an
+  `operation_unknown` row would look up an unrelated order.
+- **The reconciler would have treated an existing customer as proof of an order** once the
+  entity type changed; a guard keeps a placement that never happened from resolving as applied.
+- **An `operation_unknown` had no way out**: no tool could query it, and the production ledger
+  held eleven that could never resolve. `operation.get` / `.list` / `.dispose` now exist, and
+  disposal records a human judgement rather than flipping the state.
+- **Upstream 400 diagnostics were discarded**, so a missing field arrived as "verify store_code
+  and field values"; Magento's reason and field now reach the details, including through staged
+  writes.
+- **Ambiguous money outcomes carried no `retryable` key at all** rather than an explicit false.
+- **`bulk_update` silently dropped `price` and `name`** while reporting the rows updated.
+- **`invoice.create` with `capture: false` reported `captured: true`.**
+- **The default RBAC policy allowed a viewer to read another instance**; approval now requires a
+  human identity rather than any verified token.
+- **Reports put a 23:30Z order on different days** in summary and analysis; `refunded_amount`
+  was a line subtotal rather than the document total; truncation and paging metadata did not say
+  what they meant.
+- **The design-contract check had been failing since v0.11.6**, including an assertion that
+  demanded `platform.job.get`, a tool that was never built.
+
+### Added
+
+- `magento.operation.get`, `.list` and `.dispose` — query and disposition for an
+  `operation_unknown`, which previously had no exit.
+- `shipping_amount` on credit memo creation.
+
+### Changed
+
+- `order.create` records the customer as its ledger entity, since the order does not exist when
+  the operation begins; the order number is written to `upstream_ref` on success.
+- The tool catalog is 105 tools.
+
 ## [0.11.6] - 2026-11-22
 
 The semantic-layer pass: seven parallel domain tests, 51 findings, and the two release
