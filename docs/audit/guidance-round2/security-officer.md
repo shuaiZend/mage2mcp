@@ -261,3 +261,50 @@ operation_transitions: unknown→failed  reason="disposed_not_applied: …"  @ 1
 **12 条里只有 1 条在证据被重置掉之前还留得下自证链**——那条我处置了，并验证了 v0.11.9 的
 `disposed_<judgment>: <note>` 与 `needs_attention` 递减；其余 11 条我拒绝用一个假判定把它们从
 视图里清掉：**「处置完成」不等于「判定正确」**，在证据已消失时，诚实的答案是保持 unknown。
+
+## 8. 队长签字与后续（处置之后追加）
+
+**签字决定：不批量 dispose 那 11 条。** 理由（队长原话）：dispose 会把人工判定写进账本，证据被抹掉后
+填「已验证不存在」等于把「不知道」伪装成「查过了」；而且 `not_applied` 会**释放派生 key**，等于允许
+重试——对一个我们不知道是否执行过的下单操作，这是错的方向。
+
+### 8.1 已知基线（运维侧照此读，不要把基线当告警）
+
+| 基线 | 值（2026-11-22T19:0xZ） | 说明 |
+|---|---|---|
+| `operation.list{needs_attention:true}` | **11**（全部 `magento.order.create`） | **本轮测试残留**，不是客户真实操作；demo 店已重置，**永久不可判定**，保持 unknown |
+| 未消费的 `confirmation_tokens` | **201** | 测试残留（`state=pending` 的真实行）；**不在 demo 上 DELETE**，真实部署按运维手册定期清理过期项 |
+
+**读法**：`needs_attention` 的 **11 是已知基线**，不是新信号；只有**超过 11** 才说明出现了新的
+不可判定操作。同理，pending 确认的**增长**才是信号。
+
+### 8.2 处置规则补充：上游不可查时，用账本内部的时间序自证
+
+这次 `semtest` 那条的判法值得固化成规则：
+
+> 当上游已被重置/不可查时，不要停在「查不到所以没发生」。先看**账本自身的时间序**：同一实体的
+> `create`/`link`/`delete` 行按时间排开，找出**前置条件是否在当时成立**。本例里，链接所命名的源在
+> 尝试时刻**还不存在**（创建成功发生在 2 分 14 秒之后），所以链接不可能被上游接受——这是
+> 「当时不可能」的证明，而不是「现在看不到」的推断。
+
+这条与「现在读上游」是两种证据强度：前者在数据被抹掉后仍成立，后者会随保留窗口过期而失效。
+
+### 8.3 功能缺口（队长记为 finding，不在本任务修）
+
+现有三种 judgment（`applied` / `not_applied` / `requeue`）都断言了「**发生了什么**」，缺少一种断言
+「**这条不该存在于生产**」的处置类型（例如 `test_residue`）。这正是那 11 条卡住的根因：它们需要的
+不是「判定了什么」，而是「承认它们是测试残留」。在补上这个类型之前，正确做法就是保持 unknown。
+
+### 8.4 关于 `audit_events` 的精确化（供核实）
+
+我上一版把「outcome 行无 `request_id`」说得太笼统。按 seq 精确到行：
+
+```text
+seq 16492  (middleware) intent/pending    request_id=9c6653df…   confirmation_id=<空>
+seq 16495  scope=dispose outcome/failed   request_id=<空>        confirmation_id=<空>   ← 工具自写的处置行
+seq 16496  (middleware) outcome/succeeded request_id=9c6653df…   confirmation_id=<空>
+```
+
+结论：**中间件写的 intent/outcome 行有 `request_id`（v0.11.7 已修）；缺的是工具自写的那条
+`scope=dispose` 行**，以及三行的 `confirmation_id` 都为空（审批记录在 `confirmation_tokens`，
+不在 `audit_events`）。这与第一轮 P-SEC-02/04 的结论一致，但影响面比「所有 outcome 行」小。

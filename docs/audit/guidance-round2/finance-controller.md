@@ -171,7 +171,7 @@ curl -sS -G ".../rest/V1/orders" -H "Authorization: Bearer $T" \
 
 ### 断言 1：`inventory qty` 是 legacy，可能是 0 而 `is_in_stock=true`；判断可售看 `is_in_stock`，看单源数量用 `inventory.source_items`
 
-**结论：实测成立。**
+**结论：实测成立（指引口径：一致）。**
 
 ```bash
 /tmp/mcpraw -mode=raw -tool=magento.inventory.status_batch \
@@ -226,7 +226,7 @@ curl -sS "https://demo-magento-2.auroracreation.com/pl/stellar-solar-jacket.html
 
 ### 断言 2：`captured` 表示「本次调用请求了捕获且发票回来是 paid」，不代表钱到账
 
-**结论：无法直接实测（我只读，不能创建发票）；代码与现有数据双向印证，与指令一致。**
+**结论：无法直接实测（我只读，不能创建发票）；代码与现有数据双向印证 → 判「成立（间接）」（指引口径：一致）。**
 
 生产库里只有两张 2022 年的发票，都是离线支付 `checkmo`，且都 `state=2`：
 
@@ -264,7 +264,7 @@ internal/magento/invoice_write.go:139
 
 ### 断言 3：`revenue` = 窗口内每张订单的 `grand_total` 之和，含 canceled，不扣退款
 
-**结论：实测成立，两个方向都用数字证死。**
+**结论：实测成立，两个方向都用数字证死（指引口径：一致）。**
 
 用主快照（8 单，其中 2 单 canceled、3 单有退款）：
 
@@ -301,13 +301,36 @@ REST: 订单 1 gt=36.39（未退）  订单 2 gt=39.64（total_refunded=39.64，
 
 如果 revenue 扣退款，这里应该是 36.39。实测 76.03 → **退款一分没扣**。
 
+**但有一个前提：这个等式只在「窗口没被截断」时成立。** 用 `max_orders` 人为触发截断，同一窗口立刻变了：
+
+```bash
+/tmp/mcpraw -mode=raw -tool=magento.sales.analysis \
+  -args='{"instance":"demo","from":"2026-10-24","to":"2026-11-23","max_orders":1}'
+```
+
+```text
+orders = 1        revenue = 115        total_available = 9
+excluded_orders = 8        truncated = true
+```
+
+```bash
+/tmp/mcpraw -mode=raw -tool=magento.sales.summary \
+  -args='{"instance":"demo","from":"2026-10-24","to":"2026-11-23"}'
+# summary: orders=9  revenue=1087  total_available=9  truncated=false
+```
+
+同一时刻、同一窗口：`revenue` 从 1087 变成 115，因为**截断时它只汇总被扫描到的那 1 单**。
+而 READS 段的原话是「sums `grand_total` for **every order in the window**」——在截断场景下
+这句话是**假的**，而 READS 段一个字都没提截断（`truncated`/`excluded_orders`/1000 单上限
+只写在 `reports` prompt 和工具描述里）。见 D-7。
+
 > 财务含义：这个 `revenue` 不能当「净销售额」入账。25 单窗口里 canceled 占 200/929 = 21.5%，
 > 已退款 238/929 = 25.6%，两者叠加最多 47%。`reports` prompt 第 4 步要求「Quote revenue with
 > its caveat」，这条必须照做，否则报表直接高估近一半。
 
 ### 断言 4：`product price` 是全局基础价；店铺作用域价或 `special_price` 才决定顾客实付
 
-**结论：实测成立，且找到了一个差 25% 的实物证据（24-WB05）。**
+**结论：实测成立，且找到了一个差 25% 的实物证据（24-WB05）（指引口径：一致，但 product 侧缺类型化字段，见 D-5「缺失」）。**
 
 先确认「店铺作用域价格」在本店是否存在差异：pl 与 en 两个 store view 各取 300 个商品比价。
 
@@ -369,7 +392,7 @@ curl -sS "https://demo-magento-2.auroracreation.com/pl/savvy-shoulder-tote.html"
 
 ### 断言 5：`created_at` 是 UTC
 
-**结论：实测成立，而且能精确到秒。**
+**结论：实测成立，而且能精确到秒（指引口径：一致；但字段描述与之矛盾，见 D-1「矛盾」）。**
 
 三个时钟同时打印，再取最新订单的 `created_at`：
 
@@ -500,29 +523,39 @@ window_local: {from:"2022-08-01T00:00:00+14:00", ..., first_date:"2022-08-01", l
 
 ### 偏差汇总（agent 会因此算错账/误报的地方）
 
-| 编号 | 级别 | 偏差 | 影响 |
-|---|---|---|---|
-| **D-1** | **P1** | 订单字段 `created_at` 的描述写 `"Store time, ... no timezone suffix"`，而 instructions 说 UTC；实测是 UTC | 财务照字段描述做账会把每笔订单错位 1 小时（欧洲冬令时），跨月/跨日边界直接错期 |
-| **D-2** | **P1** | `reports` prompt 说「两边 bucket 同一时区，日行必须一致，不一致就上报」，但 `sales.analysis` 有未提及的 `timezone` 参数，覆盖后必然不一致 | agent 会把自己制造的差异当缺陷上报（我实测：2022-08-26 vs 2022-08-27），浪费修复轮次，或更糟——挑一个数当真 |
-| D-3 | P2 | prompt 说 `window_local` 给边界，但只有 `analysis` 有；`summary` 只有 UTC `window` + `timezone` | 按 prompt 在 summary 上找 `window_local` 会找不到；要自己换算 |
-| D-4 | P2 | `orders.geography` 既没有 `timezone` 也没有 `window_local`，只有 UTC 的 from/to | 只看 geography 的 agent 不知道窗口按哪个时区取整 |
-| D-5 | P3 | `product.get` 的类型化 `price` 不含 `special_price`，`special_price` 只在 `attributes` 字典里 | 用 `price` 算价的 agent 会把 24-WB05 高估 8.00（33%）；instructions 已提示「read the order line」，但 product 侧没有类型化字段可用 |
-| D-6 | P3 | `invoice.get`/`list` 不暴露 `captured`（capture 意图不落库） | 财务无法审计「这张发票当初是否请求过捕获」；instructions 的措辞 "this call" 本身没错 |
+| 编号 | 级别 | 指引判定 | 偏差 | 影响 |
+|---|---|---|---|---|
+| **D-1** | **P1** | **矛盾** | 订单字段 `created_at` 的描述写 `"Store time, ... no timezone suffix"`，而 instructions 说 UTC；实测是 UTC | 财务照字段描述做账会把每笔订单错位 1 小时（欧洲冬令时），跨月/跨日边界直接错期 |
+| **D-2** | **P1** | **矛盾 + 缺失** | `reports` prompt 说「两边 bucket 同一时区，日行必须一致，不一致就上报」，但 `sales.analysis` 有未提及的 `timezone` 参数，覆盖后必然不一致 | agent 会把自己制造的差异当缺陷上报（我实测：2022-08-26 vs 2022-08-27），浪费修复轮次，或更糟——挑一个数当真 |
+| D-3 | P2 | 缺失 | prompt 说 `window_local` 给边界，但只有 `analysis` 有；`summary` 只有 UTC `window` + `timezone` | 按 prompt 在 summary 上找 `window_local` 会找不到；要自己换算 |
+| D-4 | P2 | 缺失 | `orders.geography` 既没有 `timezone` 也没有 `window_local`，只有 UTC 的 from/to | 只看 geography 的 agent 不知道窗口按哪个时区取整 |
+| D-5 | P3 | 缺失 | `product.get` 的类型化 `price` 不含 `special_price`，`special_price` 只在 `attributes` 字典里 | 用 `price` 算价的 agent 会把 24-WB05 高估 8.00（33%）；instructions 已提示「read the order line」，但 product 侧没有类型化字段可用 |
+| D-6 | P3 | 缺失 | `invoice.get`/`list` 不暴露 `captured`（capture 意图不落库） | 财务无法审计「这张发票当初是否请求过捕获」；instructions 的措辞 "this call" 本身没错 |
+| **D-7** | **P1** | **矛盾（截断场景）** | instructions 说 revenue「sums `grand_total` for **every order in the window**」，但截断时只汇总被扫描的那部分，且 READS 段完全没提截断 | 近两年/单月超 1000 单时，agent 会把 `revenue=115`（实际 1087）当成完整营收报上去；数字看起来合理，错得很安静 |
 
 ---
 
 ## 6. 五条 READS 断言的最终判定
 
-| # | 断言 | 判定 |
-|---|---|---|
-| 1 | `inventory qty` 是 legacy，可能 0 而 `is_in_stock=true`；可售看 `is_in_stock`，单源看 `source_items` | **实测成立** |
-| 2 | `captured` = 本次请求捕获且发票回来 paid，不代表钱到账 | **无法直接验证（只读约束）**；代码与离线发票数据一致，判「成立（间接）」 |
-| 3 | `revenue` 含 canceled、不扣退款 | **实测成立**（929 vs 691 / 729 双反证；2022 全额退款单也计入） |
-| 4 | `product price` 是全局基础价，实付由店铺作用域价或 `special_price` 决定 | **实测成立**（24-WB05：全局 32，前台 24.00） |
-| 5 | `created_at` 是 UTC | **实测成立**（created_at 19:00:05 vs NOW_UTC 19:00:27；Warsaw 为 20:00:27） |
+| # | 断言 | 任务口径判定 | 指引判定（一致/缺失/矛盾） | 依据 |
+|---|---|---|---|---|
+| 1 | `inventory qty` 是 legacy，可能 0 而 `is_in_stock=true`；可售看 `is_in_stock`，单源看 `source_items` | **实测成立** | **一致** | WJ01–WJ12 共 12 个 SKU：qty=0、is_in_stock=true；source_items 父 0 / 子 100；前台「W magazynie」 |
+| 2 | `captured` = 本次请求捕获且发票回来 paid，不代表钱到账 | **无法直接验证（只读约束）**，间接成立 | **一致**（但历史发票不可回读 capture 意图，D-6「缺失」） | checkmo 发票 state=2 / total_paid=36.39 但钱未动；代码 `Captured: in.Capture && invoice.State == paid` |
+| 3 | `revenue` 含 canceled、不扣退款 | **实测成立（未截断窗口）**；截断时不成立 | **一致**（未截断）／**矛盾**（截断，D-7） | 929 = 全部 8 单；扣退款应 691、排除 canceled 应 729；2022 全额退款单 39.64 仍计入；`max_orders=1` 时 revenue 只剩 115 而实际 1087 |
+| 4 | `product price` 是全局基础价，实付由店铺作用域价或 `special_price` 决定 | **实测成立** | **一致**（product 侧缺类型化 special_price，D-5「缺失」） | 24-WB05 全局 32，前台 finalPrice 24.00；pl/en 300 SKU 无作用域价差 |
+| 5 | `created_at` 是 UTC | **实测成立** | **一致**（字段描述「Store time」与之矛盾，D-1「矛盾」） | created_at 19:00:05 vs NOW_UTC 19:00:27、NOW_WARSAW 20:00:27 |
 
-**五条断言的语义全部正确**，没有一条是假的。真正会让人算错账的不是断言内容，而是
-**D-1（字段描述与指令冲突）** 和 **D-2（prompt 漏了 timezone 参数）**。
+**五条断言在「常规窗口」下语义全部正确**，没有一条是凭空写错的——这一点值得肯定：
+上一轮我报的 P-FIN-01（revenue 含 canceled、不扣退款）、P-FIN-06（日桶时区不一致）、
+DA-01/DA-04（行小计口径、refunded_amount 口径）都已经被写进指引，而且**实测都对得上**。
+
+真正会让人算错账的不是这五条的内容，而是三处**边界**：
+
+1. **D-1**：字段描述写「Store time」，与「created_at is UTC」冲突——照描述做账会错 1 小时；
+2. **D-7**：断言 3 在**截断**时失效（revenue 只剩被扫描的部分），而 READS 段完全没提截断；
+3. **D-2**：prompt 要求「两边日行必须一致」，却没说 `sales.analysis` 的 `timezone` 覆盖会让它们必然不一致。
+
+三条都属于「文字对，边界没写」，而财务恰好活在边界上（跨月、跨年、大促爆单）。
 
 ---
 
