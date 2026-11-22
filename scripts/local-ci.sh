@@ -12,6 +12,22 @@ if [ -n "$unformatted" ]; then
   exit 1
 fi
 
+# A deleted test cannot fail, so the suite stays green without it (one agent
+# rewrote a test file and dropped three tests another agent had appended). This
+# check compares test names with origin/main and fails on a removal. It runs
+# before the compile-and-test steps because it is fast and catches the loss
+# early. It reads the working tree, not just HEAD: a test deleted but not yet
+# committed is exactly the case a pre-push gate has to catch. `git stash create`
+# snapshots the tracked working tree without touching it or creating a ref, and
+# prints nothing on a clean tree, so the fallback is plain HEAD.
+echo "== test inventory =="
+snapshot="$(git stash create || true)"
+if [ -n "$snapshot" ]; then
+  bash scripts/check-test-inventory.sh --head "$snapshot"
+else
+  bash scripts/check-test-inventory.sh
+fi
+
 echo "== go mod verify / vet =="
 go mod verify
 go vet ./...
