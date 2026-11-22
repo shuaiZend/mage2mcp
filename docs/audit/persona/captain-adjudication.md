@@ -844,3 +844,46 @@ v0.11.8 我裁决压缩 instructions、要求「保留清单」。我验证了**
 - 边界（截断、时区覆盖、校验时机）**有说明**
 
 **「写了」不等于「对」。** 这是我这一轮学到的最直接的一课，而且它是上一轮「信号不可信」的延续——我这次把「文字存在」当成了「文字正确」。
+
+## 最严重的指引缺陷：照字面执行会卡死
+
+t45 报的 G2-SO-06 是这轮最重的一条，我实测确认了。
+
+### 事实
+
+```text
+第一次调用 → {"code":"confirmation_required",
+              "details":{"confirmation_id":"f6ef4f19-…","expires_at":"…"},
+              "message":"this operation requires approval by a different human"}
+
+未批准就带 id 重发 → {"code":"confirmation_required",
+                     "message":"confirmation has not been approved",
+                     "retryable":false}
+```
+
+**第二次响应没有 `details`、没有 `confirmation_id`、没有任何下一步提示。**
+
+而 instructions 的 invariant 1 写「首次调用拿 id → 带 id 重发」，invariant 2 写「approver 必须是另一个真人」——**但从未说谁在什么时候执行批准**。
+
+### 为什么这条比「写错了」严重
+
+一个 agent 严格照指引做：拿 id → 重发 → 收到 `confirmation_required: confirmation has not been approved`（无 id）。它会：
+
+- 以为 id 无效 → 重新调用 → 又拿到一个新 id → 循环
+- 或以为流程失败 → 放弃
+
+**它无法从指引中推断出「需要一个人去跑 mage2mcp-admin approve」。** 而真实流程是三步，指引说两步。
+
+### 这是「指引省略了不在网关内的一步」
+
+设计者（我）默认「审批」是外部动作、不言自明。但对一个只读 instructions 的 agent，**它不存在**。
+
+而且第二次响应**故意不带 id**（安全考虑：不给未批准的请求重发凭据），这让缺口从「含糊」变成「死锁」——agent 连原来的 id 都丢了。
+
+### 同一份报告里的跨轮更正
+
+G2-SO-05：发货数量超订量时 **Magento 静默截断**（订 2 发 5 → `total_qty:2`，成功无警告；管理员令牌直连 REST 同样 200+2）。
+
+这**解释了第一轮 SO-05 的 SUSPECTED**（「要 4 发 3 / 要 2 发 1」）——那是 Magento 行为，**不是网关缺陷**。第一轮该条应改为 NOT-A-DEFECT，真问题改为「静默截断未在指引中说明」。
+
+**跨轮更正比新发现更有价值**：它把一条挂了一轮的疑点结掉了，而且方向相反——不是「网关少发了货」，是「Magento 按订单量截断，网关如实转述」。
