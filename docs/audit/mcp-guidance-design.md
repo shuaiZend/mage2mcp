@@ -130,6 +130,9 @@ skill 是客户端侧的约定（DSH / Claude Code 这类），换一个客户�
 **为什么不是越短越好**：instructions 是唯一「所有客户端都一定会读」的地方，安全红线少一句，就有一类客户端
 完全没有防护。**为什么不能能塞就塞**：它无条件常驻且不可裁剪（只读部署也要付），而工具目录可被裁剪/延迟加载。
 
+**队长裁决（2026-11-22）**：3,200 硬上限**不接受为任何场景破例**——一旦为一个场景破一次，下次会为另一个场景
+再破一次。要在预算内取舍，这正是本设计要做的事。因此 §3.3 的迁移不是可选项，而是把 B/C 挤进预算的唯一途径。
+
 ### 3.2 目标结构（五段，顺序即优先级）
 
 | 段 | 内容 | 预算 | 来源 |
@@ -138,9 +141,24 @@ skill 是客户端侧的约定（DSH / Claude Code 这类），换一个客户�
 | B. **写契约** | 两步审批（先拿 `confirmation_id` 再带 id 重发）；审批人须为另一个**人类**身份；审批绑定 tool+instance+参数哈希；**省略 `idempotency_key` = 按参数派生 = 同参数重放**；`operation_unknown` 只能 `operation.get`/`operation.dispose`，**绝不重试**；`retryable:false` 与 `unsupported_capability` 是终局 | ≤800 | **新增（GG-05/12/18）** |
 | C. **读语义** | `qty` 是 legacy（可能 0 而 `is_in_stock=true`）；`captured` ≠ 已收款；报表 `revenue` **含 canceled、不扣退款**；`price` 是全局基础价；`created_at` 是 UTC | ≤500 | **新增（GG-07/08/20）** |
 | D. **发现与能力** | 用 `platform.info` 取权威工具清单；annotation hints 不可信、以描述正文为准；部分店铺不暴露某些路由（`unsupported_capability` 不要重试） | ≤300 | **新增（MCP-10/16/GG-18）** |
-| E. 复制商品红线 | 压缩版：先发现再写；**不要从描述推断选项**；**没有人工同意不新建类目/属性/选项/属性集**；复制完成的验收=同 type/同 options/同属性值；长配方见 prompt `product_copy` | ≤450 | **压缩现有 B+C（2,498 → 450）** |
+| E. 复制商品清单 | **队长要求：不能是「先发现再写」这种口号，必须是点名查什么的清单**（见下方定稿文本） | ≤450 | **压缩现有 B+C（2,498 → 450）** |
 
 合计 ≈ 2,700，落在目标内。
+
+**段 E 定稿文本**（英文，约 430 字符；队长给的清单是中文 199 字，这是等义的英文版，实现时逐字使用）：
+
+```text
+COPYING PRODUCTS FROM ANOTHER STORE: read the source first and record its type
+(simple/configurable/grouped/bundle/downloadable/virtual), every configurable option and its
+values, the full attribute set and the categories it belongs to; then compare with what the
+target already has. Never infer an option from a description. Do not create a category,
+attribute, option value or attribute set without a human agreeing to that specific change. A
+copy is done only when type, options and attribute values match; say what you could not
+reproduce instead of shipping a simpler product.
+```
+
+这段必须点名六项：**类型、每个可配置选项及取值、完整属性集、所属分类、比对目标、验收标准**；
+并要求「不从描述推断」「taxonomy 需人工同意」「无法复现要说明」。测试按这六个要点逐条断言关键词。
 
 ### 3.3 推翻 t20：「段落 B/C 保留不动」改为「压缩红线 + 迁移配方」
 
@@ -152,7 +170,11 @@ t20 建议 B（复制商品，1,193 字符）与 C（非 Magento 映射，1,305 
    详细配方进 `product_copy` prompt 与 skill；另外 `configurable.create`（991 字符）与 `product.create` 的描述
    本来就带 staged workflow 警告，是第二道防线。
 
-**迁移后的验收**：红线句必须同时在 INS 与 `skills/mage2mcp/references/product-copy.md` 出现（测试比对，见 §7）。
+**迁移后的验收**：段 E 的六个要点必须同时在 INS 与 `skills/mage2mcp/references/product-copy.md` 出现（测试比对，见 §7）。
+
+**队长裁决（2026-11-22）**：接受迁移，**条件是常驻版必须是清单而不是口号**——一次性 agent 要得到
+「知道该查什么」，而不是「什么都不知道」。上面的定稿文本就是为满足这个条件写的；若实现时把它压缩成
+「discover before you write」一句，本裁决不成立，测试必须拦住（见 §7 `TestInstructionsCarryProductCopyChecklist`）。
 
 ---
 
@@ -182,18 +204,20 @@ t20 建议 B（复制商品，1,193 字符）与 C（非 Magento 映射，1,305 
 ### GG-02（P0）`order.get` 描述与实现相反
 
 - **落点**：描述（`internal/magento/tools.go` 的 `orderGetToolDescription`）。
+- **前置事实（队长 2026-11-22 核验）**：F2 已由 integrator 在 **t30** 修好——`internal/magento/order.go`
+  的 `fillShippingAddressFromAssignments` 从 `extension_attributes.shipping_assignments[].shipping.address`
+  解包并填充 `ShippingAddress`（首个带地址的 assignment 生效；解包失败不使整单读失败）。所以描述要写
+  「**返回**收货地址」，而不是「不返回」。
 - **改法**：删掉「Customer email, addresses, and payment data are not returned.」，换成：
 
-  > Returns the shipping method (`shipping_description`) and the billing address; the delivery address is not exposed by Magento's order resource, so it is absent even when the order has one. Customer email and payment data are not returned. **No tool can change an order's address after placement** — cancel and re-create, or use the Magento admin.
+  > Returns the shipping method (`shipping_description`), the billing address and the delivery address (`shipping_address`). Magento stores the delivery address under `extension_attributes.shipping_assignments`, so it is absent for virtual orders or when the order carries no shipping assignment. Customer email and payment data are not returned. **No tool can change an order's address after placement** — cancel and re-create, or use the Magento admin.
 
 - **顺带（附加 C）**：同描述的 `created_at` 若写「Store time」需先验证（E-7 说上游是 UTC）。**验证命令**：
   `curl /rest/pl/V1/orders/{id}` 与 `order.get` 的 `created_at` 逐字比对；若一致且 REST 是 UTC，描述改成
   「UTC, format YYYY-MM-DD HH:MM:SS, no timezone suffix」。
-- **验收**：新测试断言描述含 `shipping_description` 且不含 `addresses, and payment data are not returned`。
-
-> 注意：`shipping_address` 字段本身永远是空的（v0.11.7 实测 order 3/4 都没有；Magento 把它放在
-> `extension_attributes.shipping_assignments`）。**描述必须诚实说「不返回收货地址」**，不要写「返回收货地址」——
-> 否则又是一次说明面撒谎。要真返回它，是行为改动（属审查报告 F2 的返工，不在本设计范围）。
+- **验收**：新测试断言描述含 `shipping_description`、`shipping_address`、`virtual`，且不含
+  `addresses, and payment data are not returned`；**再加一条真实调用验证**：`order.get` 一个物理订单，
+  `shipping_address` 非空（t30 之前它是恒空，见审查报告 F2）。
 
 ### GG-03（P0）`creditmemo.create` 不提运费默认
 
@@ -314,10 +338,28 @@ t20 建议 B（复制商品，1,193 字符）与 C（非 Magento 映射，1,305 
 
 ### GG-15（P2）`instance` 两套措辞
 
-- **落点**：schema 字段描述（33 处）。
+- **落点**：schema 字段描述。**归 Task A（t28）**，见下方归属说明。
+- **精确盘点（105 个工具，2026-11-22 实测）**：标准句 **67** / 需处理 **35** / 无 `instance` 属性 **3**
+  （`magento.operation.get`、`magento.operation.dispose`、`platform.info`）。
+  35 个需处理的分解（**修正设计初稿的「33」**）：
+
+  | 子类 | 数量 | 现状 | 处理 |
+  |---|---|---|---|
+  | A. 纯旧句 | **31** | `Configured Magento instance id.` | 换成标准句 |
+  | B. 空描述 | **2** | `import.execute`、`import.validate` 的 `instance` 无 description | 补标准句（同时清掉 GG-16 的这 2 个字段） |
+  | C. 特殊但合理 | **1** | `import.start`：`Configured Magento instance id the import runs against.` | 统一成标准句 |
+  | D. 特殊且**必须不同** | **1** | `magento.operation.list`：`…to filter by; omit to list every instance.` | **保留**——该工具的 instance 是可选的（省略=列全部），标准句的「required」会撒谎 |
+
+- **源文件映射**（改一处 const 会同时修好多个工具，因为 schema 是共享常量）：
+  - `internal/magento/tools.go`：**26 处**手写 schema 字符串里的旧句，渲染成 A 类的 31 个工具描述
+    （`order.summary` 复用 `salesSummarySchema`、`shipment.list` 复用 `orderIDOnlySchema` 等共享常量）；
+    另外 B 类的 2 个空描述也在这个文件（`import.execute`/`import.validate` 的 schema）。
+  - `internal/magento/import_jobs.go:326`：C 类的 `import.start`。
+  - `internal/magento/operations.go:583`：D 类的 `instanceOptionalProp`，**不动**。
 - **统一为**：`Configured Magento instance id; required, and must name a configured instance.`
-  （与现有 67 处一致；非 Magento 模块用自己的措辞，但同一模块内必须一致。）
-- **验收**：测试遍历 105 个工具的 `instance` 描述，断言**每个模块内只有一种措辞**；并断言 Magento 模块全部是标准句。
+- **验收**：测试遍历 105 个工具：Magento 模块的 `instance` 描述必须是标准句或 D 类的可选句；
+  且「描述说 required」的工具必须真的在 `required` 里（D 类反过来：说 optional 的必须不在 `required` 里）。
+  这条测试同时守住 U-81 的另一半——**当前 U-81 只覆盖了 67 个工具，剩下 35 个由 t28 补齐后才是 100%**。
 
 ### GG-16（P2）98 个入参字段零描述
 
@@ -470,13 +512,20 @@ The authoritative list is `tools/list` (or `platform.info`). This skill never li
 
 ## 6. 两个实现任务的切分（可直接派发）
 
-### Task A —— instructions + 描述 + schema（纯文案 + 一条注册期校验）
+**队长 2026-11-22 已把本设计的 Task A / Task B 映射到团队任务**：
+
+| 本设计的 Task | 团队任务 | 负责 | 备注 |
+|---|---|---|---|
+| Task A（INS 五段重写 + 描述/schema + `toolerr.Add` 一致性校验） | **t28** | integrator | 本文件的 §3/§4/§7 是它的规格 |
+| Task B（6 个 prompt + `skills/` 树 + `gen-prompts` + D1–D6） | **t23** | data-analyst | 队长会把 t23 契约扩成完整 Task B（原契约只写了 skill 部分） |
+
+### Task A（t28）—— instructions + 描述 + schema（纯文案 + 一条注册期校验）
 
 | 编号 | 动作 |
 |---|---|
 | INS 重排 | 按 §3.2 五段重写 `serverInstructions`；预算测试；五条红线短语测试 |
 | GG-01/03 | `creditmemoCreateSchema` 加 `shipping_amount`；描述补运费默认 |
-| GG-02 | `order.get` 描述改（含「无工具可改已下单地址」+ `created_at` 时区先验证） |
+| GG-02 | `order.get` 描述改：**返回** billing + delivery 地址（t30 已修 `fillShippingAddressFromAssignments`）、virtual 订单无地址、无工具可改已下单地址；`created_at` 时区先验证 |
 | GG-04 | `invoice.create` 描述改（离线支付） |
 | GG-06 | 阶梯价 4 字段描述 + `customer.groups` 引用 |
 | GG-08 | `sales.summary`/`sales.analysis`/`top_skus.revenue`/`refunded_amount` 描述 |
@@ -485,7 +534,7 @@ The authoritative list is `tools/list` (or `platform.info`). This skill never li
 | GG-11 | `bulk_create` 描述 |
 | GG-12 | `order.create` 描述 + `idempotency_key` 字段描述（全部含该字段的工具） |
 | GG-13 | `product.get` 描述（两条跨工具引用） |
-| GG-15 | `instance` 33 处统一 |
+| GG-15 | `instance` 35 处：31 纯旧句 + 2 空描述 + 1 `import.start` 统一成标准句；`operation.list` 的可选句保留（见 §4 GG-15 的文件映射） |
 | GG-16 | 8 个工具 51 字段（先）→ 其余 47 字段（后） |
 | GG-07/14 | **已闭环**：只加回归测试（断言 `inventory.status.qty` 描述仍含 `Legacy`/`is_in_stock`，`orders.geography.country_id` 仍含 `UNKNOWN`） |
 | GG-18/19/20 | 各自描述/字段描述 |
@@ -494,7 +543,7 @@ The authoritative list is `tools/list` (or `platform.info`). This skill never li
 **Task A 的验收门**：`len(instructions) ≤ 3,200`；描述合计 ≤45,000；写工具字段描述 100%；跨工具引用工具名存在；
 `go test ./...` 绿；`scripts/tool-contract` 绿。
 
-### Task B —— prompts + skill + 生成器
+### Task B（t23）—— prompts + skill + 生成器
 
 | 编号 | 动作 |
 |---|---|
@@ -518,6 +567,7 @@ The authoritative list is `tools/list` (or `platform.info`). This skill never li
 |---|---|
 | `TestInstructionsBudget` | `len(serverInstructions) ≤ 3200` |
 | `TestInstructionsCarryRedLines` | 五条红线短语各出现一次（`confirmation_id` / `different human` / `derives a key` / `operation.get` / `DATA`） |
+| `TestInstructionsCarryProductCopyChecklist` | 段 E 的六个要点各有关键词：`configurable`（类型）、`option`（选项及取值）、`attribute set`、`categories`、`compare`（比对）、`could not reproduce`（验收/诚实说明）；且必须出现 `without a human`（taxonomy 红线）——防止被压成「discover before you write」一句 |
 | `TestToolDescriptionBudget` | 105 条描述合计 ≤45,000；单条 ≤1,024（已有）；新增/改动工具 ≤700（以 golden 清单锁住） |
 | `TestWriteSchemasMatchInputStructs` | 每个工具的 schema 属性名 == 输入结构体 json tag（附加 E，注册期或测试期） |
 | `TestCreditmemoSchemaAcceptsShippingAmount` | GG-01 |
@@ -527,15 +577,18 @@ The authoritative list is `tools/list` (or `platform.info`). This skill never li
 | `TestPromptsMatchReferences` | D5（生成物字节一致） |
 | `TestRedLinesAlsoInSkill` | D6 |
 | `TestWriteToolFieldDescriptions` | 写工具字段描述 100%；全部 ≥95% |
+| `TestInstanceWordingMatchesRequired` | GG-15：Magento 模块的 `instance` 描述是标准句或 `operation.list` 的可选句；说 required 的工具必须在 `required` 里，说 optional 的必须不在 |
+| `TestOrderGetDescribesAddresses` | GG-02：描述含 `shipping_description`/`shipping_address`/`virtual`，不含旧的「addresses … are not returned」 |
 | `TestPromptBudget` | 6 个 prompt 各自 ≤预算 |
 
 ---
 
 ## 8. 风险与需要产品拍板的点
 
-1. **INS 重排会「丢细节」**：B/C 的配方从常驻变按需。如果目标用户里有「不加载 prompt/skill 的一次性 agent」，
-   它们在复制商品时会少了步骤清单。缓解：红线常驻 + `configurable.create` 描述自带 staged 警告 +
-   `product.create` 描述指向 `product_copy` prompt。**这是本设计最需要产品确认的取舍**。
+1. ~~**INS 重排会「丢细节」**~~ → **已由队长裁决（2026-11-22）**：接受迁移，条件是常驻版必须是**清单**
+   （点名要查什么）而不是口号，见 §3.2 的段 E 定稿文本；且 3,200 硬上限不破例。剩余风险只剩「agent 从不加载
+   prompt/skill 时看不到映射细则」，缓解：清单常驻 + `configurable.create` 自带 staged 警告 +
+   `product.create` 描述指向 `product_copy` prompt。
 2. **prompt 不是「一定被读」**：agent 可能从不 `prompts/get`。所以 §5.5 的七类内容必须另有常驻落点（本设计已保证）。
 3. **skills/ 目录是新资产**：需要进 release 流程（tag 里包含）与 CI（D1–D6）；否则它会像 README 的 112 一样腐烂。
 4. **描述预算 45,000 是软约束**：超过时应先删空话，而不是调大预算；调大预算需要在本文件里留记录。
