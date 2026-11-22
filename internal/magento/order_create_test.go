@@ -43,17 +43,19 @@ func TestCreateOrderCartFlow(t *testing.T) {
 		_ = json.Unmarshal(raw, &body)
 		bodies = append(bodies, body)
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/rest/default/V1/customers/7/carts":
+		switch {
+		case r.URL.Path == "/rest/default/V1/customers/7/carts":
 			_, _ = w.Write([]byte(`42`))
-		case "/rest/default/V1/carts/42/items":
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/carts/42/items":
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/carts/42/items":
 			_, _ = w.Write([]byte(`{"item_id":1}`))
-		case "/rest/default/V1/carts/42/shipping-information":
+		case r.URL.Path == "/rest/default/V1/carts/42/shipping-information":
 			_, _ = w.Write([]byte(`{"payment_methods":[]}`))
-		case "/rest/default/V1/carts/42/order":
+		case r.URL.Path == "/rest/default/V1/carts/42/order":
 			// The place-order route answers with the new order id as a JSON scalar.
 			_, _ = w.Write([]byte(`"99"`))
-		case "/rest/default/V1/orders/99":
+		case r.URL.Path == "/rest/default/V1/orders/99":
 			_, _ = w.Write([]byte(`{"entity_id":99,"increment_id":"000000099","status":"pending","grand_total":19.98}`))
 		default:
 			http.NotFound(w, r)
@@ -69,6 +71,10 @@ func TestCreateOrderCartFlow(t *testing.T) {
 	}
 	want := []string{
 		"POST /rest/default/V1/customers/7/carts",
+		// The cart is inspected before anything is written into it: Magento hands
+		// back the customer's existing cart, so an order must never absorb what is
+		// already there (t57).
+		"GET /rest/default/V1/carts/42/items",
 		"POST /rest/default/V1/carts/42/items",
 		"POST /rest/default/V1/carts/42/shipping-information",
 		// Magento places an order with PUT; POST is not a route. The previous
@@ -80,15 +86,21 @@ func TestCreateOrderCartFlow(t *testing.T) {
 			t.Fatalf("paths = %v", paths)
 		}
 	}
-	item, _ := bodies[1]["cartItem"].(map[string]any)
+	// Look the bodies up by path: the flow gained a step (the empty-cart
+	// inspection) and index-based assertions silently read the wrong request.
+	byPath := map[string]map[string]any{}
+	for i, p := range paths {
+		byPath[p] = bodies[i]
+	}
+	item, _ := byPath["POST /rest/default/V1/carts/42/items"]["cartItem"].(map[string]any)
 	if item["sku"] != "SKU-1" || item["qty"] != float64(2) || item["quote_id"] != "42" {
 		t.Fatalf("cart item = %+v", item)
 	}
-	info, _ := bodies[2]["addressInformation"].(map[string]any)
+	info, _ := byPath["POST /rest/default/V1/carts/42/shipping-information"]["addressInformation"].(map[string]any)
 	if info["shipping_carrier_code"] != "flatrate" {
 		t.Fatalf("shipping info = %+v", info)
 	}
-	payment, _ := bodies[3]["paymentMethod"].(map[string]any)
+	payment, _ := byPath["PUT /rest/default/V1/carts/42/order"]["paymentMethod"].(map[string]any)
 	if payment["method"] != "checkmo" {
 		t.Fatalf("payment = %+v", payment)
 	}
@@ -145,6 +157,8 @@ func TestCreateOrderUnsupportedPlacementCleansCart(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/customers/7/carts":
 			_, _ = w.Write([]byte(`42`))
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/carts/42/items":
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/carts/42/items":
 			_, _ = w.Write([]byte(`{}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/carts/42/shipping-information":
@@ -194,6 +208,10 @@ type orderFake struct {
 	// cartGone makes GET /carts/42 answer 404, which is what Magento does to a
 	// cart after a successful placement.
 	cartGone bool
+	// cartItems is what GET /carts/42/items answers. Empty means the cart is
+	// empty (the normal path); a JSON array of {sku,qty} simulates a cart that
+	// another caller — or an earlier crashed call — left behind.
+	cartItems string
 }
 
 func (f *orderFake) handler() http.HandlerFunc {
@@ -225,6 +243,16 @@ func (f *orderFake) handler() http.HandlerFunc {
 				return
 			}
 			_, _ = io.WriteString(w, placeBody)
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/carts/42/items":
+			// The normal path: the customer's cart is empty, so the placement is
+			// allowed to fill it.
+			f.mu.Lock()
+			body := f.cartItems
+			f.mu.Unlock()
+			if body == "" {
+				body = `[]`
+			}
+			_, _ = io.WriteString(w, body)
 		case r.Method == http.MethodGet && r.URL.Path == "/rest/default/V1/carts/42":
 			f.mu.Lock()
 			gone := f.cartGone
@@ -718,5 +746,170 @@ func TestOperationGetShowsCustomerAndPlacedOrder(t *testing.T) {
 	}
 	if replay.Order.CustomerID == nil || *replay.Order.CustomerID != 7 {
 		t.Fatalf("recorded order customer = %v, want 7 so the customer is visible next to the order", replay.Order.CustomerID)
+	}
+}
+
+// t57: Magento answers POST /customers/{id}/carts with the customer's ACTIVE
+// cart, so an order placed into a cart that already holds items carries them
+// along. A cart left behind — by a REST caller, by a crashed earlier call, by a
+// concurrent one — must be refused, never absorbed. The cart is left untouched:
+// emptying it is a destructive act this tool has no mandate for.
+func TestCreateOrderRefusesACartThatAlreadyHoldsItems(t *testing.T) {
+	fake := &orderFake{
+		placeBody: `"99"`,
+		cartItems: `[{"sku":"SOMEONE-ELSE-1","qty":2},{"sku":"SOMEONE-ELSE-2","qty":1}]`,
+	}
+	ts := httptest.NewServer(fake.handler())
+	defer ts.Close()
+	ledger := newFakeLedger()
+	useLedger(t, ledger)
+
+	svc := testService(t, ts.URL)
+	_, err := svc.CreateOrder(context.Background(), validOrderInput())
+	if errs.CodeOf(err) != errs.CodeConflict {
+		t.Fatalf("err = %v, want conflict", err)
+	}
+	var taxonomy *errs.Error
+	if !errors.As(err, &taxonomy) {
+		t.Fatal("not a taxonomy error")
+	}
+	if taxonomy.Details["cart_item_count"] != "2" ||
+		taxonomy.Details["cart_skus"] != "SOMEONE-ELSE-1,SOMEONE-ELSE-2" ||
+		taxonomy.Details["cart_id"] != "42" {
+		t.Fatalf("details = %+v, want the count, the SKUs and the cart id", taxonomy.Details)
+	}
+	// Nothing was added to the cart and no order was attempted.
+	for _, request := range fake.requests {
+		if request == "POST /rest/default/V1/carts/42/items" ||
+			request == "PUT /rest/default/V1/carts/42/order" {
+			t.Fatalf("the tool wrote into a cart it refused: requests = %v", fake.requests)
+		}
+	}
+	// It is not cleaned up either: the cart belongs to the customer, not to us.
+	for _, request := range fake.requests {
+		if request == "DELETE /rest/default/V1/carts/42" {
+			t.Fatalf("the tool deleted a cart it did not create: %v", fake.requests)
+		}
+	}
+	if c := ledger.counts(); c.fails != 1 || c.succeeds != 0 {
+		t.Fatalf("ledger counts = %+v, want one failed operation", c)
+	}
+}
+
+// t57: two concurrent order.create calls for one customer used to share the
+// customer's cart, and one of them placed an order containing both callers'
+// items. The per-customer lock serialises them, so the second call starts only
+// after the first has consumed its cart — and therefore gets an empty one.
+func TestCreateOrderConcurrentCallsForOneCustomerDoNotMix(t *testing.T) {
+	const carts = 2
+	var mu sync.Mutex
+	created := 0
+	placedItems := make([][]string, 0, carts)
+	// A faithful mini-Magento: the customer cart is a singleton that is replaced
+	// only once an order consumes it.
+	cartID := 0
+	cart := map[string]float64{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/default/V1/customers/7/carts":
+			if cartID == 0 {
+				created++
+				cartID = 100 + created
+			}
+			_, _ = fmt.Fprintf(w, `%d`, cartID)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/items"):
+			body := make([]map[string]any, 0, len(cart))
+			for sku, qty := range cart {
+				body = append(body, map[string]any{"sku": sku, "qty": qty})
+			}
+			_ = json.NewEncoder(w).Encode(body)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/items"):
+			var payload struct {
+				CartItem struct {
+					SKU string  `json:"sku"`
+					Qty float64 `json:"qty"`
+				} `json:"cartItem"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			cart[payload.CartItem.SKU] += payload.CartItem.Qty
+			_, _ = io.WriteString(w, `{"item_id":1}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/shipping-information"):
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/order"):
+			// Placing the order consumes the cart, exactly as Magento does.
+			items := make([]string, 0, len(cart))
+			for sku := range cart {
+				items = append(items, sku)
+			}
+			placedItems = append(placedItems, items)
+			orderID := len(placedItems) + 200
+			cart = map[string]float64{}
+			cartID = 0
+			_, _ = fmt.Fprintf(w, `"%d"`, orderID)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/default/V1/orders/"):
+			id := strings.TrimPrefix(r.URL.Path, "/rest/default/V1/orders/")
+			_, _ = fmt.Fprintf(w, `{"entity_id":%s,"increment_id":"%09s","status":"pending","grand_total":19.98}`, id, id)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	ledger := newFakeLedger()
+	useLedger(t, ledger)
+	svc := testService(t, ts.URL)
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errsCh := make(chan error, carts)
+	for i := 0; i < carts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			in := validOrderInput()
+			in.Items = []OrderItemInput{{SKU: fmt.Sprintf("R2-CONC-%d", i), Qty: 1}}
+			in.IdempotencyKey = fmt.Sprintf("key-%d", i)
+			<-start
+			_, err := svc.CreateOrder(context.Background(), in)
+			errsCh <- err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errsCh)
+	for err := range errsCh {
+		if err != nil {
+			t.Fatalf("concurrent order failed: %v", err)
+		}
+	}
+	if len(placedItems) != carts {
+		t.Fatalf("placed %d orders, want %d", len(placedItems), carts)
+	}
+	for _, items := range placedItems {
+		if len(items) != 1 {
+			t.Fatalf("order items = %v, want exactly one caller's line: two concurrent calls shared a cart", items)
+		}
+	}
+}
+
+// The normal path must not change: an empty cart is filled and placed as before,
+// and the result now records the cart id for later investigation.
+func TestCreateOrderNormalPathRecordsTheCartID(t *testing.T) {
+	fake := &orderFake{placeBody: `"99"`}
+	ts := httptest.NewServer(fake.handler())
+	defer ts.Close()
+	useLedger(t, newFakeLedger())
+	svc := testService(t, ts.URL)
+	result, err := svc.CreateOrder(context.Background(), validOrderInput())
+	if err != nil {
+		t.Fatalf("CreateOrder: %v", err)
+	}
+	if result.CartID != 42 {
+		t.Fatalf("cart id = %d, want 42 (the ledger result must carry it)", result.CartID)
+	}
+	if result.Order.EntityID != 99 {
+		t.Fatalf("order = %+v", result.Order)
 	}
 }

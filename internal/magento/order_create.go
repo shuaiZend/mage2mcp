@@ -6,10 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -79,7 +81,12 @@ type CreateOrderInput struct {
 
 // CreateOrderResult is the recorded outcome of one order placement.
 type CreateOrderResult struct {
-	Order       Order  `json:"order" jsonschema:"The order that was read."`
+	Order Order `json:"order" jsonschema:"The order that was read."`
+	// CartID is the Magento cart the placement used. It is recorded because the
+	// cart, not the order, is what a disputed placement has to be traced back
+	// through: Magento reuses a customer's active cart, so the cart id is the only
+	// handle that explains why an order holds items nobody asked for (t57).
+	CartID      int    `json:"cart_id,omitempty" jsonschema:"Magento cart id the placement used; the handle for tracing a disputed order."`
 	OperationID string `json:"operation_id,omitempty" jsonschema:"Ledger operation id, for polling an unknown outcome."`
 	Replayed    bool   `json:"replayed,omitempty" jsonschema:"True when a previous result was replayed for the same idempotency_key, so nothing new happened."`
 	// Reconciled reports that an ambiguous place-order failure was resolved by
@@ -140,6 +147,26 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Create
 		return &recorded, nil
 	}
 
+	// Magento answers POST /customers/{id}/carts with the customer's ACTIVE cart,
+	// not a new one. Two callers for one customer therefore share a cart, and a
+	// cart left behind by an earlier failed call is picked up again: either way the
+	// next order silently carries items nobody asked for (t57: 3 of 6 concurrent
+	// rounds produced a mixed order, and a cart left over REST produced order 25).
+	//
+	// Two gates, because they catch different halves:
+	//   1. serialise per (instance, customer) so two calls cannot interleave
+	//      between "the cart is empty" and "the order is placed";
+	//   2. refuse a cart that already holds items instead of absorbing them.
+	// Gate 2 alone turns the concurrency race into a failure (better than a mixed
+	// order, but still a failure); gate 1 alone cannot see a cart left by another
+	// process or by a crash between add-item and place-order.
+	unlock, lockErr := lockOrderCustomer(ctx, s.operationInstanceID(in.Instance)+"/"+strconv.Itoa(in.CustomerID))
+	if lockErr != nil {
+		_ = run.Fail(ctx, string(errs.CodeOf(lockErr)))
+		return nil, lockErr
+	}
+	defer unlock()
+
 	raw, err := s.client.do(ctx, http.MethodPost, "/customers/"+strconv.Itoa(in.CustomerID)+"/carts", nil, nil)
 	if err != nil {
 		_ = run.Fail(ctx, string(errs.CodeOf(err)))
@@ -149,6 +176,12 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Create
 	if err := json.Unmarshal(raw, &cartID); err != nil {
 		_ = run.Unknown(ctx, string(errs.CodeUpstreamUnavailable))
 		return nil, operationUnknownError(run.ID(), "order placement", string(errs.CodeUpstreamUnavailable))
+	}
+	slog.Default().Info("order cart acquired",
+		"instance", in.Instance, "customer_id", in.CustomerID, "cart_id", cartID)
+	if err := s.requireEmptyCart(ctx, cartID); err != nil {
+		_ = run.Fail(ctx, string(errs.CodeOf(err)))
+		return nil, err
 	}
 	for _, item := range in.Items {
 		body := cartItemBody{CartItem: cartItem{
@@ -209,7 +242,7 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (*Create
 		return s.reconcilePlacedOrder(ctx, run, in, cartID, readErr)
 	}
 	order := *placed
-	result := &CreateOrderResult{Order: order, OperationID: run.ID()}
+	result := &CreateOrderResult{Order: order, OperationID: run.ID(), CartID: cartID}
 	if err := run.Succeed(ctx, orderRef(order), result); err != nil {
 		return nil, err
 	}
@@ -292,7 +325,7 @@ func (s *Service) reconcilePlacedOrder(ctx context.Context, run *OperationRun, i
 		if err != nil {
 			return unknown("the matched order could not be read back")
 		}
-		result := &CreateOrderResult{Order: *order, OperationID: run.ID(), Reconciled: true}
+		result := &CreateOrderResult{Order: *order, OperationID: run.ID(), Reconciled: true, CartID: cartID}
 		if err := run.Succeed(ctx, orderRef(*order), result); err != nil {
 			return nil, err
 		}
@@ -549,7 +582,93 @@ func validateOrderAddress(field string, address OrderAddressInput) error {
 // cleanupCart best-effort deletes an abandoned cart after a failed placement.
 func (s *Service) cleanupCart(ctx context.Context, cartID int) string {
 	if _, err := s.client.do(ctx, http.MethodDelete, "/carts/"+strconv.Itoa(cartID), nil, nil); err != nil {
-		return "failed: " + string(errs.CodeOf(err))
+		code := string(errs.CodeOf(err))
+		// A cart that outlives its failed placement is not harmless: Magento hands
+		// the same cart to the customer's next order, so a silent cleanup failure
+		// plants the next mixed order (t57 saw "failed: not_found" and nobody knew).
+		slog.Default().Warn("order cart cleanup failed",
+			"cart_id", cartID, "error_code", code)
+		return "failed: " + code
 	}
 	return "deleted"
+}
+
+// orderCustomerLocks serialises order placement per (instance, customer).
+//
+// The lock is in-process on purpose: this deployment runs one gateway replica,
+// and the second gate (requireEmptyCart) is what protects against writers this
+// process cannot see — another replica, a REST caller, or a cart left by a crash.
+// A cross-replica deployment needs a database advisory lock keyed the same way;
+// the empty-cart gate keeps that future honest but does not replace it.
+var orderCustomerLocks = struct {
+	mu sync.Mutex
+	m  map[string]chan struct{}
+}{m: make(map[string]chan struct{})}
+
+// lockOrderCustomer blocks until this (instance, customer) is free, or the
+// caller's context ends. The returned function releases the lock.
+func lockOrderCustomer(ctx context.Context, key string) (func(), error) {
+	orderCustomerLocks.mu.Lock()
+	slot, ok := orderCustomerLocks.m[key]
+	if !ok {
+		slot = make(chan struct{}, 1)
+		orderCustomerLocks.m[key] = slot
+	}
+	orderCustomerLocks.mu.Unlock()
+	select {
+	case slot <- struct{}{}:
+		return func() { <-slot }, nil
+	case <-ctx.Done():
+		return nil, errs.New(errs.CodeUpstreamTimeout,
+			"another order for this customer is still being placed; retry once it finishes").
+			WithDetail("customer_id", key).WithCause(ctx.Err())
+	}
+}
+
+// cartItemLine is the subset of GET /carts/{id}/items this gateway reads.
+type cartItemLine struct {
+	SKU string  `json:"sku"`
+	Qty float64 `json:"qty"`
+}
+
+// requireEmptyCart refuses to place an order into a cart that already holds
+// items.
+//
+// Magento's cart is per customer, not per call, so anything already in it — a
+// concurrent caller's line, a cart left by a failed call, a cart a caller built
+// over REST — would be carried into this order. The caller named the items they
+// want; every extra line is a defect, so this refuses instead of absorbing them.
+// The cart is deliberately left untouched: emptying someone else's cart is a
+// destructive act this tool has no mandate for.
+func (s *Service) requireEmptyCart(ctx context.Context, cartID int) error {
+	raw, err := s.client.do(ctx, http.MethodGet, "/carts/"+strconv.Itoa(cartID)+"/items", nil, nil)
+	if err != nil {
+		if errs.CodeOf(err) == errs.CodeNotFound {
+			return errs.New(errs.CodeConflict,
+				"the customer's cart disappeared before it could be inspected; retry with a new idempotency key").
+				WithDetail("cart_id", strconv.Itoa(cartID))
+		}
+		return writeStageError("cart_inspect", nil, "", err)
+	}
+	var items []cartItemLine
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return errs.New(errs.CodeInternal, "the store's cart items response could not be read").
+			WithDetail("cart_id", strconv.Itoa(cartID)).WithCause(err)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	skus := make([]string, 0, len(items))
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		skus = append(skus, item.SKU)
+		lines = append(lines, item.SKU+" x"+strconv.FormatFloat(item.Qty, 'f', -1, 64))
+	}
+	return errs.New(errs.CodeConflict,
+		"the customer's cart already holds items, so placing this order would include them; "+
+			"resolve the cart (a human decides what to do with it) and retry with a new idempotency key").
+		WithDetail("cart_id", strconv.Itoa(cartID)).
+		WithDetail("cart_item_count", strconv.Itoa(len(items))).
+		WithDetail("cart_skus", strings.Join(skus, ",")).
+		WithDetail("cart_items", strings.Join(lines, ", "))
 }
