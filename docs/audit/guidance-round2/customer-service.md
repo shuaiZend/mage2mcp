@@ -27,13 +27,13 @@
 > **Shipping follows `shipping_amount`.** Omit it and a partial refund returns no shipping; a memo
 > consuming the last refundable units returns the remaining shipping; `0` means "none". The trap
 > is the middle case.
-
+>
 > **A quantity above `qty_invoiced - qty_refunded` is rejected** before any refund request, per
 > invoice: "one more unit" can exceed the invoice, not the order.
-
+>
 > **Adjustments change the total, not the lines.** `adjustment_positive` consumes refundable
 > amount, so a later line refund can be rejected as "more than refundable".
-
+>
 > 1. `magento.order.get` — item ids, `qty_invoiced`, `qty_refunded`, shipping amount.
 > 2. `magento.invoice.list` — pick the invoice; with several, pass `invoice_id`.
 > 3. `magento.creditmemo.create` — one line per item with the quantity, plus `shipping_amount`
